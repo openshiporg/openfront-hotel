@@ -1,150 +1,133 @@
-/**
- * HomePage for Dashboard 2 - Server Component
- * Follows Dashboard1's server-side rendering approach
- */
-
 import React from 'react'
 import Link from 'next/link'
-import { PlusIcon, Database } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { ArrowRight, Building2, Package } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageContainer } from '../../components/PageContainer'
 import { getAdminMetaAction, getListCounts } from '../../actions'
-import { cn } from '@/lib/utils'
+import { platformNavGroups, platformStandaloneItems } from '@/features/platform/lib/navigation'
 
-interface ListCardProps {
-  list: any
-  count?: number | null
-  hideCreate?: boolean
-}
-
-function ListCard({ list, count, hideCreate = false }: ListCardProps) {
-  const isSingleton = list.isSingleton || false
-  const href = `/dashboard/${list.path}${isSingleton ? '/1' : ''}`
-
+function QuickLinkCard({ title, description, href, icon: Icon }: { title: string; description: string; href: string; icon: any }) {
   return (
-    <Card className={cn(
-      'relative bg-gradient-to-bl from-background to-muted/80 shadow-xs hover:bg-muted transition-colors'
-    )}>
-      <Link href={href}>
-        <CardContent className="p-4">
-          <h3 className="text-sm font-semibold text-foreground">
-            {list.label}
-          </h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {isSingleton 
-              ? 'Singleton' 
-              : count === null || count === undefined
-                ? 'Unknown'
-                : `${count} item${count !== 1 ? 's' : ''}`
-            }
-          </p>
+    <Link href={`/dashboard${href}`}>
+      <Card className="h-full transition-colors hover:bg-muted/50">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg border bg-background p-2">
+                <Icon className="h-5 w-5" />
+              </div>
+              <CardTitle className="text-base">{title}</CardTitle>
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">{description}</p>
         </CardContent>
-      </Link>
-      
-      {!hideCreate && !isSingleton && (
-        <Link 
-          href={`/dashboard/${list.path}/create`}
-          className="absolute top-3 right-3"
-        >
-          <Button
-            variant="outline" 
-            size="icon"
-            className="h-7 w-7"
-            title={`Add ${list.singular?.toLowerCase() || 'item'}`}
-          >
-            <PlusIcon className="h-4 w-4" />
-            <span className="sr-only">Create new {list.label}</span>
-          </Button>
-        </Link>
-      )}
-    </Card>
+      </Card>
+    </Link>
   )
 }
 
-function EmptyState() {
+function ModelCard({ title, count, href }: { title: string; count?: number | null; href: string }) {
   return (
-    <div className="flex flex-col items-center justify-center p-8 text-center">
-      <Database className="h-12 w-12 text-muted-foreground mb-4" />
-      <h3 className="text-lg font-semibold mb-2">No lists configured</h3>
-      <p className="text-muted-foreground">
-        There are no data models configured in your admin interface.
-      </p>
-    </div>
+    <Link href={href}>
+      <Card className="transition-colors hover:bg-muted/50">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-medium">{title}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {count === null || count === undefined ? 'Unknown' : `${count} item${count !== 1 ? 's' : ''}`}
+              </p>
+            </div>
+            <Package className="h-4 w-4 text-muted-foreground" />
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
   )
 }
 
 export async function HomePage() {
-  // Fetch admin meta server-side
   const adminMetaResponse = await getAdminMetaAction()
-  
+
   if (!adminMetaResponse.success) {
-    console.error('Failed to fetch admin meta:', adminMetaResponse.error)
     return (
-      <PageContainer 
-        title="Dashboard" 
+      <PageContainer
+        title="Dashboard"
         header={<h1 className="text-lg font-semibold md:text-2xl">Dashboard</h1>}
         breadcrumbs={[{ type: 'page' as const, label: 'Dashboard' }]}
       >
-        <EmptyState />
+        <div className="p-6 text-sm text-muted-foreground">Unable to load dashboard metadata.</div>
       </PageContainer>
     )
   }
 
   const adminMeta = adminMetaResponse.data
   const lists = adminMeta?.lists || []
-  // Lists are already enhanced with gqlNames from getAdminMetaAction
-  const enhancedLists = lists.filter((list: any) => !list.isHidden)
+  const visibleLists = lists.filter((list: any) => !list.isHidden)
 
-  // Fetch list counts server-side
   let countData: Record<string, number> = {}
-  if (enhancedLists.length > 0) {
-    const countResponse = await getListCounts(enhancedLists)
+  if (visibleLists.length > 0) {
+    const countResponse = await getListCounts(visibleLists)
     if (countResponse.success && countResponse.data) {
       countData = countResponse.data
     }
   }
 
+  const highlightedPlatformItems = [
+    ...platformStandaloneItems,
+    ...platformNavGroups.flatMap((group) => group.items),
+  ]
+
   const header = (
-    <div className="flex flex-col">
-      <h1 className="text-lg font-semibold md:text-2xl">Dashboard</h1>
-      {enhancedLists.length > 0 && (
-        <p className="text-muted-foreground">{enhancedLists.length} Models</p>
-      )}
+    <div className="flex flex-col gap-1">
+      <h1 className="text-lg font-semibold md:text-2xl">Hotel Dashboard</h1>
+      <p className="text-muted-foreground">Openfront Hotel operator workspace and system models</p>
     </div>
   )
 
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard' }
-  ]
-
-  if (enhancedLists.length === 0) {
-    return (
-      <PageContainer title="Dashboard" header={header} breadcrumbs={breadcrumbs}>
-        <EmptyState />
-      </PageContainer>
-    )
-  }
-
   return (
-    <PageContainer title="Dashboard" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full max-w-4xl p-4 md:p-6 flex flex-col gap-4">
-        <div className="mb-4">
-          <h2 className="tracking-wide uppercase font-medium mb-2 text-muted-foreground text-sm">
-            Data Models
-          </h2>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4">
-            {enhancedLists.map((list: any) => (
-              <ListCard
-                key={list.key}
-                list={list}
-                count={countData[list.key] ?? null}
-                hideCreate={list.hideCreate ?? false}
+    <PageContainer title="Dashboard" header={header} breadcrumbs={[{ type: 'page' as const, label: 'Dashboard' }]}>
+      <div className="w-full max-w-6xl space-y-8 p-4 md:p-6">
+        <section className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Building2 className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <h2 className="text-base font-semibold">Hotel Operations</h2>
+              <p className="text-sm text-muted-foreground">Primary workflows for front desk, reservations, housekeeping, and hotel management.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {highlightedPlatformItems.map((item) => (
+              <QuickLinkCard
+                key={item.href}
+                title={item.title}
+                description={item.description}
+                href={item.href}
+                icon={item.icon}
               />
             ))}
           </div>
-        </div>
+        </section>
+
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-base font-semibold">Underlying Models</h2>
+            <p className="text-sm text-muted-foreground">Fallback CRUD access for Keystone lists while hotel-specific platform surfaces continue to expand.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleLists.map((list: any) => (
+              <ModelCard
+                key={list.key}
+                title={list.label}
+                count={countData[list.key] ?? null}
+                href={`/dashboard/${list.path}`}
+              />
+            ))}
+          </div>
+        </section>
       </div>
     </PageContainer>
   )

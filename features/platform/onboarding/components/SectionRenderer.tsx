@@ -1,0 +1,85 @@
+import React from 'react';
+import { Label } from '@/components/ui/label';
+import { SectionItem } from './SectionItem';
+import { SectionDefinition } from '../config/templates';
+import { getItemsFromJsonData } from '../utils/dataUtils';
+
+interface SectionRendererProps {
+  sections: SectionDefinition[];
+  selectedTemplate: 'full' | 'minimal' | 'custom';
+  isLoading: boolean;
+  loadingItems: Record<string, string[]>;
+  completedItems: Record<string, string[]>;
+  itemErrors: Record<string, Record<string, string>>;
+  error: string | null;
+  step: 'template' | 'progress' | 'done';
+  currentJsonData?: any;
+}
+
+export const SectionRenderer: React.FC<SectionRendererProps> = ({
+  sections,
+  isLoading,
+  loadingItems,
+  completedItems,
+  itemErrors,
+  error,
+  step,
+  currentJsonData,
+}) => {
+  return (
+    <div className="space-y-0">
+      {sections.map((section, idx) => {
+        const isLastItem = idx === sections.length - 1;
+        const items = currentJsonData ? getItemsFromJsonData(currentJsonData, section.type) : [];
+
+        return (
+          <div key={section.type} className="relative">
+            {!isLastItem && (
+              <div className="absolute left-3 top-3 bottom-0 w-[1px] bg-border"></div>
+            )}
+
+            <div className="relative mb-2 flex items-center space-x-3">
+              <div className="z-10 inline-flex size-6 items-center justify-center rounded-sm border border-border bg-background text-sm text-foreground shadow-sm">
+                {section.id}
+              </div>
+              <Label className="text-sm font-medium text-foreground">
+                {section.label}
+              </Label>
+            </div>
+
+            <div className="pl-9">
+              <div className="flex flex-wrap gap-2 pb-6">
+                {items.map((item) => {
+                  let status: 'normal' | 'loading' | 'completed' | 'error' = 'normal';
+                  let errorMessage: string | undefined;
+
+                  if (step === 'done') {
+                    status = 'completed';
+                  } else if (error && itemErrors[section.type]?.[item]) {
+                    status = 'error';
+                    errorMessage = itemErrors[section.type][item];
+                  } else if (completedItems[section.type]?.includes(item)) {
+                    status = 'completed';
+                  } else if (isLoading && loadingItems[section.type]?.includes(item)) {
+                    status = 'loading';
+                  }
+
+                  return (
+                    <SectionItem
+                      key={item}
+                      item={item}
+                      sectionType={section.type}
+                      status={status}
+                      errorMessage={errorMessage}
+                      step={step}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};

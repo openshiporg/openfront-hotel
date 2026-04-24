@@ -5,6 +5,8 @@ import { models } from "./models";
 import { statelessSessions } from "@keystone-6/core/session";
 import { extendGraphqlSchema } from "./mutations";
 import { sendPasswordResetEmail } from "./lib/mail";
+import { permissions } from "./access";
+import { startChannelSyncJobs } from "./jobs/channelSyncJobs";
 
 const databaseURL = process.env.DATABASE_URL || "file:./keystone.db";
 
@@ -32,13 +34,17 @@ const { withAuth } = createAuth({
       role: {
         create: {
           name: "Admin",
-          canCreateTodos: true,
-          canManageAllTodos: true,
+          canAccessDashboard: true,
+          canManageRooms: true,
+          canManageBookings: true,
+          canManageHousekeeping: true,
+          canManageGuests: true,
+          canManagePayments: true,
           canSeeOtherPeople: true,
           canEditOtherPeople: true,
           canManagePeople: true,
           canManageRoles: true,
-          canAccessDashboard: true,
+          canManageOnboarding: true,
         },
       },
     },
@@ -55,43 +61,51 @@ const { withAuth } = createAuth({
     role {
       id
       name
-      canCreateTodos
-      canManageAllTodos
+      canAccessDashboard
+      canManageRooms
+      canManageBookings
+      canManageHousekeeping
+      canManageGuests
+      canManagePayments
       canSeeOtherPeople
       canEditOtherPeople
       canManagePeople
       canManageRoles
-      canAccessDashboard
+      canManageOnboarding
     }
   `,
 });
 
-export default withAuth(
-  config({
-    db: {
-      provider: "postgresql",
-      url: databaseURL,
+const baseConfig = config({
+  db: {
+    provider: "postgresql",
+    url: databaseURL,
+  },
+  lists: models,
+  storage: {
+    my_images: {
+      kind: "s3",
+      type: "image",
+      bucketName,
+      region,
+      accessKeyId,
+      secretAccessKey,
+      endpoint,
+      signed: { expiry: 5000 },
+      forcePathStyle: true,
     },
-    lists: models,
-    storage: {
-      my_images: {
-        kind: "s3",
-        type: "image",
-        bucketName,
-        region,
-        accessKeyId,
-        secretAccessKey,
-        endpoint,
-        signed: { expiry: 5000 },
-        forcePathStyle: true,
-      },
-    },
-    ui: {
-      isAccessAllowed: ({ session }) => session?.data.role?.canAccessDashboard ?? false,
-    },
-    session: statelessSessions(sessionConfig),
-    graphql: {
-      extendGraphqlSchema,
-    },
-  })
-);
+  },
+  ui: {
+    isAccessAllowed: ({ session }) => permissions.canAccessDashboard({ session }),
+  },
+  session: statelessSessions(sessionConfig),
+  graphql: {
+    extendGraphqlSchema,
+  },
+});
+
+const configWithAuth = withAuth(baseConfig);
+
+startChannelSyncJobs(configWithAuth);
+
+export default configWithAuth;

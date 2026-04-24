@@ -120,3 +120,84 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  .hotel-page {
+    background:
+      radial-gradient(circle at top left, oklch(0.98 0.025 85) 0%, transparent 28%),
+      radial-gradient(circle at top right, oklch(0.95 0.03 60 / 0.55) 0%, transparent 22%),
+      linear-gradient(180deg, oklch(0.985 0.008 85) 0%, oklch(0.97 0.01 85) 100%);
+  }
+
+  .hotel-surface {
+    background: color-mix(in oklab, white 88%, oklch(0.74 0.03 70));
+    border: 1px solid color-mix(in oklab, oklch(0.79 0.03 72) 30%, transparent);
+    box-shadow: 0 24px 80px -48px rgba(36, 26, 12, 0.38);
+  }
+
+  .hotel-surface-muted {
+    background: color-mix(in oklab, white 76%, oklch(0.9 0.03 85));
+    border: 1px solid color-mix(in oklab, oklch(0.79 0.03 72) 24%, transparent);
+  }
+
+  .hotel-kicker {
+    color: oklch(0.43 0.06 58);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .hotel-display {
+    font-size: clamp(2.8rem, 6vw, 5.8rem);
+    line-height: 0.96;
+    letter-spacing: -0.05em;
+  }
+
+  .hotel-title {
+    font-size: clamp(2rem, 3.8vw, 3.4rem);
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+  }
+
+  .hotel-eyebrow-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, oklch(0.66 0.05 58) 32%, transparent);
+    background: color-mix(in oklab, white 84%, oklch(0.84 0.05 76));
+    color: oklch(0.36 0.05 55);
+    padding: 0.42rem 0.8rem;
+    font-size: 0.76rem;
+    font-weight: 600;
+  }
+
+  .hotel-stat-label {
+    color: oklch(0.48 0.03 63);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+
+  .hotel-link {
+    color: oklch(0.43 0.08 45);
+    transition: color 180ms ease;
+  }
+
+  .hotel-link:hover {
+    color: oklch(0.36 0.09 42);
+  }
+
+  .hotel-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, white 70%, oklch(0.89 0.04 85));
+    color: oklch(0.34 0.04 55);
+    padding: 0.45rem 0.75rem;
+    font-size: 0.82rem;
+    line-height: 1.1;
+  }
+}

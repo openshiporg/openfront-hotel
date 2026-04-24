@@ -12,69 +12,521 @@ generator client {
 }
 
 model User {
-  id                      String    @id @default(cuid())
-  name                    String    @default("")
-  email                   String    @unique @default("")
-  password                String
-  role                    Role?     @relation("User_role", fields: [roleId], references: [id])
-  roleId                  String?   @map("role")
-  tasks                   Todo[]    @relation("Todo_assignedTo")
-  passwordResetToken      String?
-  passwordResetIssuedAt   DateTime?
-  passwordResetRedeemedAt DateTime?
+  id                                 String                @id @default(cuid())
+  name                               String                @default("")
+  email                              String                @unique @default("")
+  password                           String
+  role                               Role?                 @relation("User_role", fields: [roleId], references: [id])
+  roleId                             String?               @map("role")
+  phone                              String                @default("")
+  isActive                           Boolean               @default(true)
+  onboardingStatus                   String?               @default("not_started")
+  bookings                           Booking[]             @relation("Booking_guest")
+  createdAt                          DateTime              @default(now())
+  updatedAt                          DateTime              @default(now()) @updatedAt
+  passwordResetToken                 String?
+  passwordResetIssuedAt              DateTime?
+  passwordResetRedeemedAt            DateTime?
+  from_HousekeepingTask_assignedTo   HousekeepingTask[]    @relation("HousekeepingTask_assignedTo")
+  from_BookingPayment_processedBy    BookingPayment[]      @relation("BookingPayment_processedBy")
+  from_ReservationLineItem_postedBy  ReservationLineItem[] @relation("ReservationLineItem_postedBy")
+  from_Guest_userAccount             Guest[]               @relation("Guest_userAccount")
+  from_GuestDocument_verifiedBy      GuestDocument[]       @relation("GuestDocument_verifiedBy")
+  from_LoyaltyTransaction_createdBy  LoyaltyTransaction[]  @relation("LoyaltyTransaction_createdBy")
+  from_MaintenanceRequest_reportedBy MaintenanceRequest[]  @relation("MaintenanceRequest_reportedBy")
+  from_MaintenanceRequest_assignedTo MaintenanceRequest[]  @relation("MaintenanceRequest_assignedTo")
+  from_ChannelSyncEvent_createdBy    ChannelSyncEvent[]    @relation("ChannelSyncEvent_createdBy")
 
   @@index([roleId])
 }
 
 model Role {
-  id                 String  @id @default(cuid())
-  name               String  @default("")
-  canCreateTodos     Boolean @default(false)
-  canManageAllTodos  Boolean @default(false)
-  canSeeOtherPeople  Boolean @default(false)
-  canEditOtherPeople Boolean @default(false)
-  canManagePeople    Boolean @default(false)
-  canManageRoles     Boolean @default(false)
-  canAccessDashboard Boolean @default(false)
-  assignedTo         User[]  @relation("User_role")
+  id                    String   @id @default(cuid())
+  name                  String   @default("")
+  canAccessDashboard    Boolean  @default(false)
+  canManageRooms        Boolean  @default(false)
+  canManageBookings     Boolean  @default(false)
+  canManageHousekeeping Boolean  @default(false)
+  canManageGuests       Boolean  @default(false)
+  canManagePayments     Boolean  @default(false)
+  canSeeOtherPeople     Boolean  @default(false)
+  canEditOtherPeople    Boolean  @default(false)
+  canManagePeople       Boolean  @default(false)
+  canManageRoles        Boolean  @default(false)
+  canManageOnboarding   Boolean  @default(false)
+  assignedTo            User[]   @relation("User_role")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @default(now()) @updatedAt
 }
 
-model Todo {
-  id                   String      @id @default(cuid())
-  label                String      @default("")
-  description          Json        @default("[{\"type\":\"paragraph\",\"children\":[{\"text\":\"\"}]}]")
-  isComplete           Boolean     @default(false)
-  status               String?     @default("todo")
-  priority             Int?        @default(1)
-  tags                 Json        @default("[]")
-  dueDate              DateTime?
-  weight               Float?      @default(1)
-  budget               Decimal?    @default("0.00") @postgresql.Decimal(10, 2)
-  isPrivate            Boolean     @default(false)
-  largeNumber          BigInt?
-  metadata             Json?
-  secretNote           String?
-  coverImage_id        String?
-  coverImage_filesize  Int?
-  coverImage_width     Int?
-  coverImage_height    Int?
-  coverImage_extension String?
-  todoImages           TodoImage[] @relation("Todo_todoImages")
-  assignedTo           User?       @relation("Todo_assignedTo", fields: [assignedToId], references: [id])
-  assignedToId         String?     @map("assignedTo")
+model RoomType {
+  id                               String               @id @default(cuid())
+  name                             String               @unique @default("")
+  description                      Json                 @default("[{\"type\":\"paragraph\",\"children\":[{\"text\":\"\"}]}]")
+  baseRate                         Float
+  maxOccupancy                     Int                  @default(2)
+  bedConfiguration                 String?
+  amenities                        Json                 @default("[]")
+  squareFeet                       Int?
+  rooms                            Room[]               @relation("Room_roomType")
+  roomAssignments                  RoomAssignment[]     @relation("RoomAssignment_roomType")
+  ratePlans                        RatePlan[]           @relation("RatePlan_roomType")
+  createdAt                        DateTime             @default(now())
+  updatedAt                        DateTime             @default(now()) @updatedAt
+  from_RoomInventory_roomType      RoomInventory[]      @relation("RoomInventory_roomType")
+  from_SeasonalRate_roomType       SeasonalRate[]       @relation("SeasonalRate_roomType")
+  from_ChannelReservation_roomType ChannelReservation[] @relation("ChannelReservation_roomType")
+}
 
+model Room {
+  id                           String               @id @default(cuid())
+  roomNumber                   String               @unique @default("")
+  roomType                     RoomType?            @relation("Room_roomType", fields: [roomTypeId], references: [id])
+  roomTypeId                   String?              @map("roomType")
+  floor                        Int?
+  status                       String?              @default("vacant")
+  lastCleaned                  DateTime?
+  notes                        String               @default("")
+  housekeepingTasks            HousekeepingTask[]   @relation("HousekeepingTask_room")
+  roomAssignments              RoomAssignment[]     @relation("RoomAssignment_room")
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @default(now()) @updatedAt
+  from_MaintenanceRequest_room MaintenanceRequest[] @relation("MaintenanceRequest_room")
+
+  @@index([roomTypeId])
+}
+
+model RoomInventory {
+  id           String    @id @default(cuid())
+  date         DateTime
+  roomType     RoomType? @relation("RoomInventory_roomType", fields: [roomTypeId], references: [id])
+  roomTypeId   String?   @map("roomType")
+  totalRooms   Int       @default(0)
+  bookedRooms  Int       @default(0)
+  blockedRooms Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  @@index([date])
+  @@index([roomTypeId])
+}
+
+model HousekeepingTask {
+  id           String    @id @default(cuid())
+  room         Room?     @relation("HousekeepingTask_room", fields: [roomId], references: [id])
+  roomId       String?   @map("room")
+  taskType     String
+  assignedTo   User?     @relation("HousekeepingTask_assignedTo", fields: [assignedToId], references: [id])
+  assignedToId String?   @map("assignedTo")
+  priority     Int?      @default(2)
+  status       String?   @default("pending")
+  startedAt    DateTime?
+  completedAt  DateTime?
+  notes        String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  @@index([roomId])
   @@index([assignedToId])
 }
 
-model TodoImage {
-  id              String  @id @default(cuid())
-  image_id        String?
-  image_filesize  Int?
-  image_width     Int?
-  image_height    Int?
-  image_extension String?
-  imagePath       String  @default("")
-  altText         String  @default("")
-  todos           Todo[]  @relation("Todo_todoImages")
-  metadata        Json?
+model RoomAssignment {
+  id              String    @id @default(cuid())
+  booking         Booking?  @relation("RoomAssignment_booking", fields: [bookingId], references: [id])
+  bookingId       String?   @map("booking")
+  room            Room?     @relation("RoomAssignment_room", fields: [roomId], references: [id])
+  roomId          String?   @map("room")
+  roomType        RoomType? @relation("RoomAssignment_roomType", fields: [roomTypeId], references: [id])
+  roomTypeId      String?   @map("roomType")
+  ratePerNight    Float?
+  guestName       String    @default("")
+  specialRequests String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@index([bookingId])
+  @@index([roomId])
+  @@index([roomTypeId])
+}
+
+model Booking {
+  id                                   String                  @id @default(cuid())
+  confirmationNumber                   String                  @unique @default("")
+  guestName                            String                  @default("")
+  guestEmail                           String                  @default("")
+  guestPhone                           String                  @default("")
+  checkInDate                          DateTime
+  checkOutDate                         DateTime
+  numberOfGuests                       Int                     @default(1)
+  numberOfAdults                       Int?                    @default(1)
+  numberOfChildren                     Int?                    @default(0)
+  roomRate                             Float?
+  taxAmount                            Float?                  @default(0)
+  feesAmount                           Float?                  @default(0)
+  totalAmount                          Float?
+  depositAmount                        Float?                  @default(0)
+  balanceDue                           Float?
+  status                               String?                 @default("pending")
+  paymentStatus                        String?                 @default("unpaid")
+  source                               String?                 @default("direct")
+  specialRequests                      String                  @default("")
+  internalNotes                        String                  @default("")
+  roomAssignments                      RoomAssignment[]        @relation("RoomAssignment_booking")
+  guestProfile                         Guest?                  @relation("Booking_guestProfile", fields: [guestProfileId], references: [id])
+  guestProfileId                       String?                 @map("guestProfile")
+  guest                                User?                   @relation("Booking_guest", fields: [guestId], references: [id])
+  guestId                              String?                 @map("guest")
+  payments                             BookingPayment[]        @relation("BookingPayment_booking")
+  paymentSessions                      BookingPaymentSession[] @relation("BookingPaymentSession_booking")
+  confirmedAt                          DateTime?
+  checkedInAt                          DateTime?
+  checkedOutAt                         DateTime?
+  cancelledAt                          DateTime?
+  createdAt                            DateTime                @default(now())
+  updatedAt                            DateTime                @default(now()) @updatedAt
+  from_ReservationLineItem_reservation ReservationLineItem[]   @relation("ReservationLineItem_reservation")
+  from_LoyaltyTransaction_booking      LoyaltyTransaction[]    @relation("LoyaltyTransaction_booking")
+  from_ChannelReservation_reservation  ChannelReservation[]    @relation("ChannelReservation_reservation")
+
+  @@index([guestProfileId])
+  @@index([guestId])
+}
+
+model BookingPayment {
+  id                    String                 @id @default(cuid())
+  paymentReference      String                 @unique @default("")
+  paymentType           String                 @default("full_payment")
+  amount                Float
+  currency              String                 @default("USD")
+  paymentMethod         String                 @default("credit_card")
+  status                String?                @default("pending")
+  providerPaymentId     String                 @default("")
+  providerCaptureId     String                 @default("")
+  providerRefundId      String                 @default("")
+  providerData          Json?                  @default("{}")
+  stripePaymentIntentId String                 @default("")
+  stripeChargeId        String                 @default("")
+  stripeRefundId        String                 @default("")
+  cardBrand             String                 @default("")
+  cardLast4             String                 @default("")
+  cardExpMonth          String                 @default("")
+  cardExpYear           String                 @default("")
+  receiptEmail          String                 @default("")
+  receiptUrl            String                 @default("")
+  description           String                 @default("")
+  internalNotes         String                 @default("")
+  failureReason         String                 @default("")
+  booking               Booking?               @relation("BookingPayment_booking", fields: [bookingId], references: [id])
+  bookingId             String?                @map("booking")
+  paymentProvider       PaymentProvider?       @relation("BookingPayment_paymentProvider", fields: [paymentProviderId], references: [id])
+  paymentProviderId     String?                @map("paymentProvider")
+  paymentSession        BookingPaymentSession? @relation("BookingPayment_paymentSession", fields: [paymentSessionId], references: [id])
+  paymentSessionId      String?                @map("paymentSession")
+  processedBy           User?                  @relation("BookingPayment_processedBy", fields: [processedById], references: [id])
+  processedById         String?                @map("processedBy")
+  processedAt           DateTime?
+  refundedAt            DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @default(now()) @updatedAt
+
+  @@index([bookingId])
+  @@index([paymentProviderId])
+  @@index([paymentSessionId])
+  @@index([processedById])
+}
+
+model BookingPaymentSession {
+  id                                 String           @id @default(cuid())
+  isSelected                         Boolean          @default(false)
+  isInitiated                        Boolean          @default(false)
+  amount                             Int
+  data                               Json?            @default("{}")
+  idempotencyKey                     String           @default("")
+  booking                            Booking?         @relation("BookingPaymentSession_booking", fields: [bookingId], references: [id])
+  bookingId                          String?          @map("booking")
+  paymentProvider                    PaymentProvider? @relation("BookingPaymentSession_paymentProvider", fields: [paymentProviderId], references: [id])
+  paymentProviderId                  String?          @map("paymentProvider")
+  paymentAuthorizedAt                DateTime?
+  createdAt                          DateTime         @default(now())
+  updatedAt                          DateTime         @default(now()) @updatedAt
+  from_BookingPayment_paymentSession BookingPayment[] @relation("BookingPayment_paymentSession")
+
+  @@index([idempotencyKey])
+  @@index([bookingId])
+  @@index([paymentProviderId])
+}
+
+model PaymentProvider {
+  id                          String                  @id @default(cuid())
+  name                        String                  @default("")
+  code                        String                  @unique @default("")
+  isInstalled                 Boolean                 @default(true)
+  credentials                 Json?                   @default("{}")
+  metadata                    Json?                   @default("{}")
+  createPaymentFunction       String                  @default("")
+  capturePaymentFunction      String                  @default("")
+  refundPaymentFunction       String                  @default("")
+  getPaymentStatusFunction    String                  @default("")
+  generatePaymentLinkFunction String                  @default("")
+  handleWebhookFunction       String                  @default("")
+  bookingPaymentSessions      BookingPaymentSession[] @relation("BookingPaymentSession_paymentProvider")
+  bookingPayments             BookingPayment[]        @relation("BookingPayment_paymentProvider")
+  createdAt                   DateTime                @default(now())
+  updatedAt                   DateTime                @default(now()) @updatedAt
+}
+
+model ReservationLineItem {
+  id            String   @id @default(cuid())
+  reservation   Booking? @relation("ReservationLineItem_reservation", fields: [reservationId], references: [id])
+  reservationId String?  @map("reservation")
+  type          String
+  description   String   @default("")
+  quantity      Int      @default(1)
+  unitPrice     Int
+  totalPrice    Int
+  date          DateTime @default(now())
+  postedBy      User?    @relation("ReservationLineItem_postedBy", fields: [postedById], references: [id])
+  postedById    String?  @map("postedBy")
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@index([reservationId])
+  @@index([postedById])
+}
+
+model Guest {
+  id                            String               @id @default(cuid())
+  firstName                     String               @default("")
+  lastName                      String               @default("")
+  email                         String               @unique @default("")
+  phone                         String               @default("")
+  preferences                   Json?                @default("{\"pillowType\":\"standard\",\"floorPreference\":\"any\",\"smokingPreference\":\"non-smoking\",\"bedType\":\"any\",\"earlyCheckIn\":false,\"lateCheckOut\":false,\"specialDiet\":\"\",\"accessibility\":[]}")
+  loyaltyNumber                 String               @unique @default("")
+  loyaltyTier                   String?              @default("bronze")
+  loyaltyPoints                 String               @default("")
+  communicationPreferences      Json?                @default("{\"emailMarketing\":true,\"smsNotifications\":false,\"phoneNotifications\":false,\"preferredLanguage\":\"en\",\"newsletterSubscribed\":false}")
+  idType                        String?
+  idNumber                      String               @default("")
+  nationality                   String               @default("")
+  address1                      String               @default("")
+  address2                      String               @default("")
+  city                          String               @default("")
+  state                         String               @default("")
+  postalCode                    String               @default("")
+  country                       String               @default("")
+  company                       String               @default("")
+  specialNotes                  String               @default("")
+  isVip                         Boolean              @default(false)
+  isBlacklisted                 Boolean              @default(false)
+  bookings                      Booking[]            @relation("Booking_guestProfile")
+  userAccount                   User?                @relation("Guest_userAccount", fields: [userAccountId], references: [id])
+  userAccountId                 String?              @map("userAccount")
+  lastStayAt                    DateTime?
+  totalStays                    String               @default("")
+  totalSpent                    String               @default("")
+  createdAt                     DateTime             @default(now())
+  updatedAt                     DateTime             @default(now()) @updatedAt
+  from_GuestDocument_guest      GuestDocument[]      @relation("GuestDocument_guest")
+  from_LoyaltyTransaction_guest LoyaltyTransaction[] @relation("LoyaltyTransaction_guest")
+
+  @@index([userAccountId])
+}
+
+model GuestDocument {
+  id             String    @id @default(cuid())
+  guest          Guest?    @relation("GuestDocument_guest", fields: [guestId], references: [id])
+  guestId        String?   @map("guest")
+  documentType   String
+  documentNumber String    @default("")
+  issuingCountry String    @default("")
+  expiryDate     DateTime?
+  frontImage     String    @default("")
+  backImage      String    @default("")
+  verified       Boolean   @default(false)
+  verifiedAt     DateTime?
+  verifiedBy     User?     @relation("GuestDocument_verifiedBy", fields: [verifiedById], references: [id])
+  verifiedById   String?   @map("verifiedBy")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  @@index([guestId])
+  @@index([verifiedById])
+}
+
+model LoyaltyTransaction {
+  id          String   @id @default(cuid())
+  guest       Guest?   @relation("LoyaltyTransaction_guest", fields: [guestId], references: [id])
+  guestId     String?  @map("guest")
+  booking     Booking? @relation("LoyaltyTransaction_booking", fields: [bookingId], references: [id])
+  bookingId   String?  @map("booking")
+  points      Int
+  type        String
+  description String   @default("")
+  createdBy   User?    @relation("LoyaltyTransaction_createdBy", fields: [createdById], references: [id])
+  createdById String?  @map("createdBy")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@index([guestId])
+  @@index([bookingId])
+  @@index([createdById])
+}
+
+model RatePlan {
+  id                  String    @id @default(cuid())
+  name                String    @unique @default("")
+  description         String    @default("")
+  roomType            RoomType? @relation("RatePlan_roomType", fields: [roomTypeId], references: [id])
+  roomTypeId          String?   @map("roomType")
+  baseRate            Float
+  seasonalAdjustments Json?     @default("{\"peak\":1.25,\"high\":1.15,\"regular\":1,\"low\":0.85}")
+  minimumStay         Int?      @default(1)
+  maximumStay         Int?
+  advanceBookingMin   Int?      @default(0)
+  advanceBookingMax   Int?
+  cancellationPolicy  String?   @default("moderate")
+  mealPlan            String?   @default("room_only")
+  validFrom           DateTime?
+  validTo             DateTime?
+  applicableDays      Json?     @default("{\"monday\":true,\"tuesday\":true,\"wednesday\":true,\"thursday\":true,\"friday\":true,\"saturday\":true,\"sunday\":true}")
+  status              String?   @default("draft")
+  isPublic            Boolean   @default(true)
+  isPromotional       Boolean   @default(false)
+  promoCode           String    @default("")
+  priority            Int?      @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+
+  @@index([roomTypeId])
+}
+
+model SeasonalRate {
+  id              String    @id @default(cuid())
+  name            String    @default("")
+  startDate       DateTime
+  endDate         DateTime
+  roomType        RoomType? @relation("SeasonalRate_roomType", fields: [roomTypeId], references: [id])
+  roomTypeId      String?   @map("roomType")
+  priceAdjustment Int?
+  priceMultiplier Float?
+  minimumStay     Int?      @default(1)
+  priority        Int       @default(0)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@index([roomTypeId])
+}
+
+model MaintenanceRequest {
+  id           String    @id @default(cuid())
+  room         Room?     @relation("MaintenanceRequest_room", fields: [roomId], references: [id])
+  roomId       String?   @map("room")
+  title        String    @default("")
+  description  String    @default("")
+  category     String
+  priority     String    @default("medium")
+  status       String?   @default("reported")
+  reportedBy   User?     @relation("MaintenanceRequest_reportedBy", fields: [reportedById], references: [id])
+  reportedById String?   @map("reportedBy")
+  assignedTo   User?     @relation("MaintenanceRequest_assignedTo", fields: [assignedToId], references: [id])
+  assignedToId String?   @map("assignedTo")
+  images       Json?     @default("[]")
+  scheduledFor DateTime?
+  completedAt  DateTime?
+  cost         Int?
+  notes        String    @default("")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+
+  @@index([roomId])
+  @@index([reportedById])
+  @@index([assignedToId])
+}
+
+model Channel {
+  id                            String               @id @default(cuid())
+  name                          String               @unique @default("")
+  channelType                   String
+  isActive                      Boolean              @default(true)
+  credentials                   Json?                @default("{}")
+  commission                    Float?               @default(0)
+  syncInventory                 Boolean              @default(true)
+  syncRates                     Boolean              @default(true)
+  lastSyncAt                    DateTime?
+  syncStatus                    String?              @default("active")
+  syncErrors                    Json?                @default("[]")
+  mappingRules                  Json?                @default("{}")
+  channelReservations           ChannelReservation[] @relation("ChannelReservation_channel")
+  createdAt                     DateTime             @default(now())
+  updatedAt                     DateTime             @default(now()) @updatedAt
+  from_ChannelSyncEvent_channel ChannelSyncEvent[]   @relation("ChannelSyncEvent_channel")
+}
+
+model ChannelReservation {
+  id            String    @id @default(cuid())
+  channel       Channel?  @relation("ChannelReservation_channel", fields: [channelId], references: [id])
+  channelId     String?   @map("channel")
+  externalId    String    @default("")
+  reservation   Booking?  @relation("ChannelReservation_reservation", fields: [reservationId], references: [id])
+  reservationId String?   @map("reservation")
+  roomType      RoomType? @relation("ChannelReservation_roomType", fields: [roomTypeId], references: [id])
+  roomTypeId    String?   @map("roomType")
+  checkInDate   DateTime
+  checkOutDate  DateTime
+  guestName     String    @default("")
+  guestEmail    String    @default("")
+  totalAmount   Int?
+  commission    Int?
+  channelStatus String    @default("")
+  rawData       Json?     @default("{}")
+  lastSyncedAt  DateTime?
+  syncErrors    Json?     @default("[]")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  @@index([channelId])
+  @@index([externalId])
+  @@index([reservationId])
+  @@index([roomTypeId])
+}
+
+model ChannelSyncEvent {
+  id            String    @id @default(cuid())
+  channel       Channel?  @relation("ChannelSyncEvent_channel", fields: [channelId], references: [id])
+  channelId     String?   @map("channel")
+  action        String?   @default("webhook_event")
+  status        String?   @default("success")
+  message       String    @default("")
+  payload       Json?     @default("{}")
+  errorMessage  String    @default("")
+  attempts      Int?      @default(0)
+  nextAttemptAt DateTime?
+  occurredAt    DateTime? @default(now())
+  createdBy     User?     @relation("ChannelSyncEvent_createdBy", fields: [createdById], references: [id])
+  createdById   String?   @map("createdBy")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  @@index([channelId])
+  @@index([createdById])
+}
+
+model DailyMetrics {
+  id                      String   @id @default(cuid())
+  date                    DateTime @unique
+  totalRooms              Int      @default(0)
+  occupiedRooms           Int      @default(0)
+  occupancyRate           Float?   @default(0)
+  averageDailyRate        Int?     @default(0)
+  revenuePerAvailableRoom Int?     @default(0)
+  totalRevenue            Int?     @default(0)
+  channelRevenue          Json?    @default("{}")
+  newReservations         Int?     @default(0)
+  cancellations           Int?     @default(0)
+  checkIns                Int?     @default(0)
+  checkOuts               Int?     @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @default(now()) @updatedAt
 }

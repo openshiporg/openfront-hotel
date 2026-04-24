@@ -1,0 +1,357 @@
+{
+  "roomTypes": [
+    {
+      "name": "Classic Queen",
+      "description": "A bright guest room designed for short city stays with a queen bed, desk, and rainfall shower.",
+      "baseRate": 159,
+      "maxOccupancy": 2,
+      "bedConfiguration": "queen",
+      "amenities": ["wifi", "tv", "desk", "shower", "ac", "hair_dryer", "coffee_maker"],
+      "squareFeet": 280
+    },
+    {
+      "name": "Deluxe King",
+      "description": "A larger king room with lounge chair, premium linens, and skyline views for direct-booking guests.",
+      "baseRate": 229,
+      "maxOccupancy": 2,
+      "bedConfiguration": "king",
+      "amenities": ["wifi", "tv", "desk", "shower", "ac", "hair_dryer", "coffee_maker", "city_view", "safe", "minibar"],
+      "squareFeet": 360
+    },
+    {
+      "name": "Family Suite",
+      "description": "A flexible family suite with a king bedroom, sofa bed, and extra space for longer stays.",
+      "baseRate": 319,
+      "maxOccupancy": 4,
+      "bedConfiguration": "king_sofa",
+      "amenities": ["wifi", "tv", "desk", "bathtub", "ac", "hair_dryer", "coffee_maker", "city_view", "safe", "room_service"],
+      "squareFeet": 520
+    }
+  ],
+  "rooms": [
+    { "roomNumber": "101", "roomType": "Classic Queen", "floor": 1, "status": "vacant", "notes": "Quiet courtyard side." },
+    { "roomNumber": "102", "roomType": "Classic Queen", "floor": 1, "status": "occupied", "notes": "Near housekeeping closet." },
+    { "roomNumber": "103", "roomType": "Classic Queen", "floor": 1, "status": "cleaning", "notes": "Turnover in progress." },
+    { "roomNumber": "201", "roomType": "Deluxe King", "floor": 2, "status": "occupied", "notes": "Preferred high-floor upgrade room." },
+    { "roomNumber": "202", "roomType": "Deluxe King", "floor": 2, "status": "vacant", "notes": "Popular direct booking room." },
+    { "roomNumber": "203", "roomType": "Deluxe King", "floor": 2, "status": "maintenance", "notes": "AC inspection scheduled." },
+    { "roomNumber": "301", "roomType": "Family Suite", "floor": 3, "status": "occupied", "notes": "Extended stay family suite." },
+    { "roomNumber": "302", "roomType": "Family Suite", "floor": 3, "status": "vacant", "notes": "Ready for weekend arrivals." }
+  ],
+  "ratePlans": [
+    {
+      "name": "Classic Flexible",
+      "description": "Standard direct-booking rate with free cancellation up to 48 hours before arrival.",
+      "roomType": "Classic Queen",
+      "baseRate": 159,
+      "minimumStay": 1,
+      "maximumStay": 14,
+      "advanceBookingMin": 0,
+      "advanceBookingMax": 180,
+      "cancellationPolicy": "flexible",
+      "mealPlan": "room_only",
+      "status": "active",
+      "isPublic": true,
+      "isPromotional": false,
+      "priority": 10
+    },
+    {
+      "name": "Deluxe Flexible",
+      "description": "Best available direct rate for Deluxe King stays.",
+      "roomType": "Deluxe King",
+      "baseRate": 229,
+      "minimumStay": 1,
+      "maximumStay": 14,
+      "advanceBookingMin": 0,
+      "advanceBookingMax": 180,
+      "cancellationPolicy": "flexible",
+      "mealPlan": "room_only",
+      "status": "active",
+      "isPublic": true,
+      "isPromotional": false,
+      "priority": 10
+    },
+    {
+      "name": "Bed & Breakfast",
+      "description": "Breakfast included for guests who want an easy direct-booking package.",
+      "roomType": "Deluxe King",
+      "baseRate": 249,
+      "minimumStay": 1,
+      "maximumStay": 10,
+      "advanceBookingMin": 0,
+      "advanceBookingMax": 120,
+      "cancellationPolicy": "moderate",
+      "mealPlan": "breakfast",
+      "status": "active",
+      "isPublic": true,
+      "isPromotional": true,
+      "priority": 20
+    },
+    {
+      "name": "Family Escape",
+      "description": "Family suite package with flexible cancellation and breakfast included.",
+      "roomType": "Family Suite",
+      "baseRate": 339,
+      "minimumStay": 2,
+      "maximumStay": 7,
+      "advanceBookingMin": 1,
+      "advanceBookingMax": 180,
+      "cancellationPolicy": "moderate",
+      "mealPlan": "breakfast",
+      "status": "active",
+      "isPublic": true,
+      "isPromotional": true,
+      "priority": 30
+    }
+  ],
+  "seasonalRates": [
+    {
+      "name": "Spring City Weekend",
+      "roomType": "Deluxe King",
+      "startDate": "2026-03-20T00:00:00.000Z",
+      "endDate": "2026-03-23T00:00:00.000Z",
+      "priceMultiplier": 1.2,
+      "minimumStay": 2,
+      "priority": 20,
+      "isActive": true
+    },
+    {
+      "name": "Family Break Offer",
+      "roomType": "Family Suite",
+      "startDate": "2026-04-01T00:00:00.000Z",
+      "endDate": "2026-04-08T00:00:00.000Z",
+      "priceMultiplier": 0.92,
+      "minimumStay": 2,
+      "priority": 15,
+      "isActive": true
+    }
+  ],
+  "guests": [
+    {
+      "firstName": "Ava",
+      "lastName": "Carter",
+      "email": "ava.carter@example.com",
+      "phone": "+1-312-555-0142",
+      "preferences": {
+        "pillowType": "firm",
+        "floorPreference": "high",
+        "smokingPreference": "non-smoking",
+        "bedType": "king",
+        "earlyCheckIn": false,
+        "lateCheckOut": true,
+        "specialDiet": "vegetarian",
+        "accessibility": []
+      },
+      "loyaltyNumber": "OFH-1001",
+      "loyaltyTier": "gold",
+      "communicationPreferences": {
+        "emailMarketing": true,
+        "smsNotifications": true,
+        "phoneNotifications": false,
+        "preferredLanguage": "en",
+        "newsletterSubscribed": true
+      },
+      "company": "Northline Design",
+      "specialNotes": "Prefers quiet floors and late checkout when available.",
+      "isVip": true,
+      "totalStays": "4",
+      "totalSpent": "1840.00"
+    },
+    {
+      "firstName": "Liam",
+      "lastName": "Brooks",
+      "email": "liam.brooks@example.com",
+      "phone": "+1-773-555-0188",
+      "preferences": {
+        "pillowType": "standard",
+        "floorPreference": "low",
+        "smokingPreference": "non-smoking",
+        "bedType": "queen",
+        "earlyCheckIn": true,
+        "lateCheckOut": false,
+        "specialDiet": "",
+        "accessibility": []
+      },
+      "loyaltyNumber": "OFH-1002",
+      "loyaltyTier": "silver",
+      "communicationPreferences": {
+        "emailMarketing": false,
+        "smsNotifications": true,
+        "phoneNotifications": false,
+        "preferredLanguage": "en",
+        "newsletterSubscribed": false
+      },
+      "company": "Lakefront Legal",
+      "specialNotes": "Often books one-night business stays.",
+      "isVip": false,
+      "totalStays": "2",
+      "totalSpent": "620.00"
+    },
+    {
+      "firstName": "Sofia",
+      "lastName": "Martinez",
+      "email": "sofia.martinez@example.com",
+      "phone": "+1-847-555-0196",
+      "preferences": {
+        "pillowType": "soft",
+        "floorPreference": "any",
+        "smokingPreference": "non-smoking",
+        "bedType": "suite",
+        "earlyCheckIn": false,
+        "lateCheckOut": false,
+        "specialDiet": "gluten-free",
+        "accessibility": []
+      },
+      "loyaltyNumber": "OFH-1003",
+      "loyaltyTier": "bronze",
+      "communicationPreferences": {
+        "emailMarketing": true,
+        "smsNotifications": false,
+        "phoneNotifications": false,
+        "preferredLanguage": "es",
+        "newsletterSubscribed": true
+      },
+      "company": "",
+      "specialNotes": "Travels with children during school breaks.",
+      "isVip": false,
+      "totalStays": "1",
+      "totalSpent": "410.00"
+    }
+  ],
+  "bookings": [
+    {
+      "key": "ava-deluxe-weekend",
+      "label": "Ava Carter · Deluxe King · Mar 18–20",
+      "guestEmail": "ava.carter@example.com",
+      "guestName": "Ava Carter",
+      "roomType": "Deluxe King",
+      "roomNumber": "201",
+      "checkInDate": "2026-03-18T15:00:00.000Z",
+      "checkOutDate": "2026-03-20T11:00:00.000Z",
+      "numberOfGuests": 2,
+      "numberOfAdults": 2,
+      "numberOfChildren": 0,
+      "roomRate": 458,
+      "taxAmount": 54,
+      "feesAmount": 18,
+      "totalAmount": 530,
+      "depositAmount": 150,
+      "balanceDue": 380,
+      "status": "confirmed",
+      "paymentStatus": "partial",
+      "source": "website",
+      "specialRequests": "High floor and late arrival after 9pm."
+    },
+    {
+      "key": "liam-classic-business",
+      "label": "Liam Brooks · Classic Queen · Mar 12–13",
+      "guestEmail": "liam.brooks@example.com",
+      "guestName": "Liam Brooks",
+      "roomType": "Classic Queen",
+      "roomNumber": "102",
+      "checkInDate": "2026-03-12T15:00:00.000Z",
+      "checkOutDate": "2026-03-13T11:00:00.000Z",
+      "numberOfGuests": 1,
+      "numberOfAdults": 1,
+      "numberOfChildren": 0,
+      "roomRate": 159,
+      "taxAmount": 19,
+      "feesAmount": 12,
+      "totalAmount": 190,
+      "depositAmount": 0,
+      "balanceDue": 190,
+      "status": "checked_in",
+      "paymentStatus": "unpaid",
+      "source": "corporate",
+      "specialRequests": "Quiet room near elevator access."
+    },
+    {
+      "key": "sofia-family-break",
+      "label": "Sofia Martinez · Family Suite · Apr 3–6",
+      "guestEmail": "sofia.martinez@example.com",
+      "guestName": "Sofia Martinez",
+      "roomType": "Family Suite",
+      "roomNumber": "301",
+      "checkInDate": "2026-04-03T15:00:00.000Z",
+      "checkOutDate": "2026-04-06T11:00:00.000Z",
+      "numberOfGuests": 4,
+      "numberOfAdults": 2,
+      "numberOfChildren": 2,
+      "roomRate": 1017,
+      "taxAmount": 122,
+      "feesAmount": 36,
+      "totalAmount": 1175,
+      "depositAmount": 250,
+      "balanceDue": 925,
+      "status": "pending",
+      "paymentStatus": "unpaid",
+      "source": "website",
+      "specialRequests": "Connecting crib and gluten-free breakfast options."
+    }
+  ],
+  "inventory": [
+    {
+      "key": "classic-2026-03-18",
+      "label": "Classic Queen · Mar 18",
+      "roomType": "Classic Queen",
+      "date": "2026-03-18T00:00:00.000Z",
+      "totalRooms": 3,
+      "bookedRooms": 1,
+      "blockedRooms": 0
+    },
+    {
+      "key": "deluxe-2026-03-18",
+      "label": "Deluxe King · Mar 18",
+      "roomType": "Deluxe King",
+      "date": "2026-03-18T00:00:00.000Z",
+      "totalRooms": 3,
+      "bookedRooms": 1,
+      "blockedRooms": 1
+    },
+    {
+      "key": "family-2026-04-03",
+      "label": "Family Suite · Apr 3",
+      "roomType": "Family Suite",
+      "date": "2026-04-03T00:00:00.000Z",
+      "totalRooms": 2,
+      "bookedRooms": 1,
+      "blockedRooms": 0
+    }
+  ],
+  "dailyMetrics": [
+    {
+      "date": "2026-03-10T00:00:00.000Z",
+      "totalRooms": 8,
+      "occupiedRooms": 5,
+      "occupancyRate": 62.5,
+      "averageDailyRate": 19200,
+      "revenuePerAvailableRoom": 12000,
+      "totalRevenue": 96000,
+      "channelRevenue": {
+        "direct": 56000,
+        "ota": 40000
+      },
+      "newReservations": 3,
+      "cancellations": 1,
+      "checkIns": 2,
+      "checkOuts": 1
+    },
+    {
+      "date": "2026-03-11T00:00:00.000Z",
+      "totalRooms": 8,
+      "occupiedRooms": 6,
+      "occupancyRate": 75,
+      "averageDailyRate": 20500,
+      "revenuePerAvailableRoom": 15375,
+      "totalRevenue": 123000,
+      "channelRevenue": {
+        "direct": 73000,
+        "ota": 50000
+      },
+      "newReservations": 4,
+      "cancellations": 0,
+      "checkIns": 3,
+      "checkOuts": 2
+    }
+  ]
+}
