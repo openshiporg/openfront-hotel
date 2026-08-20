@@ -1,12 +1,18 @@
 {
-  "name": "weekday-keystone",
+  "name": "openfront-hotel",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Self-hostable hotel PMS and direct booking engine for independent properties.",
+  "license": "MIT",
   "scripts": {
-    "dev": "keystone build --no-ui && npm run migrate && next dev",
-    "build": "keystone build --no-ui && npm run migrate && next build",
+    "generate:view-order": "tsx features/keystone/view-order/generate-view-order.ts",
+    "verify:release-lock": "cmp -s package-lock.json npm-shrinkwrap.json",
+    "verify:release-package": "node scripts/verify-release-package.mjs",
+    "dev": "keystone build --no-ui && npm run generate:view-order && next dev",
+    "build": "keystone build --no-ui && npm run generate:view-order && next build",
+    "release:migrate": "prisma migrate deploy",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "migrate:gen": "keystone build --no-ui && tsx features/keystone/view-order/generate-view-order.ts && keystone prisma migrate dev",
     "migrate": "prisma migrate deploy"
   },

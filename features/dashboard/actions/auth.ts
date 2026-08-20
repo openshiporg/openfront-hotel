@@ -5,6 +5,7 @@ import { keystoneClient } from '@/features/dashboard/lib/keystoneClient';
 import { redirect } from 'next/navigation';
 import { removeAuthToken } from '@/features/dashboard/lib/cookies';
 import { revalidatePath } from 'next/cache';
+import { getGraphQLEndpoint } from '@/features/dashboard/lib/getBaseUrl';
 
 // Define types for GraphQL responses
 interface RedeemTokenResponse {
@@ -12,10 +13,6 @@ interface RedeemTokenResponse {
     code: string;
     message: string;
   } | null;
-}
-
-interface SendLinkResponse {
-  sendUserPasswordResetLink?: boolean | null;
 }
 
 export async function signIn(prevState: { message: string | null, formData: { email: string, password: string } }, formData: FormData) {
@@ -212,7 +209,7 @@ export async function resetPassword(prevState: { message: string | null, success
 
     const query = `
       mutation($email: String!, $password: String!, $token: String!) {
-        redeemUserPasswordResetToken(
+        redeemUserPasswordResetToken: redeemHotelPasswordResetToken(
           email: $email
           token: $token
           password: $password
@@ -251,56 +248,51 @@ export async function resetPassword(prevState: { message: string | null, success
       };
     }
   } else {
-    // Request reset
-    const query = `
-      mutation($email: String!) {
-        sendUserPasswordResetLink(email: $email)
-      }
-    `;
-
+    const generic = {
+      success: 'If an eligible account exists, password reset instructions will be sent.',
+      formData: { email, password: '' },
+    };
+    const startedAt = Date.now();
     try {
-      const response = await keystoneClient<SendLinkResponse>(query, { email });
-
-      if (!response.success) {
-        return {
-          message: `Password reset request failed: ${response.error}`,
-          formData: { email, password: '' }
-        };
-      }
-
-      if (response.data?.sendUserPasswordResetLink === true) {
-        return {
-          success: 'Password reset link has been sent to your email.',
-          formData: { email, password: '' }
-        };
-      } else {
-        return {
-          message: 'Password reset request failed',
-          formData: { email, password: '' }
-        };
-      }
-    } catch (error) {
-      return {
-        message: error instanceof Error ? error.message : 'Reset operation failed',
-        formData: { email, password: '' }
-      };
+      const endpoint = await getGraphQLEndpoint();
+      await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-hotel-reset-action': process.env.RESET_ACTION_SECRET || '' },
+        body: JSON.stringify({
+          query: 'mutation($email:String!){sendUserPasswordResetLink(email:$email)}',
+          variables: { email: String(email || '').trim().toLowerCase() },
+        }),
+        cache: 'no-store',
+      });
+    } catch {
+      // Account existence and delivery state are intentionally not exposed.
     }
+    const remaining = 400 - (Date.now() - startedAt);
+    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
+    return generic;
   }
 }
 
 export async function getAuthenticatedUser() {
   const query = `
     query AuthenticatedUser {
+      hotelOperatorCapabilities {
+        canAccessDashboard
+        canManageRooms
+        canManageBookings
+        canManageHousekeeping
+        canManageGuests
+        canManagePayments
+        canManageOnboarding
+        canManageAudit
+        canManageIntegrations
+      }
       authenticatedItem {
         ... on User {
           id
           email
           name
           onboardingStatus
-          role {
-            canAccessDashboard
-            canManageOnboarding
-          }
         }
       }
     }

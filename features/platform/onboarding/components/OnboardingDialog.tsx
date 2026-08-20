@@ -90,13 +90,13 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[95vh] max-w-[95vw] gap-0 overflow-hidden p-0 sm:max-w-4xl">
-        <DialogHeader className="mb-0 border-b px-4 py-4 sm:px-6">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-[95vw] flex-col overflow-hidden p-0 gap-0 sm:max-w-4xl">
+        <DialogHeader className="mb-0 border-b px-4 py-4 sm:px-6 shrink-0">
           <DialogTitle>Hotel onboarding</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col lg:flex-row">
-          <div className="order-1 flex flex-col lg:order-none lg:w-80 lg:justify-between lg:border-r">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+          <div className="order-1 flex shrink-0 flex-col lg:order-none lg:w-80 lg:justify-between lg:border-r">
             <div className="flex-1">
               <div className="p-4 sm:p-6">
                 <div className="flex items-center space-x-3">
@@ -107,10 +107,10 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                     <h3 className="text-sm font-medium text-foreground">Hotel setup</h3>
                     <p className="text-sm text-muted-foreground">
                       {step === 'done'
-                        ? 'Your hotel demo is ready'
+                        ? 'Your property setup is ready'
                         : selectedTemplate === 'custom'
-                          ? 'Use a custom hotel JSON seed'
-                          : 'Create linked PMS and booking demo data'}
+                          ? 'Use a custom property JSON seed'
+                          : 'Create linked PMS and booking sample data'}
                     </p>
                   </div>
                 </div>
@@ -121,7 +121,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                   <>
                     <h4 className="mb-2 text-sm font-medium text-foreground">Setup complete</h4>
                     <p className="mb-4 text-sm text-muted-foreground">
-                      Your {selectedTemplate === 'minimal' ? 'basic' : 'complete'} hotel demo dataset is now ready.
+                      Your {selectedTemplate === 'minimal' ? 'basic' : 'complete'} property dataset is now ready.
                     </p>
                     <div className="mb-4 flex items-center space-x-2 text-sm text-emerald-600 dark:text-emerald-500">
                       <CircleCheck className="h-4 w-4 fill-emerald-500 text-background" />
@@ -232,7 +232,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                 <Badge color="rose" className="rounded-none gap-3 border-b text-sm">
                   <AlertCircle className="size-4 sm:size-7" />
                   <span className="text-xs sm:text-sm">
-                    There was a problem creating the hotel demo data. Review the first failed section and retry.
+                    There was a problem creating the property sample data. Review the first failed section and retry.
                   </span>
                 </Badge>
               )}
@@ -275,7 +275,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
             </div>
           </div>
 
-          <div className="order-2 max-h-[60vh] flex-1 overflow-y-auto p-4 sm:p-6 lg:order-none lg:max-h-[70vh]">
+          <div className="order-2 min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:order-none">
             {selectedTemplate === 'custom' && step === 'template' && !customJsonApplied ? (
               <CustomSetupSteps
                 currentJson={currentJsonData}
@@ -301,12 +301,12 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
           </div>
         </div>
 
-        <div className="flex flex-col border-t lg:hidden">
+        <div className="flex shrink-0 flex-col border-t lg:hidden">
           {error && !isLoading && step !== 'done' && (
             <Badge color="rose" className="rounded-none gap-3 border-b text-sm">
               <AlertCircle className="size-4 sm:size-7" />
               <span className="text-xs sm:text-sm">
-                There was a problem creating the hotel demo data. Review the first failed section and retry.
+                There was a problem creating the property sample data. Review the first failed section and retry.
               </span>
             </Badge>
           )}

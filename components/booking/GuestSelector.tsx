@@ -20,9 +20,10 @@ interface GuestSelectorProps {
   guests: GuestCounts;
   onGuestsChange: (guests: GuestCounts) => void;
   className?: string;
+  variant?: 'card' | 'inline';
 }
 
-export function GuestSelector({ guests, onGuestsChange, className }: GuestSelectorProps) {
+export function GuestSelector({ guests, onGuestsChange, className, variant = 'card' }: GuestSelectorProps) {
   const totalGuests = guests.adults + guests.children;
 
   const updateGuests = (type: 'adults' | 'children', delta: number) => {
@@ -33,30 +34,33 @@ export function GuestSelector({ guests, onGuestsChange, className }: GuestSelect
   };
 
   return (
-    <div className={cn('grid gap-2', className)}>
+    <div className={cn('min-w-0', className)}>
       <Popover>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             className={cn(
-              'h-12 w-full justify-start rounded-2xl border-[color:oklch(0.84_0.02_75)] bg-white/85 text-left font-normal shadow-none hover:bg-white',
-              totalGuests === 0 && 'text-[color:oklch(0.54_0.02_58)]'
+              variant === 'inline'
+                ? 'h-auto min-h-0 w-full min-w-0 justify-between rounded-none border-0 bg-transparent p-0 text-left text-[1.08rem] font-normal leading-7 shadow-none hover:bg-transparent'
+                : 'h-12 w-full justify-start rounded-2xl border-[color:oklch(0.84_0.02_75)] bg-white/85 text-left font-normal shadow-none hover:bg-white',
+              totalGuests === 0 && 'text-[#1b1c1c]'
             )}
           >
-            <Users className="mr-2 h-4 w-4 text-[color:oklch(0.45_0.05_48)]" />
-            {totalGuests > 0 ? (
-              <span>
-                {totalGuests} {totalGuests === 1 ? 'guest' : 'guests'}
-                {guests.adults > 0 && ` · ${guests.adults} ${guests.adults === 1 ? 'adult' : 'adults'}`}
-                {guests.children > 0 && ` · ${guests.children} ${guests.children === 1 ? 'child' : 'children'}`}
-              </span>
-            ) : (
-              <span>Select guests</span>
-            )}
+            <span className="block min-w-0 truncate">
+              {totalGuests > 0 ? (
+                <>
+                  {totalGuests} {totalGuests === 1 ? 'guest' : 'guests'} · {guests.adults} {guests.adults === 1 ? 'adult' : 'adults'}
+                  {guests.children > 0 ? ` · ${guests.children} ${guests.children === 1 ? 'child' : 'children'}` : ''}
+                </>
+              ) : (
+                'Select guests'
+              )}
+            </span>
+            <Users className="ml-3 h-4 w-4 shrink-0 text-[#775a19]" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-80 rounded-3xl border-[color:oklch(0.85_0.02_75)] p-4" align="start">
-          <div className="space-y-4">
+        <PopoverContent className="w-[calc(100vw-2rem)] max-w-sm rounded-none border-[#c3c8c2] p-4" align="start" sideOffset={12}>
+          <div className="space-y-3">
             {[
               {
                 key: 'adults' as const,
@@ -71,10 +75,10 @@ export function GuestSelector({ guests, onGuestsChange, className }: GuestSelect
                 min: 0,
               },
             ].map((group) => (
-              <div key={group.key} className="flex items-center justify-between rounded-2xl bg-[color:oklch(0.98_0.01_80)] px-3 py-3">
+              <div key={group.key} className="flex items-center justify-between border border-[#e4e2e1] bg-[#fbf9f8] px-4 py-3">
                 <div>
-                  <div className="font-medium text-[color:oklch(0.25_0.02_58)]">{group.label}</div>
-                  <div className="text-sm text-[color:oklch(0.47_0.02_58)]">{group.description}</div>
+                  <div className="font-medium text-[#1b1c1c]">{group.label}</div>
+                  <div className="text-sm text-[#747873]">{group.description}</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -82,18 +86,18 @@ export function GuestSelector({ guests, onGuestsChange, className }: GuestSelect
                     variant="outline"
                     onClick={() => updateGuests(group.key, -1)}
                     disabled={guests[group.key] <= group.min}
-                    className="h-9 w-9 rounded-full border-[color:oklch(0.84_0.02_75)] bg-white"
+                    className="h-9 w-9 rounded-none border-[#c3c8c2] bg-white"
                   >
                     <Minus className="h-4 w-4" />
                   </Button>
-                  <span className="w-8 text-center text-base font-semibold text-[color:oklch(0.24_0.02_58)]">
+                  <span className="w-8 text-center text-base font-semibold text-[#1b1c1c]">
                     {guests[group.key]}
                   </span>
                   <Button
                     size="icon"
                     variant="outline"
                     onClick={() => updateGuests(group.key, 1)}
-                    className="h-9 w-9 rounded-full border-[color:oklch(0.84_0.02_75)] bg-white"
+                    className="h-9 w-9 rounded-none border-[#c3c8c2] bg-white"
                   >
                     <Plus className="h-4 w-4" />
                   </Button>

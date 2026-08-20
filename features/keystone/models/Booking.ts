@@ -4,6 +4,7 @@ import {
   text,
   float,
   integer,
+  json,
   select,
   timestamp,
   relationship,
@@ -12,7 +13,9 @@ import {
 import { graphql } from '@keystone-6/core'
 
 import { isSignedIn, permissions } from '../access'
+import { ensureBookingHasGuestAccess } from '../lib/guestBookingAccess'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb, restrictRelation } from './requiredRelationship'
 
 // Generate a unique confirmation number
 function generateConfirmationNumber(): string {
@@ -22,18 +25,37 @@ function generateConfirmationNumber(): string {
 }
 
 export const Booking = list({
+  db: {
+    extendPrismaSchema: model => [
+      'Booking_billingFolio',
+      'Booking_groupBlock',
+      'Booking_groupBlockAllocation',
+    ].reduce((schema, relationName) => restrictRelation(schema, relationName), model).replace(
+      '\n}',
+      [
+        '\n  @@index([status, checkInDate, checkOutDate], map: "Booking_status_stay_idx")',
+        '  @@index([checkOutDate, status], map: "Booking_departure_status_idx")',
+        '  @@index([holdExpiresAt, status], map: "Booking_hold_expiry_idx")',
+        '}',
+      ].join('\n'),
+    ),
+  },
   access: {
     operation: {
-      query: () => true, create: isSignedIn, update: isSignedIn,
-      delete: permissions.canManageBookings,
+      query: permissions.canManageBookings,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['confirmationNumber', 'guestName', 'checkInDate', 'checkOutDate', 'status', 'totalAmount'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
@@ -133,61 +155,38 @@ export const Booking = list({
       label: 'Number of Children',
     }),
 
-    // Financials
-    roomRate: float({
-      validation: { min: 0 },
-      label: 'Room Rate',
-      ui: {
-        description: 'Total room rate before taxes',
-      },
-    }),
-    taxAmount: float({
-      validation: { min: 0 },
-      defaultValue: 0,
-      label: 'Tax Amount',
-      ui: {
-        description: 'Total tax amount',
-      },
-    }),
-    feesAmount: float({
-      validation: { min: 0 },
-      defaultValue: 0,
-      label: 'Fees Amount',
-      ui: {
-        description: 'Additional fees (resort fee, service charge, etc.)',
-      },
-    }),
-    totalAmount: float({
-      validation: { min: 0 },
-      label: 'Total Amount',
-      ui: {
-        description: 'Total amount including room rate, taxes, and fees',
-      },
-    }),
-    depositAmount: float({
-      validation: { min: 0 },
-      defaultValue: 0,
-      label: 'Deposit Amount',
-      ui: {
-        description: 'Deposit or prepayment amount',
-      },
-    }),
-    balanceDue: float({
-      validation: { min: 0 },
-      label: 'Balance Due',
-      ui: {
-        description: 'Remaining balance to be paid',
-      },
-    }),
+    // Integer minor units are authoritative. Float fields remain read-compatible
+    // only for the expand/contract migration window.
+    roomRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Room Rate (minor units)' }),
+    taxAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Tax (minor units)' }),
+    feesAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Fees (minor units)' }),
+    totalAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Total (minor units)' }),
+    depositAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Deposit (minor units)' }),
+    balanceDueMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Balance due (minor units)' }),
+    currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
+    roomRate: float({ validation: { min: 0 }, label: 'Legacy Room Rate' }),
+    taxAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Tax Amount' }),
+    feesAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Fees Amount' }),
+    totalAmount: float({ validation: { min: 0 }, label: 'Legacy Total Amount' }),
+    depositAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Deposit Amount' }),
+    balanceDue: float({ validation: { min: 0 }, label: 'Legacy Balance Due' }),
+    ratePlan: relationship({ ref: 'RatePlan.bookings', ui: { displayMode: 'select', labelField: 'name' } }),
+    pricingVersion: text({ defaultValue: 'legacy-v1' }),
+    pricingRevision: integer({ validation: { isRequired: true, min: 1 }, defaultValue: 1 }),
+    pricingSnapshot: json({ defaultValue: {} }),
 
     // Status
     status: select({
       type: 'string',
+      access: {
+        update: () => false,
+      },
       options: [
         { label: 'Pending', value: 'pending' },
         { label: 'Confirmed', value: 'confirmed' },
         { label: 'Checked In', value: 'checked_in' },
         { label: 'Checked Out', value: 'checked_out' },
+        { label: 'Cancellation Pending', value: 'cancellation_pending' },
         { label: 'Cancelled', value: 'cancelled' },
         { label: 'No Show', value: 'no_show' },
       ],
@@ -201,6 +200,9 @@ export const Booking = list({
     // Payment status
     paymentStatus: select({
       type: 'string',
+      access: {
+        update: () => false,
+      },
       options: [
         { label: 'Unpaid', value: 'unpaid' },
         { label: 'Partial', value: 'partial' },
@@ -244,6 +246,31 @@ export const Booking = list({
       },
       label: 'Internal Notes',
     }),
+    guestAccessTokenHash: text({
+      isIndexed: true,
+      access: {
+        read: permissions.canManageBookings,
+        create: permissions.canManageBookings,
+        update: permissions.canManageBookings,
+      },
+      ui: {
+        itemView: { fieldMode: 'hidden' },
+        createView: { fieldMode: 'hidden' },
+        listView: { fieldMode: 'hidden' },
+      },
+    }),
+    guestAccessTokenIssuedAt: timestamp({
+      access: {
+        read: permissions.canManageBookings,
+        create: permissions.canManageBookings,
+        update: permissions.canManageBookings,
+      },
+      ui: {
+        itemView: { fieldMode: 'hidden' },
+        createView: { fieldMode: 'hidden' },
+        listView: { fieldMode: 'hidden' },
+      },
+    }),
 
     // Relationships
     roomAssignments: relationship({
@@ -261,6 +288,7 @@ export const Booking = list({
     // Guest profile relationship
     guestProfile: relationship({
       ref: 'Guest.bookings',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'email',
@@ -276,6 +304,47 @@ export const Booking = list({
         labelField: 'name',
       },
       label: 'User Account',
+    }),
+
+    folio: relationship({
+      ref: 'Folio.booking',
+      ui: {
+        displayMode: 'select',
+        labelField: 'folioNumber',
+        createView: { fieldMode: 'hidden' },
+        itemView: { fieldMode: 'read' },
+      },
+      label: 'Primary Folio',
+    }),
+
+    billingFolio: relationship({
+      ref: 'Folio.billedBookings',
+      ui: { displayMode: 'select', labelField: 'folioNumber' },
+      label: 'Billing Folio',
+    }),
+
+    groupBlock: relationship({
+      ref: 'GroupBlock.bookings',
+      ui: { displayMode: 'select', labelField: 'name' },
+      label: 'Group Block',
+    }),
+
+    groupBlockAllocation: relationship({
+      ref: 'GroupBlockAllocation.bookings',
+      ui: { displayMode: 'select', labelField: 'allocationKey' },
+      label: 'Group Allocation',
+    }),
+
+    lineItems: relationship({
+      ref: 'ReservationLineItem.reservation',
+      many: true,
+      ui: {
+        displayMode: 'cards',
+        cardFields: ['type', 'description', 'totalPrice', 'date'],
+        inlineCreate: { fields: [] },
+        inlineEdit: { fields: [] },
+      },
+      label: 'Reservation Snapshot Lines',
     }),
 
     // Payments relationship
@@ -298,8 +367,24 @@ export const Booking = list({
       },
       label: 'Payment Sessions',
     }),
+    paymentEvents: relationship({
+      ref: 'PaymentEvent.booking',
+      many: true,
+      ui: { displayMode: 'count' },
+    }),
+    refundIntents: relationship({
+      ref: 'RefundIntent.booking',
+      many: true,
+      ui: { displayMode: 'count' },
+    }),
+    modificationRequests: relationship({
+      ref: 'BookingModificationRequest.booking',
+      many: true,
+      ui: { displayMode: 'count' },
+    }),
 
     // Timestamps
+    holdExpiresAt: timestamp({ ui: { itemView: { fieldMode: 'read' } } }),
     confirmedAt: timestamp({
       label: 'Confirmed At',
       ui: {
@@ -343,6 +428,11 @@ export const Booking = list({
         if (resolvedData.status === 'cancelled' && !item?.cancelledAt) {
           resolvedData.cancelledAt = now
         }
+      }
+    },
+    afterOperation: async ({ operation, item, context }) => {
+      if (operation === 'create' && item?.id) {
+        await ensureBookingHasGuestAccess(context, String(item.id))
       }
     },
   },

@@ -11,28 +11,32 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const MaintenanceRequest = list({
   access: {
     operation: {
       query: permissions.canManageRooms,
-      create: permissions.canManageRooms,
-      update: permissions.canManageRooms,
-      delete: permissions.canManageRooms,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['room', 'title', 'category', 'priority', 'status', 'assignedTo'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
     // Room relationship
     room: relationship({
       ref: 'Room',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'roomNumber',

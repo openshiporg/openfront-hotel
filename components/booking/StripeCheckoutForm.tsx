@@ -11,12 +11,16 @@ import { Loader2 } from 'lucide-react';
 
 interface StripeCheckoutFormProps {
   amount: number;
+  bookingId: string;
+  paymentSessionId: string;
   onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
 }
 
 export function StripeCheckoutForm({
   amount,
+  bookingId,
+  paymentSessionId,
   onSuccess,
   onError,
 }: StripeCheckoutFormProps) {
@@ -37,7 +41,7 @@ export function StripeCheckoutForm({
       const { error, paymentIntent } = await stripe.confirmPayment({
         elements,
         confirmParams: {
-          return_url: `${window.location.origin}/booking/confirmation`,
+          return_url: `${window.location.origin}/stripe/return?bookingId=${encodeURIComponent(bookingId)}&paymentSessionId=${encodeURIComponent(paymentSessionId)}`,
         },
         redirect: 'if_required',
       });

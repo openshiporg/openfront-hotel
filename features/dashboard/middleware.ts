@@ -53,7 +53,8 @@ export async function checkInitStatus(request: NextRequest) {
     return data.redirectToInit;
   } catch (error) {
     console.error("Error checking init status:", error);
-    return false;
+    // Hotel fresh installs fail closed until initialization status is known.
+    return process.env.NODE_ENV === 'production';
   }
 }
 
@@ -96,7 +97,7 @@ export async function getAuthenticatedUser(request: NextRequest) {
       console.error("GraphQL error details:", message);
     }
     
-    return { user: null, redirectToInit: false };
+    return { user: null, redirectToInit: process.env.NODE_ENV === 'production' };
   }
 }
 

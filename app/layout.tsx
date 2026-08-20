@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Grand Hotel - Luxury Accommodations",
-  description: "Book your perfect stay at Grand Hotel. Luxury rooms, exceptional service, prime location.",
+  title: "Hotel operations and direct reservations",
+  description: "Hotel operations, direct reservations, and guest account access.",
 };
 
 export default function RootLayout({
@@ -28,9 +28,7 @@ export default function RootLayout({
       <head>
         <link href="/favicon.svg" rel="icon" />
       </head>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
         <Toaster />
       </body>

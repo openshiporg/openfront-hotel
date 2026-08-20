@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { format, parseISO, differenceInDays, isPast, isFuture } from 'date-fns';
+import { format, parseISO, differenceInDays } from 'date-fns';
 import { 
   User, 
   Mail, 
@@ -156,11 +156,11 @@ export function GuestProfile({
   const initials = `${guest.firstName?.charAt(0) || ''}${guest.lastName?.charAt(0) || ''}`.toUpperCase();
   
   const upcomingBookings = guest.bookings?.filter(
-    (b) => isFuture(parseISO(b.checkInDate)) && !['cancelled', 'no_show'].includes(b.status)
+    (b) => ['pending', 'confirmed', 'checked_in', 'cancellation_pending'].includes(b.status)
   ) || [];
   
   const pastBookings = guest.bookings?.filter(
-    (b) => isPast(parseISO(b.checkOutDate)) || b.status === 'checked_out'
+    (b) => b.status === 'checked_out'
   ) || [];
   
   const cancelledBookings = guest.bookings?.filter(
@@ -210,7 +210,7 @@ export function GuestProfile({
                 {guest.loyaltyTier && (
                   <Badge className={cn('mb-2', getLoyaltyTierColor(guest.loyaltyTier))}>
                     <Award className="h-3 w-3 mr-1" />
-                    {guest.loyaltyTier.charAt(0).toUpperCase() + guest.loyaltyTier.slice(1)} Member
+                    {guest.loyaltyTier.charAt(0).toUpperCase() + guest.loyaltyTier.slice(1)} legacy tier
                     {guest.loyaltyNumber && ` • ${guest.loyaltyNumber}`}
                   </Badge>
                 )}
@@ -247,7 +247,7 @@ export function GuestProfile({
               {onSendEmail && (
                 <Button variant="outline" onClick={onSendEmail}>
                   <Send className="h-4 w-4 mr-2" />
-                  Send Email
+                  Open Email Client
                 </Button>
               )}
               {onEdit && (
@@ -272,8 +272,8 @@ export function GuestProfile({
         <Card>
           <CardContent className="pt-6">
             <div className="text-center">
-              <p className="text-3xl font-bold">{guest.totalStays || pastBookings.length}</p>
-              <p className="text-sm text-muted-foreground">Total Stays</p>
+              <p className="text-3xl font-bold">{pastBookings.length}</p>
+              <p className="text-sm text-muted-foreground">Completed Stays Shown</p>
             </div>
           </CardContent>
         </Card>
@@ -291,12 +291,9 @@ export function GuestProfile({
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-3xl font-bold">
-                {guest.totalSpent 
-                  ? formatCurrency(parseFloat(guest.totalSpent))
-                  : formatCurrency(pastBookings.reduce((acc, b) => acc + (b.totalAmount || 0), 0))
-                }
+                {formatCurrency(pastBookings.reduce((acc, b) => acc + (b.totalAmount || 0), 0))}
               </p>
-              <p className="text-sm text-muted-foreground">Lifetime Value</p>
+              <p className="text-sm text-muted-foreground">Shown Stay Value</p>
             </div>
           </CardContent>
         </Card>
@@ -305,7 +302,7 @@ export function GuestProfile({
           <CardContent className="pt-6">
             <div className="text-center">
               <p className="text-3xl font-bold">{guest.loyaltyPoints || '0'}</p>
-              <p className="text-sm text-muted-foreground">Loyalty Points</p>
+              <p className="text-sm text-muted-foreground">Legacy Points (read-only)</p>
             </div>
           </CardContent>
         </Card>
@@ -322,11 +319,12 @@ export function GuestProfile({
 
         {/* Stay History Tab */}
         <TabsContent value="stays" className="space-y-4">
+          <p className="text-xs text-muted-foreground">Latest 100 reservations; operational Reports remain authoritative for period totals.</p>
           {upcomingBookings.length > 0 && (
             <div>
               <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
                 <Calendar className="h-5 w-5" />
-                Upcoming Stays
+                Current & Upcoming Stays
               </h3>
               <div className="space-y-3">
                 {upcomingBookings.map((booking) => (
@@ -349,14 +347,9 @@ export function GuestProfile({
               </Card>
             ) : (
               <div className="space-y-3">
-                {pastBookings.slice(0, 10).map((booking) => (
+                {pastBookings.map((booking) => (
                   <BookingCard key={booking.id} booking={booking} />
                 ))}
-                {pastBookings.length > 10 && (
-                  <Button variant="outline" className="w-full">
-                    View All {pastBookings.length} Stays
-                  </Button>
-                )}
               </div>
             )}
           </div>
@@ -449,7 +442,7 @@ export function GuestProfile({
                 Identity Documents
               </CardTitle>
               <CardDescription>
-                Verified identification on file
+                Legacy identity details; verification evidence is managed separately
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -472,9 +465,9 @@ export function GuestProfile({
                             : guest.idType === 'national_id' ? 'National ID'
                             : 'Other ID'}
                         </p>
-                        <Badge className="bg-green-100 text-green-700">
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                          Verified
+                        <Badge variant="outline">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Verification not recorded
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">
@@ -579,7 +572,7 @@ function BookingCard({ booking }: { booking: GuestBooking }) {
               {formatCurrency(booking.totalAmount || 0)}
             </span>
             <Button variant="ghost" size="icon" asChild>
-              <Link href={`/dashboard/Booking/${booking.id}`}>
+              <Link href={`/dashboard/bookings/${booking.id}`}>
                 <ChevronRight className="h-4 w-4" />
               </Link>
             </Button>

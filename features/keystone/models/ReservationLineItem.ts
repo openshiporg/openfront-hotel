@@ -10,32 +10,69 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const ReservationLineItem = list({
   access: {
     operation: {
-      query: () => true, create: isSignedIn, update: isSignedIn,
-      delete: permissions.canManageBookings,
+      query: permissions.canManageBookings,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['reservation', 'type', 'description', 'quantity', 'totalPrice', 'date'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
     // Reservation relationship
     reservation: relationship({
-      ref: 'Booking',
+      ref: 'Booking.lineItems',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'confirmationNumber',
       },
       label: 'Reservation',
     }),
+
+    snapshotStatus: select({
+      type: 'string', validation: { isRequired: true }, defaultValue: 'active',
+      options: [{ label: 'Active', value: 'active' }, { label: 'Superseded', value: 'superseded' }],
+      ui: { itemView: { fieldMode: 'read' } },
+    }),
+    supersededAt: timestamp({ ui: { itemView: { fieldMode: 'read' } } }),
+    snapshotKey: text({
+      isIndexed: 'unique',
+      validation: { isRequired: true },
+      ui: {
+        description: 'Stable idempotency key for this immutable reservation snapshot line',
+        itemView: { fieldMode: 'read' },
+      },
+    }),
+    currencyCode: text({
+      defaultValue: 'USD',
+      validation: { isRequired: true },
+    }),
+    nightIndex: integer({ validation: { min: 1 } }),
+    roomTypeIdSnapshot: text(),
+    roomTypeNameSnapshot: text(),
+    ratePlanIdSnapshot: text(),
+    ratePlanNameSnapshot: text(),
+    ratePlanDescriptionSnapshot: text({ ui: { displayMode: 'textarea' } }),
+    cancellationPolicySnapshot: text(),
+    mealPlanSnapshot: text(),
+    imagePathSnapshot: text(),
+    imageAltTextSnapshot: text(),
+    taxRateBasisPoints: integer({ validation: { min: 0 } }),
+    pricingSourceSnapshot: text(),
 
     // Type of charge
     type: select({

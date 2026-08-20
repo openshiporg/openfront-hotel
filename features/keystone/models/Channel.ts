@@ -1,5 +1,5 @@
 import { list } from '@keystone-6/core'
-import { allOperations } from '@keystone-6/core/access'
+import { denyAll } from '@keystone-6/core/access'
 import {
   text,
   select,
@@ -10,24 +10,29 @@ import {
   json,
 } from '@keystone-6/core/fields'
 
-import { isSignedIn, permissions } from '../access'
+import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
+
+const canReadChannels = ({ session }: any) => permissions.canManageBookings({ session }) || permissions.canManageIntegrations({ session });
+const canManageChannels = ({ session }: any) => permissions.canManageBookings({ session }) && permissions.canManageIntegrations({ session });
 
 export const Channel = list({
   access: {
     operation: {
-      query: permissions.canManageBookings,
-      create: permissions.canManageBookings,
-      update: permissions.canManageBookings,
-      delete: permissions.canManageBookings,
+      query: canReadChannels,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['name', 'channelType', 'isActive', 'syncStatus', 'lastSyncAt'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
@@ -59,18 +64,24 @@ export const Channel = list({
 
     // Active status
     isActive: checkbox({
-      defaultValue: true,
+      defaultValue: false,
       label: 'Active',
       ui: {
         description: 'Whether this channel is currently active',
       },
     }),
 
-    // API credentials (encrypted/secured)
+    // Experimental P2 bridge configuration. API reads are denied; this release
+    // does not claim application-layer encryption for this JSON field.
     credentials: json({
+      access: {
+        read: denyAll,
+        create: canManageChannels,
+        update: canManageChannels,
+      },
       label: 'Credentials',
       ui: {
-        description: 'API keys and authentication credentials (encrypted)',
+        description: 'Experimental bridge configuration; raw API reads are denied. Protect the database and secret-manager source.',
         views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'hidden' },
@@ -90,7 +101,7 @@ export const Channel = list({
 
     // Sync settings
     syncInventory: checkbox({
-      defaultValue: true,
+      defaultValue: false,
       label: 'Sync Inventory',
       ui: {
         description: 'Automatically sync room inventory to this channel',
@@ -98,10 +109,13 @@ export const Channel = list({
     }),
 
     syncRates: checkbox({
-      defaultValue: true,
-      label: 'Sync Rates',
+      access: { create: () => false, update: () => false },
+      defaultValue: false,
+      label: 'Rate sync (P2)',
       ui: {
-        description: 'Automatically sync room rates to this channel',
+        description: 'Reserved for a future certified adapter; the bounded custom bridge does not push rates.',
+        itemView: { fieldMode: 'read' },
+        createView: { fieldMode: 'hidden' },
       },
     }),
 
@@ -121,7 +135,7 @@ export const Channel = list({
         { label: 'Error', value: 'error' },
         { label: 'Paused', value: 'paused' },
       ],
-      defaultValue: 'active',
+      defaultValue: 'paused',
       label: 'Sync Status',
       ui: {
         description: 'Current synchronization status',
@@ -164,5 +178,17 @@ export const Channel = list({
     }),
 
     ...trackingFields,
+  },
+  hooks: {
+    validateInput: ({ resolvedData, item, addValidationError }) => {
+      const active = resolvedData.isActive ?? item?.isActive ?? false;
+      const credentials = (resolvedData.credentials ?? item?.credentials ?? {}) as Record<string, unknown>;
+      if (active && String(credentials.mode || '').toLowerCase() !== 'live') {
+        addValidationError('A channel can be activated only with an explicitly certified live custom-bridge configuration.');
+      }
+      if (resolvedData.syncRates === true) {
+        addValidationError('Rate sync is P2 and is not available through the bounded custom bridge.');
+      }
+    },
   },
 })

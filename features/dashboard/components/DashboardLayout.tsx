@@ -1,5 +1,6 @@
 /**
  * dashboardLayout - Client component that receives server-side data
+ * Follows Dashboard1's pattern: server layout fetches data, client layout provides it
  */
 
 'use client'
@@ -18,6 +19,7 @@ import { AiConfigProvider } from '../hooks/use-ai-config'
 import { QueryProvider } from '../providers/QueryProvider'
 import OnboardingDialog from '@/features/platform/onboarding/components/OnboardingDialog'
 
+// Shared Message type
 interface Message {
   id: string;
   content: string;
@@ -26,12 +28,15 @@ interface Message {
 }
 
 interface ChatModeContextType {
+  // Shared messages state
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  // Shared loading states
   loading: boolean;
   setLoading: (loading: boolean) => void;
   sending: boolean;
   setSending: (sending: boolean) => void;
+  // User data for personalization
   user?: any;
 }
 
@@ -53,18 +58,22 @@ interface DashboardLayoutProps {
 
 function FloatingChatButton() {
   const { toggleSidebar, open, isMobile } = useSidebarWithSide('right')
+
+  // On mobile, sidebar is always overlaid, so don't show chevron when "open"
+  // Only show chevron when sidebar is actually visible on screen (desktop + open)
   const showChevron = open && !isMobile
-  const Icon = showChevron ? ChevronRight : Sparkles
+
+  const Icon = showChevron ? ChevronRight : Sparkles;
 
   return (
     <Button
       onClick={toggleSidebar}
       size="icon"
       className={cn(
-        'fixed bottom-3 z-40 h-12 w-12 rounded-full shadow-lg hover:shadow-xl transition-all duration-300',
+        "fixed bottom-3 z-40 h-12 w-12 rounded-full shadow-lg hover:shadow-xl transition-all duration-300",
         showChevron
-          ? 'right-[calc(18rem+1rem)] md:right-[calc(30rem+1rem)] bg-background hover:bg-accent'
-          : 'right-3'
+          ? "right-[calc(18rem+1rem)] md:right-[calc(30rem+1rem)] bg-background hover:bg-accent"
+          : "right-3"
       )}
     >
       <Icon className="h-5 w-5" />
@@ -87,6 +96,7 @@ function DashboardLayoutContent({ children, adminMeta, authenticatedItem }: Dash
       </SidebarInset>
       <RightSidebar side="right" />
       <FloatingChatButton />
+      {/* Onboarding Dialog - Now at layout level, not hidden by sidebar */}
       <OnboardingDialog
         isOpen={isOnboardingDialogOpen}
         onClose={() => setIsOnboardingDialogOpen(false)}
@@ -96,6 +106,7 @@ function DashboardLayoutContent({ children, adminMeta, authenticatedItem }: Dash
 }
 
 function ChatModeProvider({ children, user }: { children: React.ReactNode; user?: any }) {
+  // Shared chat state
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)

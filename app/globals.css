@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../features/storefront/styles/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -44,9 +45,9 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
+  --radius: 0.25rem;
+  --background: #fbf9f8;
+  --foreground: #1b1c1c;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.141 0.005 285.823);
   --popover: oklch(1 0 0);
@@ -116,88 +117,279 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   }
 }
 
 @layer components {
-  .hotel-page {
-    background:
-      radial-gradient(circle at top left, oklch(0.98 0.025 85) 0%, transparent 28%),
-      radial-gradient(circle at top right, oklch(0.95 0.03 60 / 0.55) 0%, transparent 22%),
-      linear-gradient(180deg, oklch(0.985 0.008 85) 0%, oklch(0.97 0.01 85) 100%);
+  .lodging-page {
+    background: var(--lodging-paper);
+    color: var(--lodging-ink);
+    font-family: var(--font-lodging-body), system-ui, sans-serif;
   }
 
-  .hotel-surface {
-    background: color-mix(in oklab, white 88%, oklch(0.74 0.03 70));
-    border: 1px solid color-mix(in oklab, oklch(0.79 0.03 72) 30%, transparent);
-    box-shadow: 0 24px 80px -48px rgba(36, 26, 12, 0.38);
+  .lodging-container {
+    max-width: 76rem;
+    margin-inline: auto;
+    padding-inline: clamp(1.25rem, 4vw, 3.5rem);
   }
 
-  .hotel-surface-muted {
-    background: color-mix(in oklab, white 76%, oklch(0.9 0.03 85));
-    border: 1px solid color-mix(in oklab, oklch(0.79 0.03 72) 24%, transparent);
+  .lodging-display {
+    font-family: var(--font-lodging-display), Georgia, serif;
+    font-size: var(--text-display);
+    line-height: 0.98;
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
-  .hotel-kicker {
-    color: oklch(0.43 0.06 58);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    font-size: 0.72rem;
-    font-weight: 700;
+  .lodging-headline {
+    font-family: var(--font-lodging-display), Georgia, serif;
+    font-size: var(--text-headline);
+    line-height: 1.05;
+    font-weight: 400;
+    letter-spacing: -0.025em;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
-  .hotel-display {
-    font-size: clamp(2.8rem, 6vw, 5.8rem);
-    line-height: 0.96;
-    letter-spacing: -0.05em;
+  .lodging-title {
+    font-family: var(--font-lodging-display), Georgia, serif;
+    font-size: var(--text-title);
+    line-height: 1.12;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
-  .hotel-title {
-    font-size: clamp(2rem, 3.8vw, 3.4rem);
-    line-height: 1.02;
-    letter-spacing: -0.04em;
+  .lodging-serif {
+    font-family: var(--font-lodging-display), Georgia, serif;
+    font-weight: 400;
+    letter-spacing: -0.02em;
   }
 
-  .hotel-eyebrow-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    border-radius: 999px;
-    border: 1px solid color-mix(in oklab, oklch(0.66 0.05 58) 32%, transparent);
-    background: color-mix(in oklab, white 84%, oklch(0.84 0.05 76));
-    color: oklch(0.36 0.05 55);
-    padding: 0.42rem 0.8rem;
-    font-size: 0.76rem;
+  .lodging-eyebrow {
+    font-size: var(--text-eyebrow);
     font-weight: 600;
-  }
-
-  .hotel-stat-label {
-    color: oklch(0.48 0.03 63);
-    font-size: 0.75rem;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    color: var(--lodging-ink-faint);
   }
 
-  .hotel-link {
-    color: oklch(0.43 0.08 45);
-    transition: color 180ms ease;
+  .lodging-lead {
+    font-size: var(--text-lead);
+    line-height: 1.65;
+    color: var(--lodging-ink-muted);
   }
 
-  .hotel-link:hover {
-    color: oklch(0.36 0.09 42);
+  .lodging-surface {
+    background: color-mix(in oklch, var(--lodging-paper) 92%, white);
+    border: 1px solid var(--lodging-rule);
   }
 
-  .hotel-chip {
+  .lodging-surface-night {
+    background: var(--lodging-night);
+    color: color-mix(in oklch, var(--lodging-paper) 88%, white);
+  }
+
+  .lodging-rule {
+    border-color: var(--lodging-rule);
+  }
+
+  .lodging-button {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 3rem;
+    border-radius: var(--radius-sm);
+    background: var(--lodging-night);
+    color: color-mix(in oklch, var(--lodging-paper) 95%, white);
+    padding-inline: 1.35rem;
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    transition: background var(--dur-mid) var(--ease-out);
+  }
+
+  .lodging-button:hover {
+    background: var(--lodging-accent-deep);
+  }
+
+  .lodging-button:focus-visible {
+    outline: 2px solid var(--lodging-focus);
+    outline-offset: 2px;
+  }
+
+  .lodging-button-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 3rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--lodging-rule-strong);
+    color: var(--lodging-ink);
+    padding-inline: 1.35rem;
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    transition: border-color var(--dur-mid) var(--ease-out), color var(--dur-mid) var(--ease-out);
+  }
+
+  .lodging-button-ghost:hover {
+    border-color: var(--lodging-accent);
+    color: var(--lodging-accent-deep);
+  }
+
+  .lodging-link {
+    color: var(--lodging-ink);
+    border-bottom: 1px solid color-mix(in oklch, var(--lodging-accent) 55%, transparent);
+    padding-bottom: 0.12rem;
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    transition: color var(--dur-mid) var(--ease-out);
+  }
+
+  .lodging-link:hover {
+    color: var(--lodging-accent-deep);
+  }
+
+  .lodging-image {
+    background: var(--lodging-paper-3);
+    object-fit: cover;
+  }
+
+  .lodging-grid-break {
+    display: grid;
+    gap: clamp(1.5rem, 3vw, 2.5rem);
+  }
+
+  @media (min-width: 768px) {
+    .lodging-grid-break {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      align-items: end;
+    }
+  }
+
+  .lodging-input {
+    display: flex;
+    width: 100%;
+    height: 2.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--lodging-rule);
+    background: var(--lodging-paper);
+    padding-inline: 0.85rem;
+    font-size: var(--text-body);
+    color: var(--lodging-ink);
+    transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .lodging-input::placeholder {
+    color: var(--lodging-ink-faint);
+  }
+
+  .lodging-input:focus-visible {
+    outline: none;
+    border-color: var(--lodging-accent);
+    box-shadow: 0 0 0 1px var(--lodging-focus);
+  }
+
+  .lodging-textarea {
+    display: flex;
+    width: 100%;
+    min-height: 6rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--lodging-rule);
+    background: var(--lodging-paper);
+    padding: 0.65rem 0.85rem;
+    font-size: var(--text-body);
+    line-height: 1.6;
+    color: var(--lodging-ink);
+    resize: vertical;
+    transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  }
+
+  .lodging-textarea:focus-visible {
+    outline: none;
+    border-color: var(--lodging-accent);
+    box-shadow: 0 0 0 1px var(--lodging-focus);
+  }
+
+  .lodging-select {
+    display: flex;
+    width: 100%;
+    height: 2.75rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--lodging-rule);
+    background: var(--lodging-paper);
+    padding-inline: 0.85rem;
+    font-size: var(--text-body);
+    color: var(--lodging-ink);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23585858' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.85rem center;
+    padding-right: 2.25rem;
+    transition: border-color var(--dur-fast) var(--ease-out);
+  }
+
+  .lodging-select:focus-visible {
+    outline: none;
+    border-color: var(--lodging-accent);
+    box-shadow: 0 0 0 1px var(--lodging-focus);
+  }
+
+  .lodging-label {
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--lodging-ink-faint);
+  }
+
+  .lodging-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.3rem 0.7rem;
     border-radius: 999px;
-    background: color-mix(in oklab, white 70%, oklch(0.89 0.04 85));
-    color: oklch(0.34 0.04 55);
-    padding: 0.45rem 0.75rem;
-    font-size: 0.82rem;
-    line-height: 1.1;
+    border: 1px solid var(--lodging-rule-strong);
+    font-size: var(--text-eyebrow);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--lodging-ink-muted);
+    white-space: nowrap;
+  }
+
+  .lodging-pill-accent {
+    border-color: color-mix(in oklch, var(--lodging-accent) 55%, transparent);
+    color: var(--lodging-accent-deep);
+    background: color-mix(in oklch, var(--lodging-accent) 10%, transparent);
+  }
+
+  .lodging-pill-danger {
+    border-color: color-mix(in oklch, var(--lodging-danger) 45%, transparent);
+    color: var(--lodging-danger);
+    background: color-mix(in oklch, var(--lodging-danger) 8%, transparent);
+  }
+
+  .lodging-divider {
+    height: 1px;
+    width: 100%;
+    background: var(--lodging-rule);
   }
 }

@@ -3,6 +3,8 @@ export type Session = {
   listKey: string
   data: {
     name: string
+    isActive: boolean
+    authVersion: number
     role: {
       id: string
       name: string
@@ -17,6 +19,8 @@ export type Session = {
       canManagePeople: boolean
       canManageRoles: boolean
       canManageOnboarding: boolean
+      canManageAudit: boolean
+      canManageIntegrations: boolean
     }
   }
 }
@@ -26,19 +30,21 @@ type AccessArgs = {
 }
 
 export function isSignedIn({ session }: AccessArgs) {
-  return Boolean(session)
+  return Boolean(session?.itemId && session.data?.isActive === true)
 }
 
 export const permissions = {
-  canAccessDashboard: ({ session }: AccessArgs) => session?.data.role?.canAccessDashboard ?? false,
-  canManageRooms: ({ session }: AccessArgs) => session?.data.role?.canManageRooms ?? false,
-  canManageBookings: ({ session }: AccessArgs) => session?.data.role?.canManageBookings ?? false,
-  canManageHousekeeping: ({ session }: AccessArgs) => session?.data.role?.canManageHousekeeping ?? false,
-  canManageGuests: ({ session }: AccessArgs) => session?.data.role?.canManageGuests ?? false,
-  canManagePayments: ({ session }: AccessArgs) => session?.data.role?.canManagePayments ?? false,
-  canManagePeople: ({ session }: AccessArgs) => session?.data.role?.canManagePeople ?? false,
-  canManageRoles: ({ session }: AccessArgs) => session?.data.role?.canManageRoles ?? false,
-  canManageOnboarding: ({ session }: AccessArgs) => session?.data.role?.canManageOnboarding ?? false,
+  canAccessDashboard: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canAccessDashboard ?? false),
+  canManageRooms: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageRooms ?? false),
+  canManageBookings: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageBookings ?? false),
+  canManageHousekeeping: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageHousekeeping ?? false),
+  canManageGuests: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageGuests ?? false),
+  canManagePayments: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManagePayments ?? false),
+  canManagePeople: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManagePeople ?? false),
+  canManageRoles: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageRoles ?? false),
+  canManageOnboarding: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageOnboarding ?? false),
+  canManageAudit: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageAudit ?? false),
+  canManageIntegrations: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageIntegrations ?? false),
 }
 
 export const rules = {

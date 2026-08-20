@@ -1,67 +1,64 @@
-import { gql } from 'graphql-request';
-
-export const GET_HOUSEKEEPING_DATA = gql`
+export const GET_HOUSEKEEPING_DATA = String.raw`
   query GetHousekeepingData {
-    rooms(orderBy: { roomNumber: asc }) {
-      id
-      roomNumber
-      floor
-      status
-      roomType {
-        id
-        name
+    hotelHousekeepingOperations(propertyKey: "the-alder-house") {
+      rooms { id roomNumber floor status roomType { id name } }
+      tasks {
+        id status taskType priority notes startedAt completedAt
+        room { id roomNumber floor status }
+        assignedTo { id name }
       }
+      assignees { id name }
+      metrics { completedToday averageCleanMinutes }
     }
-    housekeepingTasks(
-      where: { 
-        OR: [
-          { status: { equals: "pending" } },
-          { status: { equals: "in_progress" } },
-          { status: { equals: "on_hold" } },
-          { status: { equals: "inspection_needed" } }
-        ]
-      }
-      orderBy: { priority: asc }
+  }
+`;
+
+export const UPDATE_HOUSEKEEPING_TASK = String.raw`
+  mutation UpdateHousekeepingTask(
+    $taskId: ID!
+    $status: String!
+    $assignedToId: ID
+    $notes: String
+    $idempotencyKey: String!
+  ) {
+    updateHousekeepingTaskStatus(
+      taskId: $taskId
+      status: $status
+      assignedToId: $assignedToId
+      notes: $notes
+      idempotencyKey: $idempotencyKey
     ) {
       id
       status
-      taskType
+    }
+  }
+`;
+
+export const REPORT_ROOM_MAINTENANCE_ISSUE = String.raw`
+  mutation ReportRoomMaintenanceIssue(
+    $roomId: ID!
+    $title: String!
+    $description: String
+    $category: String
+    $priority: String
+    $idempotencyKey: String!
+  ) {
+    reportRoomMaintenanceIssue(
+      roomId: $roomId
+      title: $title
+      description: $description
+      category: $category
+      priority: $priority
+      idempotencyKey: $idempotencyKey
+    ) {
+      id
+      title
+      status
       priority
-      notes
-      startedAt
-      completedAt
       room {
         id
         roomNumber
-        floor
-        status
       }
-      assignedTo {
-        id
-        name
-      }
-    }
-    users(where: { role: { name: { equals: "Housekeeping" } } }) {
-      id
-      name
-    }
-  }
-`;
-
-export const UPDATE_HOUSEKEEPING_TASK = gql`
-  mutation UpdateHousekeepingTask($id: ID!, $data: HousekeepingTaskUpdateInput!) {
-    updateHousekeepingTask(where: { id: $id }, data: $data) {
-      id
-      status
-    }
-  }
-`;
-
-export const UPDATE_ROOM_STATUS = gql`
-  mutation UpdateRoomStatus($id: ID!, $status: String!) {
-    updateRoom(where: { id: $id }, data: { status: $status }) {
-      id
-      status
     }
   }
 `;

@@ -2,146 +2,126 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Menu, Phone, ShieldCheck, User, X } from 'lucide-react';
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Menu, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useHotelSettings } from '@/features/storefront/components/HotelSettingsProvider';
+
+const navLinks = [
+  { href: '/rooms', label: 'Rooms' },
+  { href: '/amenities', label: 'Amenities' },
+  { href: '/location', label: 'Location' },
+  { href: '/contact', label: 'Contact' },
+];
 
 export function Header() {
+  const identity = useHotelSettings();
   const pathname = usePathname();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const isHome = pathname === '/';
 
-  const navLinks = [
-    { href: '/rooms', label: 'Rooms & suites' },
-    { href: '/amenities', label: 'Amenities' },
-    { href: '/location', label: 'Location' },
-    { href: '/contact', label: 'Contact' },
-  ];
-
-  const isActive = (path: string) => pathname === path;
+  useEffect(() => {
+    // Reset navigation state when route changes; this is an intentional UI sync.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMobileOpen(false);
+  }, [pathname]);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-black/5 bg-[color:color-mix(in_oklab,white_82%,oklch(0.95_0.02_82))]/95 backdrop-blur-xl">
-      <div className="border-b border-black/5 bg-[color:color-mix(in_oklab,white_70%,oklch(0.9_0.03_80))]">
-        <div className="container mx-auto flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-[0.72rem] font-medium tracking-[0.14em] text-[color:oklch(0.42_0.03_58)] uppercase">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Book direct for flexible changes and front-desk support.
-          </div>
-          <div className="flex items-center gap-2">
-            <Phone className="h-3.5 w-3.5" />
-            Reservations: (555) 123-4567
-          </div>
-        </div>
-      </div>
+    <header
+      className={`sticky top-0 z-50 w-full border-b transition-colors duration-300 ${
+        isHome
+          ? 'border-transparent bg-[color-mix(in_oklch,var(--lodging-night)_92%,transparent)] text-[color-mix(in_oklch,var(--lodging-paper)_92%,white)] backdrop-blur-md'
+          : 'border-[var(--lodging-rule)] bg-[color-mix(in_oklch,var(--lodging-paper)_94%,white)] text-[var(--lodging-ink)] backdrop-blur-md'
+      }`}
+    >
+      <div className="lodging-container flex items-center justify-between gap-6 py-4 md:py-5">
+        <Link
+          href="/"
+          className="lodging-serif min-w-0 text-[clamp(1.35rem,2.5vw,1.75rem)] leading-none transition-opacity hover:opacity-80"
+        >
+          {identity.name}
+        </Link>
 
-      <div className="container mx-auto px-4 py-4">
-        <div className="flex items-center justify-between gap-6">
-          <Link href="/" className="min-w-0 transition-opacity hover:opacity-80">
-            <div className="hotel-kicker mb-1">Openfront Hotel</div>
-            <div className="text-2xl font-semibold tracking-[-0.04em] text-[color:oklch(0.22_0.02_58)]">
-              Grand Hotel
-            </div>
-          </Link>
-
-          <nav className="hidden items-center gap-8 md:flex">
-            {navLinks.map((link) => (
+        <nav className="hidden items-center gap-8 lg:flex" aria-label="Primary">
+          {navLinks.map((link) => {
+            const active = pathname === link.href || (pathname?.startsWith(`${link.href}/`) ?? false);
+            return (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`text-sm font-medium transition-colors ${
-                  isActive(link.href)
-                    ? 'text-[color:oklch(0.32_0.07_47)]'
-                    : 'text-[color:oklch(0.36_0.03_58)] hover:text-[color:oklch(0.3_0.06_45)]'
+                className={`lodging-eyebrow transition-colors ${
+                  active
+                    ? isHome
+                      ? 'text-[var(--lodging-accent-pale)]'
+                      : 'text-[var(--lodging-accent-deep)]'
+                    : isHome
+                      ? 'text-[color-mix(in_oklch,var(--lodging-paper)_72%,white)] hover:text-white'
+                      : 'text-[var(--lodging-ink-muted)] hover:text-[var(--lodging-ink)]'
                 }`}
               >
                 {link.label}
               </Link>
-            ))}
-          </nav>
+            );
+          })}
+        </nav>
 
-          <div className="hidden items-center gap-3 md:flex">
-            <Button variant="ghost" asChild className="hotel-link h-10 rounded-full px-4 text-sm font-medium hover:bg-transparent">
-              <Link href="/bookings/lookup">Find a reservation</Link>
-            </Button>
-            <Button
-              asChild
-              className="h-10 rounded-full bg-[color:oklch(0.34_0.08_45)] px-5 text-sm font-medium text-white shadow-sm transition hover:bg-[color:oklch(0.3_0.08_42)]"
-            >
-              <Link href="/rooms">Book direct</Link>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="h-10 w-10 rounded-full border-[color:oklch(0.84_0.02_75)] bg-white/80">
-                  <User className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 rounded-2xl">
-                <DropdownMenuItem asChild>
-                  <Link href="/account">My account</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/bookings/lookup">Find my booking</Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/dashboard/signin">Staff sign in</Link>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
-          <button
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[color:oklch(0.84_0.02_75)] bg-white/80 md:hidden"
-            onClick={() => setMobileMenuOpen((open) => !open)}
-            aria-label="Toggle menu"
+        <div className="hidden items-center gap-5 lg:flex">
+          <Link
+            href="/bookings/lookup"
+            className={`lodging-eyebrow transition-colors ${
+              isHome
+                ? 'text-[color-mix(in_oklch,var(--lodging-paper)_72%,white)] hover:text-white'
+                : 'text-[var(--lodging-ink-muted)] hover:text-[var(--lodging-ink)]'
+            }`}
           >
-            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+            Manage stay
+          </Link>
+          <Link
+            href="/rooms"
+            className={`lodging-button min-h-0 py-2.5 ${
+              isHome ? 'bg-[var(--lodging-accent-deep)] hover:bg-[var(--lodging-accent)]' : ''
+            }`}
+          >
+            Reserve
+          </Link>
         </div>
 
-        {mobileMenuOpen && (
-          <nav className="hotel-surface mt-4 rounded-3xl p-5 md:hidden">
-            <div className="flex flex-col gap-4">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={`text-sm font-medium ${
-                    isActive(link.href)
-                      ? 'text-[color:oklch(0.32_0.07_47)]'
-                      : 'text-[color:oklch(0.36_0.03_58)]'
-                  }`}
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  {link.label}
-                </Link>
-              ))}
-              <div className="mt-2 flex flex-col gap-2 border-t border-black/5 pt-4">
-                <Button asChild className="h-11 rounded-full bg-[color:oklch(0.34_0.08_45)] text-white hover:bg-[color:oklch(0.3_0.08_42)]">
-                  <Link href="/rooms" onClick={() => setMobileMenuOpen(false)}>
-                    Book direct
-                  </Link>
-                </Button>
-                <Button variant="ghost" asChild className="justify-start rounded-full">
-                  <Link href="/bookings/lookup" onClick={() => setMobileMenuOpen(false)}>
-                    Find a reservation
-                  </Link>
-                </Button>
-                <Button variant="ghost" asChild className="justify-start rounded-full">
-                  <Link href="/account" onClick={() => setMobileMenuOpen(false)}>
-                    My account
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          </nav>
-        )}
+        <button
+          type="button"
+          className={`inline-flex h-10 w-10 items-center justify-center border lg:hidden ${
+            isHome ? 'border-white/25 text-white' : 'border-[var(--lodging-rule)] text-[var(--lodging-ink)]'
+          }`}
+          onClick={() => setMobileOpen((open) => !open)}
+          aria-expanded={mobileOpen}
+          aria-label="Toggle menu"
+        >
+          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
       </div>
+
+      {mobileOpen ? (
+        <nav
+          className={`border-t px-5 py-5 lg:hidden ${
+            isHome
+              ? 'border-white/15 bg-[var(--lodging-night)]'
+              : 'border-[var(--lodging-rule)] bg-[var(--lodging-paper)]'
+          }`}
+          aria-label="Mobile"
+        >
+          <div className="flex flex-col gap-4">
+            {navLinks.map((link) => (
+              <Link key={link.href} href={link.href} className="lodging-eyebrow">
+                {link.label}
+              </Link>
+            ))}
+            <Link href="/bookings/lookup" className="lodging-eyebrow">
+              Manage stay
+            </Link>
+            <Link href="/rooms" className="lodging-button w-fit">
+              Reserve
+            </Link>
+          </div>
+        </nav>
+      ) : null}
     </header>
   );
 }

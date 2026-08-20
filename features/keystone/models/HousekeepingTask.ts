@@ -10,28 +10,32 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const HousekeepingTask = list({
   access: {
     operation: {
       query: permissions.canManageHousekeeping,
-      create: permissions.canManageHousekeeping,
-      update: permissions.canManageHousekeeping,
-      delete: permissions.canManageHousekeeping,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['room', 'taskType', 'status', 'priority', 'assignedTo'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
     // Room relationship
     room: relationship({
       ref: 'Room.housekeepingTasks',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'roomNumber',

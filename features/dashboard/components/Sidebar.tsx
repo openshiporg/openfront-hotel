@@ -51,6 +51,13 @@ interface User {
   role?: {
     canAccessDashboard?: boolean;
     canManageOnboarding?: boolean;
+    canManageRooms?: boolean;
+    canManageBookings?: boolean;
+    canManageHousekeeping?: boolean;
+    canManageGuests?: boolean;
+    canManagePayments?: boolean;
+    canManageAudit?: boolean;
+    canManageIntegrations?: boolean;
   };
 }
 
@@ -88,7 +95,12 @@ export function Sidebar({ adminMeta, user, onOpenDialog }: SidebarProps) {
     href: `/dashboard/${list.path}`,
   }))
 
-  const standaloneItems = platformStandaloneItems.map((item) => ({
+  const canSee = (item: { permission?: string; permissions?: string[] }) => {
+    const required = item.permissions || (item.permission ? [item.permission] : []);
+    const role = user?.role as Record<string, unknown> | undefined;
+    return required.every(permission => Boolean(role?.[permission]));
+  };
+  const standaloneItems = platformStandaloneItems.filter(canSee).map((item) => ({
     ...item,
     href: `${basePath}${item.href}`,
   }))
@@ -97,14 +109,14 @@ export function Sidebar({ adminMeta, user, onOpenDialog }: SidebarProps) {
     title: group.title,
     icon: group.icon,
     items: getPlatformNavItemsWithBasePath(basePath)
-      .filter((item) => item.group === group.id)
+      .filter((item) => item.group === group.id && canSee(item))
       .map((item) => ({
         title: item.title,
         href: item.href,
         icon: item.icon,
       })),
     isActive: getPlatformNavItemsWithBasePath(basePath)
-      .filter((item) => item.group === group.id)
+      .filter((item) => item.group === group.id && canSee(item))
       .some((item) => isLinkActive(item.href)),
   }))
 
@@ -318,8 +330,8 @@ export function Sidebar({ adminMeta, user, onOpenDialog }: SidebarProps) {
             steps={[
               {
                 href: '#onboarding',
-                title: 'Welcome to Openfront Hotel',
-                description: 'Set up room types, rooms, rates, guests, and sample reservations to make the PMS and booking engine usable.',
+                title: 'Configure your hotel',
+                description: 'Use real Property Settings, rooms, rates, provider, and delivery configuration before launch. Demo data is evaluation-only.',
               },
             ]}
             onboardingStatus={user?.onboardingStatus}

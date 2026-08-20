@@ -1,27 +1,35 @@
-'use server'
-
 import { createTransport, getTestMessageUrl } from "nodemailer";
+import type { HotelCommunicationPayload } from './hotelCommunications';
 
-// Utility function to get base URL for emails
-function getBaseUrlForEmails(): string {
-  if (process.env.SMTP_STORE_LINK) {
-    return process.env.SMTP_STORE_LINK;
-  }
-
-  // Fallback warning - this should be set in production
-  console.warn('SMTP_STORE_LINK not set. Please add SMTP_STORE_LINK to your environment variables for email links to work properly.');
-  return 'http://localhost:3001'; // Fallback for development
+// SMTP values are infrastructure wiring. Durable property state decides whether
+// Hotel communications are eligible for delivery.
+export function hotelMailInfrastructureConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASSWORD && process.env.SMTP_FROM);
 }
 
-const transport = createTransport({
-  // @ts-ignore
-  host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-  port: process.env.SMTP_PORT || 587,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASSWORD,
-  },
-});
+function getBaseUrlForEmails(): string {
+  const configured = process.env.PASSWORD_RESET_ORIGIN || process.env.NEXT_PUBLIC_SITE_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  if (process.env.NODE_ENV === 'production') throw new Error('Email origin is not configured.');
+  return 'http://localhost:3001';
+}
+
+function mailFrom() {
+  if (process.env.SMTP_FROM) return process.env.SMTP_FROM;
+  if (process.env.NODE_ENV === 'production') throw new Error('Email sender is not configured.');
+  return 'stay@thealderhouse.example';
+}
+
+function getTransport() {
+  if (!hotelMailInfrastructureConfigured()) throw new Error('Email delivery infrastructure is unconfigured.');
+  const host = process.env.SMTP_HOST || (process.env.NODE_ENV === 'production' ? '' : 'smtp.ethereal.email');
+  if (!host) throw new Error('SMTP is not configured.');
+  return createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT || 587),
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+  });
+}
 
 function passwordResetEmail({ url }: { url: string }): string {
   const backgroundColor = "#f9f9f9";
@@ -63,9 +71,9 @@ export async function sendPasswordResetEmail(resetToken: string, to: string, bas
   const frontendUrl = baseUrl || getBaseUrlForEmails();
 
   // email the user a token
-  const info = await transport.sendMail({
+  const info = await getTransport().sendMail({
     to,
-    from: process.env.SMTP_FROM,
+    from: mailFrom(),
     subject: "Your password reset token!",
     html: passwordResetEmail({
       url: `${frontendUrl}/dashboard/reset?token=${resetToken}`,
@@ -76,278 +84,85 @@ export async function sendPasswordResetEmail(resetToken: string, to: string, bas
   }
 }
 
-interface BookingConfirmationData {
-  confirmationNumber: string;
-  guestName: string;
-  guestEmail: string;
-  checkInDate: string;
-  checkOutDate: string;
-  numberOfNights: number;
-  roomTypeName: string;
-  totalAmount: number;
-  numberOfGuests: number;
-  specialRequests?: string;
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
-function bookingConfirmationEmail(data: BookingConfirmationData): string {
-  const backgroundColor = "#f9f9f9";
-  const textColor = "#444444";
-  const mainBackgroundColor = "#ffffff";
-  const primaryColor = "#0066cc";
-  const borderColor = "#e0e0e0";
-
-  const checkInDate = new Date(data.checkInDate).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-
-  const checkOutDate = new Date(data.checkOutDate).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-
-  return `
-    <body style="background: ${backgroundColor}; font-family: Helvetica, Arial, sans-serif;">
-      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background: ${backgroundColor};">
-        <tr>
-          <td align="center" style="padding: 40px 20px;">
-            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background: ${mainBackgroundColor}; max-width: 600px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-
-              <!-- Header -->
-              <tr>
-                <td style="padding: 40px 40px 20px 40px; text-align: center; border-bottom: 2px solid ${primaryColor};">
-                  <h1 style="margin: 0; color: ${primaryColor}; font-size: 28px;">Grand Hotel</h1>
-                  <p style="margin: 10px 0 0 0; color: ${textColor}; font-size: 16px;">Booking Confirmation</p>
-                </td>
-              </tr>
-
-              <!-- Confirmation Number -->
-              <tr>
-                <td style="padding: 30px 40px; text-align: center; background: #f8f9fa; border-bottom: 1px solid ${borderColor};">
-                  <p style="margin: 0 0 5px 0; color: #666; font-size: 14px;">Confirmation Number</p>
-                  <h2 style="margin: 0; color: ${primaryColor}; font-size: 32px; font-weight: bold;">${data.confirmationNumber}</h2>
-                </td>
-              </tr>
-
-              <!-- Guest Info -->
-              <tr>
-                <td style="padding: 30px 40px;">
-                  <p style="margin: 0 0 20px 0; color: ${textColor}; font-size: 16px;">Dear ${data.guestName},</p>
-                  <p style="margin: 0 0 20px 0; color: ${textColor}; font-size: 16px; line-height: 1.6;">
-                    Thank you for choosing Grand Hotel! Your reservation has been confirmed. We look forward to welcoming you.
-                  </p>
-                </td>
-              </tr>
-
-              <!-- Booking Details -->
-              <tr>
-                <td style="padding: 0 40px 30px 40px;">
-                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="border: 1px solid ${borderColor}; border-radius: 5px;">
-                    <tr>
-                      <td style="padding: 15px; border-bottom: 1px solid ${borderColor}; background: #f8f9fa;">
-                        <strong style="color: ${textColor};">Booking Details</strong>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style="padding: 15px;">
-                        <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                          <tr>
-                            <td style="padding: 8px 0; color: #666; font-size: 14px;">Room Type:</td>
-                            <td align="right" style="padding: 8px 0; color: ${textColor}; font-size: 14px; font-weight: bold;">${data.roomTypeName}</td>
-                          </tr>
-                          <tr>
-                            <td style="padding: 8px 0; color: #666; font-size: 14px;">Check-in:</td>
-                            <td align="right" style="padding: 8px 0; color: ${textColor}; font-size: 14px;">${checkInDate}</td>
-                          </tr>
-                          <tr>
-                            <td style="padding: 8px 0; color: #666; font-size: 14px;">Check-out:</td>
-                            <td align="right" style="padding: 8px 0; color: ${textColor}; font-size: 14px;">${checkOutDate}</td>
-                          </tr>
-                          <tr>
-                            <td style="padding: 8px 0; color: #666; font-size: 14px;">Nights:</td>
-                            <td align="right" style="padding: 8px 0; color: ${textColor}; font-size: 14px;">${data.numberOfNights}</td>
-                          </tr>
-                          <tr>
-                            <td style="padding: 8px 0; color: #666; font-size: 14px;">Guests:</td>
-                            <td align="right" style="padding: 8px 0; color: ${textColor}; font-size: 14px;">${data.numberOfGuests}</td>
-                          </tr>
-                          ${data.specialRequests ? `
-                          <tr>
-                            <td colspan="2" style="padding: 8px 0; color: #666; font-size: 14px; border-top: 1px solid ${borderColor};">
-                              <strong>Special Requests:</strong><br/>
-                              ${data.specialRequests}
-                            </td>
-                          </tr>
-                          ` : ''}
-                          <tr>
-                            <td style="padding: 15px 0 0 0; color: ${textColor}; font-size: 16px; font-weight: bold; border-top: 2px solid ${borderColor};">Total Amount:</td>
-                            <td align="right" style="padding: 15px 0 0 0; color: ${primaryColor}; font-size: 20px; font-weight: bold; border-top: 2px solid ${borderColor};">$${data.totalAmount.toFixed(2)}</td>
-                          </tr>
-                        </table>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-
-              <!-- View Booking Button -->
-              <tr>
-                <td align="center" style="padding: 0 40px 30px 40px;">
-                  <table border="0" cellspacing="0" cellpadding="0">
-                    <tr>
-                      <td align="center" style="border-radius: 5px; background: ${primaryColor};">
-                        <a href="${getBaseUrlForEmails()}/booking/confirmation/${data.confirmationNumber}"
-                           target="_blank"
-                           style="font-size: 16px; font-family: Helvetica, Arial, sans-serif; color: #ffffff; text-decoration: none; border-radius: 5px; padding: 12px 30px; border: 1px solid ${primaryColor}; display: inline-block; font-weight: bold;">
-                          View Booking Details
-                        </a>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-
-              <!-- Footer Info -->
-              <tr>
-                <td style="padding: 30px 40px; border-top: 1px solid ${borderColor}; background: #f8f9fa;">
-                  <p style="margin: 0 0 10px 0; color: ${textColor}; font-size: 14px; line-height: 1.6;">
-                    <strong>Check-in time:</strong> 3:00 PM<br/>
-                    <strong>Check-out time:</strong> 11:00 AM
-                  </p>
-                  <p style="margin: 15px 0 0 0; color: #666; font-size: 13px; line-height: 1.6;">
-                    If you have any questions or need to modify your reservation, please contact us at
-                    <a href="mailto:reservations@grandhotel.com" style="color: ${primaryColor};">reservations@grandhotel.com</a>
-                  </p>
-                </td>
-              </tr>
-
-              <!-- Footer -->
-              <tr>
-                <td align="center" style="padding: 20px 40px; color: #999; font-size: 12px;">
-                  <p style="margin: 0;">© ${new Date().getFullYear()} Grand Hotel. All rights reserved.</p>
-                </td>
-              </tr>
-
-            </table>
-          </td>
-        </tr>
-      </table>
-    </body>
-  `;
+function emailHeader(value: unknown) {
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
 }
 
-export async function sendBookingConfirmationEmail(data: BookingConfirmationData): Promise<void> {
-  try {
-    const info = await transport.sendMail({
-      to: data.guestEmail,
-      from: process.env.SMTP_FROM || 'noreply@grandhotel.com',
-      subject: `Booking Confirmation - ${data.confirmationNumber} - Grand Hotel`,
-      html: bookingConfirmationEmail(data),
-    });
+function communicationMoney(amountMinor: number | null | undefined, currencyCode = 'USD') {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currencyCode,
+  }).format(Number(amountMinor || 0) / 100);
+}
 
-    if (process.env.SMTP_USER?.includes("ethereal.email")) {
-      console.log(`📧 Booking Confirmation Email Sent!  Preview it at ${getTestMessageUrl(info as any)}`);
-    } else {
-      console.log(`📧 Booking Confirmation Email sent to ${data.guestEmail}`);
-    }
-  } catch (error) {
-    console.error('Error sending booking confirmation email:', error);
-    // Don't throw error - we don't want to fail the booking if email fails
+function communicationDate(value?: string) {
+  if (!value) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+  }).format(new Date(value));
+}
+
+function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
+  const recipient = payload.to;
+  if (!recipient) throw new Error('Hotel communication recipient is required.');
+  const property = escapeHtml(payload.propertyName);
+  if (payload.kind === 'contact_received') {
+    return {
+      subject: `[Website] ${emailHeader(payload.contactSubject)}`,
+      html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${property} website message</h1><p><strong>From:</strong> ${escapeHtml(payload.guestName)} &lt;${escapeHtml(payload.replyTo)}&gt;</p><p><strong>Phone:</strong> ${escapeHtml(payload.contactPhone || 'Not provided')}</p><p><strong>Subject:</strong> ${escapeHtml(payload.contactSubject)}</p><p style="white-space:pre-wrap">${escapeHtml(payload.contactMessage)}</p></body>`,
+    };
   }
+
+  const confirmationNumber = payload.confirmationNumber;
+  if (!confirmationNumber) throw new Error('Booking communication confirmation number is required.');
+  const title = payload.kind === 'booking_confirmation'
+    ? 'Reservation confirmed'
+    : payload.kind === 'booking_updated'
+      ? 'Reservation updated'
+      : payload.kind === 'booking_modification_response'
+        ? `Change request ${payload.modificationDecision || 'reviewed'}`
+        : payload.kind === 'booking_no_show'
+          ? 'Reservation marked no-show'
+          : payload.kind === 'booking_refund'
+            ? 'Reservation refund recorded'
+            : 'Reservation cancelled';
+  const total = communicationMoney(payload.totalAmountMinor, payload.currencyCode);
+  const cancellation = payload.kind === 'booking_cancelled' || payload.kind === 'booking_no_show'
+    ? `<h2>Policy settlement</h2><p>${escapeHtml(payload.cancellationSummary || 'The booked terms were applied.')}</p><p><strong>Refund:</strong> ${escapeHtml(communicationMoney(payload.refundableMinor, payload.currencyCode))}<br/><strong>Policy fee:</strong> ${escapeHtml(communicationMoney(payload.cancellationFeeMinor, payload.currencyCode))}</p>`
+    : payload.kind === 'booking_refund'
+      ? `<h2>Refund</h2><p>${escapeHtml(payload.cancellationSummary || 'A refund was recorded by the property.')}</p><p><strong>Amount:</strong> ${escapeHtml(communicationMoney(payload.refundableMinor, payload.currencyCode))}</p>`
+    : payload.kind === 'booking_modification_response'
+      ? `<p><strong>Decision:</strong> ${escapeHtml(payload.modificationDecision || 'reviewed')}</p>${payload.staffNote ? `<p><strong>Property note:</strong> ${escapeHtml(payload.staffNote)}</p>` : ''}`
+      : `<p><strong>Total:</strong> ${escapeHtml(total)}</p>`;
+  const lookupUrl = `${getBaseUrlForEmails()}/bookings/lookup?confirmation=${encodeURIComponent(confirmationNumber)}&email=${encodeURIComponent(recipient)}`;
+  return {
+    subject: `${emailHeader(title)} · ${emailHeader(payload.confirmationNumber)} · ${emailHeader(payload.propertyName)}`,
+    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`,
+  };
 }
 
-interface ReservationUpdateEmailData {
-  confirmationNumber: string;
-  guestName: string;
-  guestEmail: string;
-  checkInDate: string;
-  checkOutDate: string;
-  numberOfNights: number;
-  roomTypeName: string;
-  totalAmount: number;
-  numberOfGuests: number;
-  specialRequests?: string;
-}
-
-function reservationUpdateEmail(data: ReservationUpdateEmailData, subject: string, message: string): string {
-  const textColor = "#444444";
-  const borderColor = "#e0e0e0";
-
-  const checkInDate = new Date(data.checkInDate).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
+/**
+ * Delivers one transactionally queued guest/property communication. Errors are
+ * intentionally propagated so the outbox can retry and retain dead-letter
+ * evidence instead of reporting a false success.
+ */
+export async function sendHotelCommunicationEmail(payload: HotelCommunicationPayload) {
+  const message = hotelCommunicationEmail(payload);
+  const info = await getTransport().sendMail({
+    to: payload.to,
+    from: mailFrom(),
+    replyTo: payload.replyTo || undefined,
+    subject: message.subject,
+    html: message.html,
   });
-
-  const checkOutDate = new Date(data.checkOutDate).toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-
-  return `
-    <body style="font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
-      <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 0 auto;">
-        <tr>
-          <td style="padding: 20px 0; border-bottom: 2px solid ${borderColor};">
-            <h2 style="margin: 0;">${subject}</h2>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding: 20px 0;">
-            <p style="margin: 0 0 10px 0;">Hi ${data.guestName},</p>
-            <p style="margin: 0 0 15px 0;">${message}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Confirmation:</strong> ${data.confirmationNumber}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Room Type:</strong> ${data.roomTypeName}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Check-in:</strong> ${checkInDate}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Check-out:</strong> ${checkOutDate}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Nights:</strong> ${data.numberOfNights}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Guests:</strong> ${data.numberOfGuests}</p>
-            <p style="margin: 0 0 10px 0;"><strong>Total Amount:</strong> $${data.totalAmount.toFixed(2)}</p>
-            ${data.specialRequests ? `<p style="margin: 0 0 10px 0;"><strong>Special Requests:</strong> ${data.specialRequests}</p>` : ''}
-          </td>
-        </tr>
-      </table>
-    </body>
-  `;
-}
-
-export async function sendReservationCancellationEmail(data: ReservationUpdateEmailData): Promise<void> {
-  try {
-    await transport.sendMail({
-      to: data.guestEmail,
-      from: process.env.SMTP_FROM || 'noreply@grandhotel.com',
-      subject: `Reservation Cancelled - ${data.confirmationNumber}`,
-      html: reservationUpdateEmail(
-        data,
-        'Reservation Cancelled',
-        'Your reservation has been cancelled. If this was unexpected, please contact us.'
-      ),
-    });
-  } catch (error) {
-    console.error('Error sending reservation cancellation email:', error);
-  }
-}
-
-export async function sendReservationModificationEmail(data: ReservationUpdateEmailData): Promise<void> {
-  try {
-    await transport.sendMail({
-      to: data.guestEmail,
-      from: process.env.SMTP_FROM || 'noreply@grandhotel.com',
-      subject: `Reservation Updated - ${data.confirmationNumber}`,
-      html: reservationUpdateEmail(
-        data,
-        'Reservation Updated',
-        'Your reservation details have been updated. Please review the new details below.'
-      ),
-    });
-  } catch (error) {
-    console.error('Error sending reservation update email:', error);
-  }
+  return { messageId: info.messageId, accepted: info.accepted, rejected: info.rejected };
 }

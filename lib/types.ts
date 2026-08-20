@@ -1,13 +1,29 @@
+export interface RoomImage {
+  id: string;
+  image?: { url?: string | null } | null;
+  url?: string | null;
+  imagePath?: string | null;
+  altText?: string | null;
+  caption?: string | null;
+  order?: number | null;
+  isPrimary?: boolean | null;
+}
+
 export interface RoomType {
   id: string;
   name: string;
-  description: any;
+  shortDescription?: string | null;
+  eyebrow?: string | null;
+  viewDescription?: string | null;
+  thumbnail?: string | null;
   baseRate: number;
+  baseRateMinor?: number;
   maxOccupancy: number;
   bedConfiguration: string | null;
   amenities: string[];
   squareFeet: number | null;
   roomsCount: number;
+  roomImages?: RoomImage[];
   rooms?: Room[];
   ratePlans?: RatePlan[];
 }
@@ -17,9 +33,12 @@ export interface RatePlan {
   name: string;
   description: string | null;
   baseRate: number;
+  baseRateMinor?: number;
+  currencyCode?: string;
   minimumStay: number;
   cancellationPolicy: string;
   mealPlan: string;
+  isPromotional?: boolean;
 }
 
 export interface Room {

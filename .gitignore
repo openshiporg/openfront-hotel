@@ -10,8 +10,10 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
+# testing and local acceptance evidence (may contain disposable credentials)
 /coverage
+/.runtime/
+/.hallmark/
 
 # next.js
 /.next/
@@ -30,8 +32,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (commit only the documented template)
 .env*
+!.env.example
 
 # vercel
 .vercel

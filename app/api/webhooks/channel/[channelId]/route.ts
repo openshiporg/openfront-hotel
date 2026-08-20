@@ -27,8 +27,8 @@ export async function POST(
   } catch (error: any) {
     console.error('Channel webhook error:', error)
     return NextResponse.json(
-      { error: error.message || 'Channel webhook failed' },
-      { status: 400 }
+      { error: 'Channel webhook rejected' },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } }
     )
   }
 }

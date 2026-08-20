@@ -11,11 +11,14 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const SeasonalRate = list({
   access: {
     operation: {
-      query: () => true, create: isSignedIn, update: isSignedIn,
+      query: permissions.canManageRooms,
+      create: permissions.canManageRooms,
+      update: permissions.canManageRooms,
       delete: permissions.canManageRooms,
     },
   },
@@ -57,6 +60,7 @@ export const SeasonalRate = list({
     // Optional room type filter (null = applies to all room types)
     roomType: relationship({
       ref: 'RoomType',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',

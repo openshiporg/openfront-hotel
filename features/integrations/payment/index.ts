@@ -1,5 +1,4 @@
 export const paymentProviderAdapters = {
-  stripe: () => import('./stripe'),
-  paypal: () => import('./paypal'),
-  manual: () => import('./manual'),
-};
+  pp_stripe_stripe: () => import('./stripe'),
+  pp_paypal_paypal: () => import('./paypal'),
+} as const;

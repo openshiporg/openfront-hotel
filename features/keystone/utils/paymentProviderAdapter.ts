@@ -1,59 +1,69 @@
-export async function executeAdapterFunction({ provider, functionName, args }: any) {
-  const functionPath = provider?.[functionName];
+import {
+  assertCustomerPaymentProvider,
+  assertPaymentIntegrationAvailable,
+  type OnlinePaymentProviderCode,
+} from '../lib/paymentSecurity';
+import { paymentProviderCredentials } from '../lib/integrationConfig';
 
-  if (!functionPath) {
-    throw new Error(`Provider ${provider?.code || provider?.id || 'unknown'} is missing ${functionName}`);
-  }
+const adapterLoaders = {
+  pp_stripe_stripe: () => import('../../integrations/payment/stripe'),
+  pp_paypal_paypal: () => import('../../integrations/payment/paypal'),
+} satisfies Record<OnlinePaymentProviderCode, () => Promise<any>>;
 
-  if (functionPath.startsWith('http')) {
-    const response = await fetch(functionPath, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, ...args }),
-    });
+type AdapterFunctionName =
+  | 'createPaymentFunction'
+  | 'completePaymentFunction'
+  | 'refundPaymentFunction'
+  | 'getPaymentStatusFunction'
+  | 'generatePaymentLinkFunction'
+  | 'handleWebhookFunction';
 
-    if (!response.ok) {
-      throw new Error(`HTTP request failed: ${response.statusText}`);
-    }
-
-    return response.json();
-  }
-
-  const adapter = await import(`../../integrations/payment/${functionPath}`);
-  const fn = (adapter as any)[functionName];
-
-  if (!fn) {
-    throw new Error(`Function ${functionName} not found in adapter ${functionPath}`);
-  }
-
-  try {
-    return await fn({ provider, ...args });
-  } catch (error: any) {
-    throw new Error(`Error executing ${functionName} for provider ${functionPath}: ${error?.message || 'Unknown error'}`);
-  }
+async function getAdapter(provider: { code?: string | null; isInstalled?: boolean | null; credentials?: unknown }) {
+  const providerCode = String(provider?.code || '');
+  assertCustomerPaymentProvider(providerCode);
+  assertPaymentIntegrationAvailable(provider);
+  return { adapter: await adapterLoaders[providerCode](), credentials: paymentProviderCredentials(provider) };
 }
 
-export async function createPayment({ provider, cart, amount, currency, metadata }: any) {
+export async function executeAdapterFunction({
+  provider,
+  functionName,
+  args,
+}: {
+  provider: { code?: string | null; isInstalled?: boolean | null; credentials?: unknown };
+  functionName: AdapterFunctionName;
+  args: Record<string, unknown>;
+}): Promise<any> {
+  const providerCode = String(provider?.code || '');
+  const { adapter, credentials } = await getAdapter(provider);
+  const fn = adapter[functionName];
+  if (typeof fn !== 'function') {
+    throw new Error(`Payment provider ${providerCode} does not support ${functionName}.`);
+  }
+  return (fn as any)({ ...args, providerCredentials: credentials });
+}
+
+export async function createPayment({ provider, amount, currency, metadata, idempotencyKey }: any) {
   return executeAdapterFunction({
     provider,
     functionName: 'createPaymentFunction',
-    args: { cart, amount, currency, metadata },
+    args: { amount, currency, metadata, idempotencyKey },
   });
 }
 
-export async function capturePayment({ provider, paymentId, amount }: any) {
+export async function completePayment({ provider, paymentId, amount }: any) {
   return executeAdapterFunction({
     provider,
-    functionName: 'capturePaymentFunction',
+    functionName: 'completePaymentFunction',
     args: { paymentId, amount },
   });
 }
 
-export async function refundPayment({ provider, paymentId, amount, currency, metadata }: any) {
+export async function refundPayment({ provider, paymentId, amount, currency, metadata, idempotencyKey }: any) {
   return executeAdapterFunction({
     provider,
     functionName: 'refundPaymentFunction',
-    args: { paymentId, amount, currency, metadata },
+    args: { paymentId, amount, currency, metadata, idempotencyKey },
   });
 }
 
@@ -73,10 +83,10 @@ export async function generatePaymentLink({ provider, paymentId }: any) {
   });
 }
 
-export async function handleWebhook({ provider, event, headers }: any) {
+export async function handleWebhook({ provider, rawBody, headers }: any) {
   return executeAdapterFunction({
     provider,
     functionName: 'handleWebhookFunction',
-    args: { event, headers },
+    args: { rawBody, headers },
   });
 }

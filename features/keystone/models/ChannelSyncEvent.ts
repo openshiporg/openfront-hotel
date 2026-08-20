@@ -10,28 +10,32 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const ChannelSyncEvent = list({
   access: {
     operation: {
       query: permissions.canManageBookings,
-      create: permissions.canManageBookings,
-      update: permissions.canManageBookings,
-      delete: permissions.canManageBookings,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['channel', 'action', 'status', 'occurredAt', 'createdBy'],
       initialSort: { field: 'occurredAt', direction: 'DESC' },
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
     channel: relationship({
       ref: 'Channel',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',
@@ -58,6 +62,11 @@ export const ChannelSyncEvent = list({
       ],
       defaultValue: 'success',
       label: 'Status',
+    }),
+    replayKey: text({
+      isIndexed: 'unique',
+      db: { isNullable: true },
+      ui: { itemView: { fieldMode: 'read' } },
     }),
     message: text({
       label: 'Message',

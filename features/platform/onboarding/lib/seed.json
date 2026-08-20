@@ -1,31 +1,88 @@
 {
+  "hotelSettings": {
+    "propertyName": "The Alder House",
+    "tagline": "Independent city hotel · direct reservations",
+    "contactEmail": "stay@thealderhouse.example",
+    "contactPhone": "+1 (212) 555-0148",
+    "addressLine1": "18 Alder Street",
+    "addressLine2": "Metropolitan City",
+    "frontDeskCopy": "Front desk · 24 hours",
+    "checkInTime": "3:00 PM",
+    "checkOutTime": "11:00 AM",
+    "storefrontAccentPreset": "brass",
+    "heroImagePath": "/images/hotel/the-alder-house-lobby-hero.webp",
+    "heroImageAltText": "Warm wood reception and lounge at The Alder House",
+    "heroImageCaption": "The lobby at The Alder House",
+    "amenityImagePath": "/images/hotel/the-alder-house-breakfast-lounge-amenity.webp",
+    "amenityImageAltText": "Breakfast buffet and lounge seating at The Alder House",
+    "amenityImageCaption": "Breakfast in The Alder House lounge",
+    "locationImagePath": "/images/hotel/the-alder-house-exterior-neighborhood-location.webp",
+    "locationImageAltText": "Brick city hotel exterior on the tree-lined Alder Street neighborhood",
+    "locationImageCaption": "The Alder House neighborhood"
+  },
   "roomTypes": [
     {
       "name": "Classic Queen",
       "description": "A bright guest room designed for short city stays with a queen bed, desk, and rainfall shower.",
+      "shortDescription": "A bright queen room with a writing desk, rainfall shower, and a calm courtyard outlook.",
+      "eyebrow": "Courtyard calm",
+      "viewDescription": "Courtyard-facing with soft morning light.",
       "baseRate": 159,
       "maxOccupancy": 2,
       "bedConfiguration": "queen",
       "amenities": ["wifi", "tv", "desk", "shower", "ac", "hair_dryer", "coffee_maker"],
-      "squareFeet": 280
+      "squareFeet": 280,
+      "roomImages": [
+        {
+          "imagePath": "/images/hotel/the-alder-house-room-classic-queen.webp",
+          "altText": "Classic Queen room with a queen bed, writing desk, and city-facing window",
+          "caption": "Classic Queen guest room",
+          "order": 0,
+          "isPrimary": true
+        }
+      ]
     },
     {
       "name": "Deluxe King",
       "description": "A larger king room with lounge chair, premium linens, and skyline views for direct-booking guests.",
+      "shortDescription": "A generous king room with a lounge chair, premium linens, and an open skyline view.",
+      "eyebrow": "Skyline light",
+      "viewDescription": "High-floor city view from the bed and lounge area.",
       "baseRate": 229,
       "maxOccupancy": 2,
       "bedConfiguration": "king",
       "amenities": ["wifi", "tv", "desk", "shower", "ac", "hair_dryer", "coffee_maker", "city_view", "safe", "minibar"],
-      "squareFeet": 360
+      "squareFeet": 360,
+      "roomImages": [
+        {
+          "imagePath": "/images/hotel/the-alder-house-room-deluxe-king.webp",
+          "altText": "Deluxe King room with a king bed, lounge chair, desk, and skyline view",
+          "caption": "Deluxe King skyline room",
+          "order": 0,
+          "isPrimary": true
+        }
+      ]
     },
     {
       "name": "Family Suite",
       "description": "A flexible family suite with a king bedroom, sofa bed, and extra space for longer stays.",
+      "shortDescription": "A spacious king suite with a separate sofa-bed lounge and room for longer family stays.",
+      "eyebrow": "Room to settle in",
+      "viewDescription": "Tree-lined neighborhood views from the bedroom and lounge.",
       "baseRate": 319,
       "maxOccupancy": 4,
       "bedConfiguration": "king_sofa",
       "amenities": ["wifi", "tv", "desk", "bathtub", "ac", "hair_dryer", "coffee_maker", "city_view", "safe", "room_service"],
-      "squareFeet": 520
+      "squareFeet": 520,
+      "roomImages": [
+        {
+          "imagePath": "/images/hotel/the-alder-house-room-family-suite.webp",
+          "altText": "Family Suite with a king bed and a separate sofa-bed lounge",
+          "caption": "Family Suite bedroom and lounge",
+          "order": 0,
+          "isPrimary": true
+        }
+      ]
     }
   ],
   "rooms": [
@@ -84,7 +141,7 @@
       "mealPlan": "breakfast",
       "status": "active",
       "isPublic": true,
-      "isPromotional": true,
+      "isPromotional": false,
       "priority": 20
     },
     {
@@ -100,7 +157,7 @@
       "mealPlan": "breakfast",
       "status": "active",
       "isPublic": true,
-      "isPromotional": true,
+      "isPromotional": false,
       "priority": 30
     }
   ],
@@ -289,6 +346,202 @@
       "specialRequests": "Connecting crib and gluten-free breakfast options."
     }
   ],
+  "bookingPayments": [
+    {
+      "key": "ava-deposit",
+      "label": "Ava Carter deposit",
+      "bookingKey": "ava-deluxe-weekend",
+      "providerCode": "pp_manual_manual",
+      "amount": 150,
+      "currency": "USD",
+      "paymentType": "deposit",
+      "paymentMethod": "credit_card",
+      "status": "completed",
+      "description": "Seed payment: Ava Carter deposit for Deluxe King weekend stay."
+    },
+    {
+      "key": "liam-checkin-balance",
+      "label": "Liam Brooks balance payment",
+      "bookingKey": "liam-classic-business",
+      "providerCode": "pp_manual_manual",
+      "amount": 190,
+      "currency": "USD",
+      "paymentType": "balance",
+      "paymentMethod": "cash",
+      "status": "pending",
+      "description": "Seed payment: Liam Brooks balance due at front desk check-in."
+    }
+  ],
+  "housekeepingTasks": [
+    {
+      "key": "hk-room-103",
+      "label": "Room 103 checkout clean",
+      "roomNumber": "103",
+      "taskType": "checkout_clean",
+      "status": "in_progress",
+      "priority": 1,
+      "notes": "Seed housekeeping: Room 103 checkout clean after early departure."
+    },
+    {
+      "key": "hk-room-203-follow-up",
+      "label": "Room 203 maintenance follow-up",
+      "roomNumber": "203",
+      "taskType": "inspection",
+      "status": "inspection_needed",
+      "priority": 2,
+      "notes": "Seed housekeeping: Room 203 inspection after HVAC maintenance ticket."
+    }
+  ],
+  "maintenanceRequests": [
+    {
+      "key": "maint-203-hvac",
+      "label": "203 HVAC inspection",
+      "roomNumber": "203",
+      "title": "203 HVAC inspection",
+      "description": "Guest reported intermittent cooling; engineering should inspect fan coil and thermostat calibration.",
+      "category": "hvac",
+      "priority": "high",
+      "status": "assigned",
+      "notes": "Seed maintenance: assign before releasing Room 203 back to inventory."
+    },
+    {
+      "key": "maint-102-lamp",
+      "label": "102 desk lamp replacement",
+      "roomNumber": "102",
+      "title": "102 desk lamp replacement",
+      "description": "Desk lamp flickers and needs replacement before next arrival.",
+      "category": "electrical",
+      "priority": "medium",
+      "status": "reported",
+      "notes": "Seed maintenance: low complexity in occupied room, coordinate with guest."
+    }
+  ],
+  "channels": [
+    {
+      "key": "booking-com",
+      "name": "Booking.com",
+      "channelType": "ota",
+      "isActive": false,
+      "commission": 15,
+      "syncInventory": false,
+      "syncRates": false,
+      "syncStatus": "paused",
+      "syncErrors": [],
+      "mappingRules": {
+        "Deluxe King": "DLX-KING",
+        "Classic Queen": "STD-QUEEN"
+      },
+      "credentials": {
+        "mode": "demo",
+        "externalPropertyId": "OFH-DEMO-100"
+      }
+    },
+    {
+      "key": "expedia",
+      "name": "Expedia",
+      "channelType": "ota",
+      "isActive": false,
+      "commission": 18,
+      "syncInventory": false,
+      "syncRates": false,
+      "syncStatus": "paused",
+      "syncErrors": ["Demo warning: rate plan mapping requires review"],
+      "mappingRules": {
+        "Family Suite": "FAM-SUITE",
+        "Deluxe King": "KING-DELUXE"
+      },
+      "credentials": {
+        "mode": "demo",
+        "externalPropertyId": "OFH-DEMO-EXP"
+      }
+    }
+  ],
+  "channelReservations": [
+    {
+      "key": "bookingcom-ava",
+      "label": "Booking.com · Ava Carter",
+      "channel": "Booking.com",
+      "bookingKey": "ava-deluxe-weekend",
+      "roomType": "Deluxe King",
+      "externalId": "BDC-AVA-0318",
+      "guestName": "Ava Carter",
+      "guestEmail": "ava.carter@example.com",
+      "checkInDate": "2026-03-18T15:00:00.000Z",
+      "checkOutDate": "2026-03-20T11:00:00.000Z",
+      "totalAmount": 53000,
+      "commission": 7950,
+      "channelStatus": "confirmed"
+    },
+    {
+      "key": "expedia-family",
+      "label": "Expedia · Sofia Martinez",
+      "channel": "Expedia",
+      "bookingKey": "sofia-family-break",
+      "roomType": "Family Suite",
+      "externalId": "EXP-SOFIA-0403",
+      "guestName": "Sofia Martinez",
+      "guestEmail": "sofia.martinez@example.com",
+      "checkInDate": "2026-04-03T15:00:00.000Z",
+      "checkOutDate": "2026-04-06T11:00:00.000Z",
+      "totalAmount": 117500,
+      "commission": 21150,
+      "channelStatus": "pending_mapping_review"
+    }
+  ],
+  "channelSyncEvents": [
+    {
+      "key": "bookingcom-sync-ok",
+      "label": "Booking.com inventory push",
+      "channel": "Booking.com",
+      "channelName": "Booking.com",
+      "action": "inventory_push",
+      "status": "success",
+      "message": "Seed sync: pushed Deluxe King and Classic Queen availability to Booking.com.",
+      "errorMessage": "",
+      "attempts": 1,
+      "occurredAt": "2026-03-10T08:15:00.000Z",
+      "payload": {
+        "roomTypes": ["Deluxe King", "Classic Queen"],
+        "nights": 14
+      }
+    },
+    {
+      "key": "expedia-sync-warning",
+      "label": "Expedia reservation pull",
+      "channel": "Expedia",
+      "channelName": "Expedia",
+      "action": "reservation_pull",
+      "status": "failed",
+      "message": "Seed sync: Expedia reservation pull needs rate-plan mapping review.",
+      "errorMessage": "Demo warning: Family Suite external rate plan not mapped.",
+      "attempts": 2,
+      "occurredAt": "2026-03-10T08:20:00.000Z",
+      "payload": {
+        "externalReservationId": "EXP-SOFIA-0403",
+        "issue": "rate_plan_mapping"
+      }
+    }
+  ],
+  "loyaltyTransactions": [
+    {
+      "key": "ava-gold-bonus",
+      "label": "Ava Carter bonus points",
+      "guestEmail": "ava.carter@example.com",
+      "bookingKey": "ava-deluxe-weekend",
+      "points": 500,
+      "type": "bonus",
+      "description": "Seed loyalty: Gold tier direct-booking bonus for Ava Carter."
+    },
+    {
+      "key": "liam-stay-credit",
+      "label": "Liam Brooks stay credit",
+      "guestEmail": "liam.brooks@example.com",
+      "bookingKey": "liam-classic-business",
+      "points": 190,
+      "type": "earned",
+      "description": "Seed loyalty: points earned from Liam Brooks business stay."
+    }
+  ],
   "inventory": [
     {
       "key": "classic-2026-03-18",
@@ -318,40 +571,5 @@
       "blockedRooms": 0
     }
   ],
-  "dailyMetrics": [
-    {
-      "date": "2026-03-10T00:00:00.000Z",
-      "totalRooms": 8,
-      "occupiedRooms": 5,
-      "occupancyRate": 62.5,
-      "averageDailyRate": 19200,
-      "revenuePerAvailableRoom": 12000,
-      "totalRevenue": 96000,
-      "channelRevenue": {
-        "direct": 56000,
-        "ota": 40000
-      },
-      "newReservations": 3,
-      "cancellations": 1,
-      "checkIns": 2,
-      "checkOuts": 1
-    },
-    {
-      "date": "2026-03-11T00:00:00.000Z",
-      "totalRooms": 8,
-      "occupiedRooms": 6,
-      "occupancyRate": 75,
-      "averageDailyRate": 20500,
-      "revenuePerAvailableRoom": 15375,
-      "totalRevenue": 123000,
-      "channelRevenue": {
-        "direct": 73000,
-        "ota": 50000
-      },
-      "newReservations": 4,
-      "cancellations": 0,
-      "checkIns": 3,
-      "checkOuts": 2
-    }
-  ]
+  "dailyMetrics": []
 }

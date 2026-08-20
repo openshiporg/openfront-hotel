@@ -1,137 +1,61 @@
 'use client';
 
-import React from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { request } from 'graphql-request';
-import { ExecutiveDashboard, HotelMetrics, ChannelData, RoomTypePerformance, OccupancyForecast } from '@/features/dashboard/analytics/ExecutiveDashboard';
+import * as React from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+
+import { ExecutiveDashboard, type OperationalReport } from '@/features/dashboard/analytics/ExecutiveDashboard';
 import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { format, parseISO } from 'date-fns';
 import { useToast } from '@/components/ui/use-toast';
-import { GET_ANALYTICS_DATA } from '../queries';
+import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';
+import { getOperationalReport } from '../actions';
+
+function reportRange(period: string, businessDate: string) {
+  const now = new Date(businessDate);
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const addUtcDays = (date: Date, days: number) => new Date(date.getTime() + days * 86_400_000);
+  const tomorrow = addUtcDays(today, 1);
+  if (period === 'today') return { start: today, end: tomorrow };
+  if (period === '7d') return { start: addUtcDays(tomorrow, -7), end: tomorrow };
+  if (period === 'mtd') return { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)), end: tomorrow };
+  if (period === 'ytd') return { start: new Date(Date.UTC(now.getUTCFullYear(), 0, 1)), end: tomorrow };
+  if (period === 'next30') return { start: today, end: addUtcDays(today, 30) };
+  return { start: addUtcDays(tomorrow, -30), end: tomorrow };
+}
 
 export function AnalyticsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const selectedPeriod = searchParams?.get('period') || '30d';
-
   const [loading, setLoading] = React.useState(true);
-  const [metrics, setMetrics] = React.useState<HotelMetrics | null>(null);
-  const [channelData, setChannelData] = React.useState<ChannelData[]>([]);
-  const [roomTypePerformance, setRoomTypePerformance] = React.useState<RoomTypePerformance[]>([]);
-  const [occupancyForecast, setOccupancyForecast] = React.useState<OccupancyForecast[]>([]);
-  const [occupancyTrend, setOccupancyTrend] = React.useState<{ date: string; occupancy: number; revenue: number }[]>([]);
+  const [error, setError] = React.useState<string | null>(null);
+  const [report, setReport] = React.useState<OperationalReport | null>(null);
+  const [businessDate, setBusinessDate] = React.useState(() => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  });
 
   const fetchData = React.useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const endpoint = process.env.NEXT_PUBLIC_GRAPHQL_ENDPOINT || '/api/graphql';
-      const data: any = await request(endpoint, GET_ANALYTICS_DATA);
-
-      if (!data.dailyMetrics || data.dailyMetrics.length === 0) {
-        // If no real data yet, keep skeletons or show empty state
-        setLoading(false);
-        return;
-      }
-
-      const latest = data.dailyMetrics[0];
-      const previous = data.dailyMetrics[1] || latest;
-
-      const centsToDollars = (value: number | null | undefined) => (value || 0) / 100;
-
-      const hotelMetrics: HotelMetrics = {
-        occupancy: {
-          current: latest.occupancyRate || 0,
-          previous: previous.occupancyRate || 0,
-          trend: (latest.occupancyRate || 0) - (previous.occupancyRate || 0),
-        },
-        revenue: {
-          today: centsToDollars(latest.totalRevenue),
-          mtd: data.dailyMetrics.reduce((sum: number, m: any) => sum + centsToDollars(m.totalRevenue), 0),
-          ytd: data.dailyMetrics.reduce((sum: number, m: any) => sum + centsToDollars(m.totalRevenue), 0),
-          forecast: centsToDollars(latest.totalRevenue) * 30,
-          previousMtd: centsToDollars(previous.totalRevenue) * 30,
-        },
-        adr: {
-          current: centsToDollars(latest.averageDailyRate),
-          previous: centsToDollars(previous.averageDailyRate),
-          trend: centsToDollars(latest.averageDailyRate) - centsToDollars(previous.averageDailyRate),
-        },
-        revpar: {
-          current: centsToDollars(latest.revenuePerAvailableRoom),
-          previous: centsToDollars(previous.revenuePerAvailableRoom),
-          trend: centsToDollars(latest.revenuePerAvailableRoom) - centsToDollars(previous.revenuePerAvailableRoom),
-        },
-        arrivals: {
-          today: latest.checkIns || 0,
-          tomorrow: 0,
-        },
-        departures: {
-          today: latest.checkOuts || 0,
-          tomorrow: 0,
-        },
-        inHouse: 0,
-        noShows: 0,
-        cancellations: latest.cancellations || 0,
-        bookingPace: {
-          current: latest.newReservations || 0,
-          lastYear: 0,
-        },
-      };
-
-      const channels: Record<string, { revenue: number, bookings: number }> = {};
-      (data.bookings || []).forEach((b: any) => {
-        const source = b.source || 'Direct';
-        if (!channels[source]) channels[source] = { revenue: 0, bookings: 0 };
-        channels[source].revenue += b.totalAmount || 0;
-        channels[source].bookings += 1;
-      });
-
-      const channelColors = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444'];
-      const mappedChannelData: ChannelData[] = Object.entries(channels).map(([name, val], i) => ({
-        name,
-        revenue: val.revenue,
-        bookings: val.bookings,
-        color: channelColors[i % channelColors.length],
-      }));
-
-      const mappedRoomTypePerformance: RoomTypePerformance[] = (data.roomTypes || []).map((rt: any) => {
-        const totalRooms = rt.rooms?.length || 0;
-        const occupiedRooms = rt.rooms?.filter((r: any) => r.status === 'occupied').length || 0;
-        return {
-          name: rt.name,
-          occupancy: totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0,
-          revenue: 0, // Need more granular revenue per room type
-          adr: 0,
-        };
-      });
-
-      const mappedOccupancyTrend = data.dailyMetrics.map((m: any) => ({
-        date: format(parseISO(m.date), 'MMM d'),
-        occupancy: Math.round(m.occupancyRate || 0),
-        revenue: Math.round(centsToDollars(m.totalRevenue || 0)),
-      })).reverse();
-
-      setMetrics(hotelMetrics);
-      setChannelData(mappedChannelData);
-      setRoomTypePerformance(mappedRoomTypePerformance);
-      setOccupancyTrend(mappedOccupancyTrend);
-      
-    } catch (err) {
-      console.error('Failed to fetch analytics:', err);
-      toast({
-        title: 'Error',
-        description: 'Failed to load analytics data.',
-        variant: 'destructive',
-      });
+      const { start, end } = reportRange(selectedPeriod, businessDate);
+      const report = await getOperationalReport(start.toISOString(), end.toISOString()) as OperationalReport;
+      setReport(report);
+      const reportedBusinessDate = report.summary.businessDate;
+      if (reportedBusinessDate.slice(0, 10) !== businessDate.slice(0, 10)) setBusinessDate(reportedBusinessDate);
+    } catch (error) {
+      console.error('Failed to fetch operational report:', error);
+      setReport(null);
+      const message = error instanceof Error ? error.message : 'Source records could not be aggregated.';
+      setError(message);
+      toast({ title: 'Report unavailable', description: message, variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [selectedPeriod, businessDate, toast]);
 
-  React.useEffect(() => {
-    fetchData();
-  }, [fetchData, selectedPeriod]);
+  React.useEffect(() => { void fetchData(); }, [fetchData]);
 
   const handlePeriodChange = (period: string) => {
     const params = new URLSearchParams(searchParams?.toString() || '');
@@ -139,32 +63,13 @@ export function AnalyticsPage() {
     router.push(`?${params.toString()}`);
   };
 
-  const header = (
-    <div className="flex flex-col">
-      <h1 className="text-lg font-semibold md:text-2xl">Analytics</h1>
-      <p className="text-muted-foreground">Hotel performance metrics and insights</p>
-    </div>
-  );
-
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Analytics' },
-  ];
-
   return (
-    <PageContainer title="Analytics" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full p-4 md:p-6">
-        <ExecutiveDashboard
-          metrics={metrics}
-          channelData={channelData}
-          roomTypePerformance={roomTypePerformance}
-          occupancyForecast={occupancyForecast}
-          occupancyTrend={occupancyTrend}
-          selectedPeriod={selectedPeriod}
-          onPeriodChange={handlePeriodChange}
-          loading={loading}
-        />
-      </div>
+    <PageContainer
+      title="Operational reports"
+      header={<div><h1 className="text-lg font-semibold md:text-2xl">Operational reports</h1><p className="text-muted-foreground">Occupancy, ADR, RevPAR, revenue, tax, payment, refund, and folio reconciliation.</p></div>}
+      breadcrumbs={[{ type: 'link' as const, label: 'Dashboard', href: '/dashboard' }, { type: 'page' as const, label: 'Reports' }]}
+    >
+      <div className="w-full space-y-4 p-4 md:p-6">{error ? <WorkspaceError message={error} onRetry={fetchData} /> : null}<ExecutiveDashboard report={report} selectedPeriod={selectedPeriod} onPeriodChange={handlePeriodChange} onRefresh={fetchData} loading={loading} /></div>
     </PageContainer>
   );
 }

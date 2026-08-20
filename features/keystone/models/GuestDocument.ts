@@ -1,5 +1,5 @@
 import { list } from '@keystone-6/core'
-import { allOperations } from '@keystone-6/core/access'
+import { allOperations, denyAll } from '@keystone-6/core/access'
 import {
   text,
   select,
@@ -10,20 +10,25 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const GuestDocument = list({
   access: {
     operation: {
-      ...allOperations(permissions.canManageBookings),
-      query: isSignedIn,
+      query: permissions.canManageGuests,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['guest', 'documentType', 'documentNumber', 'issuingCountry', 'expiryDate', 'verified'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
     labelField: 'documentNumber',
   },
@@ -31,6 +36,7 @@ export const GuestDocument = list({
     // Guest relationship
     guest: relationship({
       ref: 'Guest',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'email',
@@ -56,6 +62,7 @@ export const GuestDocument = list({
 
     // Document details
     documentNumber: text({
+      access: { read: denyAll },
       validation: { isRequired: true },
       label: 'Document Number',
       ui: {
@@ -79,6 +86,7 @@ export const GuestDocument = list({
 
     // Document images (S3 URLs)
     frontImage: text({
+      access: { read: denyAll },
       label: 'Front Image URL',
       ui: {
         description: 'S3 URL to front image of document',
@@ -86,6 +94,7 @@ export const GuestDocument = list({
     }),
 
     backImage: text({
+      access: { read: denyAll },
       label: 'Back Image URL',
       ui: {
         description: 'S3 URL to back image of document',

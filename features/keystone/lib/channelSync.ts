@@ -1,7 +1,29 @@
 import crypto from 'crypto'
-import { sendBookingConfirmationEmail, sendReservationCancellationEmail, sendReservationModificationEmail } from './mail'
+import { ensureGuestProfile } from './guestProfiles'
+import { ensureBookingHasGuestAccess } from './guestBookingAccess'
+import { ensureReservationSnapshots } from './reservationSnapshots'
+import { ensureBookingFolio } from './bookingFolio'
+import { requestBookingCancellation } from './bookingCancellation'
+import { amendUnpaidBooking } from './bookingAmendment'
+import { recordHotelLifecycleEvent } from './hotelLifecycle'
+import { lockRoomInventory } from './inventoryLock'
+import { assertHotelAvailability } from './hotelAvailability'
+import { channelIntegrationMode, requireLiveChannelEndpoint } from './integrationConfig'
 
 const DEFAULT_RETRY_DELAY_MS = 2 * 60 * 1000
+
+async function serializableChannelTransaction(context: any, operation: (tx: any) => Promise<any>) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await context.transaction(operation, { maxWait: 5_000, timeout: 30_000, isolationLevel: 'Serializable' })
+    } catch (error: any) {
+      const detail = `${error?.message || ''} ${error?.extensions?.debug?.message || ''}`;
+      const retryable = error?.code === 'P2034' || error?.code === '40001' || error?.extensions?.prisma?.code === 'P2034' || /could not serialize|write conflict|deadlock/i.test(detail)
+      if (!retryable || attempt === 3) throw error
+      await new Promise(resolve => setTimeout(resolve, attempt * 20))
+    }
+  }
+}
 
 type DateRangeInput = {
   startDate?: string | null
@@ -10,7 +32,7 @@ type DateRangeInput = {
 
 type ChannelSyncResult = {
   channelId: string
-  status: 'success' | 'failed'
+  status: 'success' | 'failed' | 'skipped'
   syncedAt: string
   details?: Record<string, unknown>
 }
@@ -52,6 +74,13 @@ function buildSignature(secret: string, payload: string) {
     .digest('hex')
 }
 
+function signaturesMatch(actualHex: string, expectedHex: string) {
+  if (!/^[a-f0-9]{64}$/i.test(actualHex)) return false
+  const actual = Buffer.from(actualHex, 'hex')
+  const expected = Buffer.from(expectedHex, 'hex')
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected)
+}
+
 function getDateRangeDays(startDate: Date, endDate: Date) {
   const days: Date[] = []
   const current = new Date(startDate.getTime())
@@ -78,7 +107,7 @@ function getDayWindow(date: Date) {
 
 function toCents(amount?: number | null) {
   if (typeof amount !== 'number' || Number.isNaN(amount)) {
-    return undefined
+    return 0
   }
   return Math.round(amount * 100)
 }
@@ -115,6 +144,7 @@ async function logChannelSyncEvent(
     errorMessage?: string
     attempts?: number
     nextAttemptAt?: Date | null
+    replayKey?: string
   }
 ) {
   await context.sudo().query.ChannelSyncEvent.createOne({
@@ -122,6 +152,7 @@ async function logChannelSyncEvent(
       channel: { connect: { id: data.channelId } },
       action: data.action,
       status: data.status,
+      replayKey: data.replayKey,
       message: data.message,
       payload: data.payload || {},
       errorMessage: data.errorMessage,
@@ -193,6 +224,7 @@ async function resolveRoomTypeId(context: any, channel: any, payload: ChannelRes
 
 async function getOrCreateRoomInventory(context: any, roomTypeId: string, date: Date, roomsToBook: number) {
   const window = getDayWindow(date)
+  const inventoryKey = `${roomTypeId}:${window.start.toISOString().slice(0, 10)}`
   const existing = await context.sudo().query.RoomInventory.findMany({
     where: {
       roomType: { id: { equals: roomTypeId } },
@@ -210,8 +242,13 @@ async function getOrCreateRoomInventory(context: any, roomTypeId: string, date: 
     where: { roomType: { id: { equals: roomTypeId } } },
   })
 
+  if (roomsToBook > roomCount) {
+    throw new Error('Channel reservation exceeds physical room inventory')
+  }
+
   const record = await context.sudo().query.RoomInventory.createOne({
     data: {
+      inventoryKey,
       date: window.start.toISOString(),
       roomType: { connect: { id: roomTypeId } },
       totalRooms: roomCount || 0,
@@ -239,6 +276,9 @@ async function adjustBookedRooms(context: any, roomTypeId: string, checkInDate: 
     const { record, wasCreated } = await getOrCreateRoomInventory(context, roomTypeId, day, delta)
     if (!wasCreated) {
       const nextBookedRooms = Math.max(0, (record.bookedRooms || 0) + delta)
+      if (nextBookedRooms + (record.blockedRooms || 0) > (record.totalRooms || 0)) {
+        throw new Error('Channel reservation exceeds available room inventory')
+      }
 
       await context.sudo().query.RoomInventory.updateOne({
         where: { id: record.id },
@@ -250,76 +290,82 @@ async function adjustBookedRooms(context: any, roomTypeId: string, checkInDate: 
   }
 }
 
-async function sendReservationEmail(payload: ChannelReservationPayload, booking: any, type: 'new' | 'modify' | 'cancel') {
-  if (!payload.guestEmail || !booking) {
-    return
-  }
+type VerifiedChannelEvent = { eventKey: string; payloadHash: string };
 
-  const data = {
-    confirmationNumber: booking.confirmationNumber,
-    guestName: payload.guestName,
-    guestEmail: payload.guestEmail,
-    checkInDate: payload.checkInDate,
-    checkOutDate: payload.checkOutDate,
-    numberOfNights: booking.numberOfNights || 0,
-    roomTypeName: payload.roomTypeName || booking.roomType?.name || 'Room',
-    totalAmount: booking.totalAmount || 0,
-    numberOfGuests: payload.numberOfGuests || booking.numberOfGuests || 1,
-    specialRequests: payload.specialRequests,
-  }
-
-  if (type === 'new') {
-    await sendBookingConfirmationEmail(data)
-  } else if (type === 'cancel') {
-    await sendReservationCancellationEmail(data)
-  } else {
-    await sendReservationModificationEmail(data)
-  }
-}
-
-async function upsertChannelReservation(context: any, channel: any, payload: ChannelReservationPayload, eventType: string) {
+async function upsertChannelReservation(context: any, channel: any, payload: ChannelReservationPayload, eventType: string, verifiedEvent: VerifiedChannelEvent) {
   if (!payload.externalId) {
     throw new Error('Channel reservation payload missing externalId')
   }
 
+  const channelKey = `${channel.id}:${payload.externalId}`
+  if (!verifiedEvent.eventKey || !/^[a-f0-9]{64}$/i.test(verifiedEvent.payloadHash)) throw new Error('Verified channel event identity is required')
   const existing = await context.sudo().query.ChannelReservation.findMany({
     where: {
       externalId: { equals: payload.externalId },
       channel: { id: { equals: channel.id } },
     },
-    query: 'id checkInDate checkOutDate roomType { id name } reservation { id confirmationNumber numberOfGuests totalAmount numberOfNights roomType { id name } }',
+    query: 'id checkInDate checkOutDate roomType { id name } reservation { id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } } }',
     take: 1,
   })
 
   const reservation = existing[0]
   const roomTypeId = await resolveRoomTypeId(context, channel, payload)
   const roomCount = payload.roomCount && payload.roomCount > 0 ? payload.roomCount : 1
+  if (!Number.isInteger(roomCount) || roomCount !== 1) throw new Error('Multi-room channel reservations require an explicit group allocation.')
 
   if (!reservation) {
-    const booking = await context.sudo().query.Booking.createOne({
+    const guestProfile = await ensureGuestProfile(context, {
+      name: payload.guestName,
+      email: payload.guestEmail || `channel-${channel.id}-${payload.externalId}@invalid.local`,
+    })
+    if (!roomTypeId) throw new Error('Channel reservation room type is not mapped')
+    await lockRoomInventory(context.prisma, roomTypeId, new Date(payload.checkInDate), new Date(payload.checkOutDate))
+    await assertHotelAvailability(context, { roomTypeId, checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate })
+    const createdBooking = await context.prisma.booking.create({
       data: {
+        confirmationNumber: `BK-OTA-${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
         guestName: payload.guestName,
-        guestEmail: payload.guestEmail,
-        checkInDate: payload.checkInDate,
-        checkOutDate: payload.checkOutDate,
+        guestEmail: payload.guestEmail || guestProfile.email,
+        guestProfileId: guestProfile.id,
+        checkInDate: new Date(payload.checkInDate),
+        checkOutDate: new Date(payload.checkOutDate),
         numberOfGuests: payload.numberOfGuests || 1,
         status: 'confirmed',
         source: 'ota',
-        totalAmount: payload.totalAmount || 0,
-        balanceDue: payload.totalAmount || 0,
-        roomType: roomTypeId ? { connect: { id: roomTypeId } } : undefined,
+        roomRateMinor: toCents(payload.totalAmount), taxAmountMinor: 0, feesAmountMinor: 0,
+        totalAmountMinor: toCents(payload.totalAmount), depositAmountMinor: 0, balanceDueMinor: toCents(payload.totalAmount),
+        currencyCode: 'USD', roomRate: payload.totalAmount || 0,
+        taxAmount: 0, feesAmount: 0, totalAmount: payload.totalAmount || 0, depositAmount: 0,
+        balanceDue: payload.totalAmount || 0, pricingVersion: 'channel-create-v1', pricingRevision: 1,
+        pricingSnapshot: { snapshotKeyPrefix: 'v1', source: 'channel', roomSubtotalMinor: toCents(payload.totalAmount), taxMinor: 0, feesMinor: 0, totalMinor: toCents(payload.totalAmount), currencyCode: 'USD' },
       },
-      query: 'id confirmationNumber numberOfGuests totalAmount numberOfNights roomType { id name }',
     })
+    await context.prisma.roomAssignment.create({
+      data: {
+        bookingId: createdBooking.id,
+        roomTypeId,
+        guestName: payload.guestName,
+        ratePerNightMinor: Math.round(toCents(payload.totalAmount) / Math.max(1, Math.round((new Date(payload.checkOutDate).getTime() - new Date(payload.checkInDate).getTime()) / 86_400_000))),
+      },
+    })
+    await ensureBookingHasGuestAccess(context, createdBooking.id)
+    await ensureReservationSnapshots(context, createdBooking.id)
+    await ensureBookingFolio(context, createdBooking.id)
+    const booking = await context.sudo().query.Booking.findOne({
+      where: { id: createdBooking.id },
+      query: 'id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } }',
+    })
+    if (!booking) throw new Error('Channel booking projection failed')
 
     await context.sudo().query.ChannelReservation.createOne({
       data: {
         channel: { connect: { id: channel.id } },
+        channelKey,
         externalId: payload.externalId,
-        reservation: { connect: { id: booking.id } },
+        reservation: { connect: { id: booking!.id } },
         roomType: roomTypeId ? { connect: { id: roomTypeId } } : undefined,
-        checkInDate: payload.checkInDate,
-        checkOutDate: payload.checkOutDate,
+        checkInDate: new Date(payload.checkInDate).toISOString(),
+        checkOutDate: new Date(payload.checkOutDate).toISOString(),
         guestName: payload.guestName,
         guestEmail: payload.guestEmail,
         totalAmount: toCents(payload.totalAmount),
@@ -335,21 +381,31 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
       await adjustBookedRooms(context, roomTypeId, payload.checkInDate, payload.checkOutDate, roomCount)
     }
 
-    await sendReservationEmail(payload, booking, 'new')
+    await recordHotelLifecycleEvent({
+      prisma: context.prisma,
+      eventKey: `channel-booking:create:${channelKey}`,
+      actorId: null,
+      identity: { request: { channelKey, checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate, totalAmountMinor: toCents(payload.totalAmount) }, aggregateType: 'booking', aggregateId: booking!.id, action: 'created_from_channel' },
+      afterSnapshot: { status: 'confirmed', checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate, totalAmountMinor: toCents(payload.totalAmount) },
+      metadata: { channelId: channel.id, externalId: payload.externalId },
+    })
 
     return { action: 'created', booking }
   }
 
   if (eventType === 'cancel') {
+    if (!reservation.reservation?.id) throw new Error('Channel reservation is not linked to a booking')
+    await requestBookingCancellation({
+      context,
+      bookingId: reservation.reservation.id,
+      refundReason: `Channel cancellation ${channelKey}`,
+      idempotencyKey: `channel:${channelKey}:cancel:${verifiedEvent.eventKey}`,
+      actorId: null,
+      source: 'channel',
+      withinTransaction: true,
+    })
     if (reservation.roomType?.id) {
       await adjustBookedRooms(context, reservation.roomType.id, reservation.checkInDate, reservation.checkOutDate, -roomCount)
-    }
-
-    if (reservation.reservation?.id) {
-      await context.sudo().query.Booking.updateOne({
-        where: { id: reservation.reservation.id },
-        data: { status: 'cancelled' },
-      })
     }
 
     await context.sudo().query.ChannelReservation.updateOne({
@@ -361,48 +417,41 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
       },
     })
 
-    await sendReservationEmail(payload, reservation.reservation, 'cancel')
-
-    return { action: 'cancelled', booking: reservation.reservation }
+    return { action: 'cancellation_requested', booking: reservation.reservation }
   }
 
   if (eventType === 'modify') {
-    if (reservation.roomType?.id) {
-      await adjustBookedRooms(context, reservation.roomType.id, reservation.checkInDate, reservation.checkOutDate, -roomCount)
-    }
-
-    if (roomTypeId) {
-      await adjustBookedRooms(context, roomTypeId, payload.checkInDate, payload.checkOutDate, roomCount)
-    }
-
-    const bookingUpdate: Record<string, unknown> = {
-      guestName: payload.guestName,
-      guestEmail: payload.guestEmail,
+    const guestProfile = await ensureGuestProfile(context, {
+      name: payload.guestName,
+      email: payload.guestEmail || `channel-${channel.id}-${payload.externalId}@invalid.local`,
+    })
+    if (!reservation.reservation?.id || !roomTypeId) throw new Error('Channel modification lacks booking or room-type binding')
+    await amendUnpaidBooking({
+      context,
+      bookingId: reservation.reservation.id,
       checkInDate: payload.checkInDate,
       checkOutDate: payload.checkOutDate,
+      roomTypeId,
+      guestName: payload.guestName,
+      guestEmail: payload.guestEmail || guestProfile.email,
+      guestProfileId: guestProfile.id,
       numberOfGuests: payload.numberOfGuests || 1,
-      totalAmount: payload.totalAmount || 0,
-      balanceDue: payload.totalAmount || 0,
-    }
-
-    if (roomTypeId) {
-      bookingUpdate.roomType = { connect: { id: roomTypeId } }
-    }
-
-    const updatedBooking = reservation.reservation?.id
-      ? await context.sudo().query.Booking.updateOne({
-          where: { id: reservation.reservation.id },
-          data: bookingUpdate,
-          query: 'id confirmationNumber numberOfGuests totalAmount numberOfNights roomType { id name }',
-        })
-      : null
+      totalAmountMinor: toCents(payload.totalAmount),
+      idempotencyKey: `channel:${channelKey}:modify:${verifiedEvent.eventKey}`,
+      source: 'channel',
+      withinTransaction: true,
+    })
+    const updatedBooking = await context.sudo().query.Booking.findOne({
+      where: { id: reservation.reservation.id },
+      query: 'id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } }',
+    })
 
     await context.sudo().query.ChannelReservation.updateOne({
       where: { id: reservation.id },
       data: {
         roomType: roomTypeId ? { connect: { id: roomTypeId } } : undefined,
-        checkInDate: payload.checkInDate,
-        checkOutDate: payload.checkOutDate,
+        checkInDate: new Date(payload.checkInDate).toISOString(),
+        checkOutDate: new Date(payload.checkOutDate).toISOString(),
         guestName: payload.guestName,
         guestEmail: payload.guestEmail,
         totalAmount: toCents(payload.totalAmount),
@@ -412,10 +461,6 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
         lastSyncedAt: new Date().toISOString(),
       },
     })
-
-    if (updatedBooking) {
-      await sendReservationEmail(payload, updatedBooking, 'modify')
-    }
 
     return { action: 'modified', booking: updatedBooking }
   }
@@ -435,7 +480,7 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
 function resolveEventType(eventType: string) {
   const normalized = eventType.toLowerCase()
   if (normalized.includes('cancel')) return 'cancel'
-  if (normalized.includes('modify') || normalized.includes('update')) return 'modify'
+  if (normalized.includes('modif') || normalized.includes('update')) return 'modify'
   if (normalized.includes('create') || normalized.includes('new')) return 'create'
   return 'create'
 }
@@ -484,12 +529,13 @@ export async function pushInventoryToChannel(context: any, channelId: string, da
     throw new Error('Channel not found')
   }
 
-  if (!channel.isActive) {
+  const mode = channelIntegrationMode(channel)
+  if (mode === 'disabled' || mode === 'demo') {
     return {
       channelId: channel.id,
-      status: 'failed',
+      status: 'skipped',
       syncedAt: new Date().toISOString(),
-      details: { message: 'Channel is inactive' },
+      details: { message: `Channel inventory sync is explicitly ${mode}.`, mode },
     }
   }
 
@@ -519,12 +565,11 @@ export async function pushInventoryToChannel(context: any, channelId: string, da
   }
 
   try {
-    const endpoint = resolveInventoryEndpoint(channel)
-    if (endpoint) {
-      await postToChannel(endpoint, payload, {
-        'X-OpenFront-Channel': channel.id,
-      })
-    }
+    const outbound = requireLiveChannelEndpoint(channel, 'inventory')
+    await postToChannel(outbound.endpoint, payload, {
+      'X-OpenFront-Channel': channel.id,
+      ...outbound.headers,
+    })
 
     await logChannelSyncEvent(context, {
       channelId: channel.id,
@@ -575,25 +620,27 @@ export async function pullReservationsFromChannel(context: any, channelId: strin
     throw new Error('Channel not found')
   }
 
-  if (!channel.isActive) {
+  const mode = channelIntegrationMode(channel)
+  if (mode === 'disabled' || mode === 'demo') {
     return {
       channelId: channel.id,
-      status: 'failed',
+      status: 'skipped',
       syncedAt: new Date().toISOString(),
-      details: { message: 'Channel is inactive' },
+      details: { message: `Channel reservation pull is explicitly ${mode}.`, mode },
     }
   }
 
-  const endpoint = resolveReservationEndpoint(channel)
   const payload = {
     channelId: channel.id,
     channelName: channel.name,
   }
 
   try {
-    const reservationsResponse = endpoint ? await postToChannel(endpoint, payload, {
+    const outbound = requireLiveChannelEndpoint(channel, 'reservations')
+    const reservationsResponse = await postToChannel(outbound.endpoint, payload, {
       'X-OpenFront-Channel': channel.id,
-    }) : { reservations: [] }
+      ...outbound.headers,
+    })
 
     const reservations = Array.isArray(reservationsResponse?.reservations)
       ? reservationsResponse.reservations
@@ -602,7 +649,14 @@ export async function pullReservationsFromChannel(context: any, channelId: strin
     for (const reservation of reservations) {
       const mapped = mapReservationPayload(reservation)
       const eventType = resolveEventType(mapped.status)
-      await upsertChannelReservation(context, channel, mapped, eventType)
+      const canonical = JSON.stringify(reservation);
+      const payloadHash = crypto.createHash('sha256').update(canonical).digest('hex');
+      const providerVersion = String(reservation?.eventId || reservation?.version || reservation?.updatedAt || payloadHash).slice(0, 255);
+      const verifiedEvent = { eventKey: `pull:${channel.id}:${mapped.externalId}:${providerVersion}`, payloadHash };
+      await serializableChannelTransaction(
+        context,
+        (transactionContext: any) => upsertChannelReservation(transactionContext, channel, mapped, eventType, verifiedEvent),
+      )
     }
 
     await logChannelSyncEvent(context, {
@@ -650,54 +704,84 @@ export async function handleChannelWebhook(
   rawBody: string,
   headers: Record<string, string | string[] | undefined>
 ) {
-  const channel = await context.sudo().query.Channel.findOne({
+  const configuredChannel = await context.prisma.channel.findUnique({
     where: { id: channelId },
-    query: 'id name credentials mappingRules',
+    select: { isActive: true, credentials: true },
   })
-
-  if (!channel) {
-    throw new Error('Channel not found')
+  const credentials = configuredChannel?.credentials && typeof configuredChannel.credentials === 'object'
+    ? configuredChannel.credentials as Record<string, unknown>
+    : {}
+  const secret = String(credentials.webhookSecret || '')
+  if (!configuredChannel?.isActive || String(credentials.mode || '').toLowerCase() !== 'live' || secret.length < 16) {
+    throw new Error('Channel webhook is disabled or not completely configured')
   }
-
-  const secret = channel.credentials?.webhookSecret
-  if (!secret) {
-    throw new Error('Channel webhook secret not configured')
-  }
-
   const signatureHeader =
     getStringHeader(headers, 'x-openfront-webhook-signature') ||
     getStringHeader(headers, 'x-channel-signature')
-
   const signature = normalizeSignature(signatureHeader)
   const expected = buildSignature(secret, rawBody)
-
-  if (signature !== expected) {
+  if (!signaturesMatch(signature, expected)) {
     throw new Error('Invalid webhook signature')
   }
 
   const payload = JSON.parse(rawBody)
-  const eventType = payload?.eventType || payload?.event || payload?.type || 'reservation.created'
-  const mappedReservation = mapReservationPayload(payload)
-  const action = resolveEventType(eventType)
-
-  const reservationResult = await upsertChannelReservation(context, channel, mappedReservation, action)
-
-  await logChannelSyncEvent(context, {
-    channelId: channel.id,
-    action: 'webhook_event',
-    status: 'success',
-    message: `Webhook handled: ${eventType}`,
-    payload: {
-      eventType,
-      externalId: mappedReservation.externalId,
-      action: reservationResult.action,
-    },
-  })
-
-  return {
-    success: true,
-    action: reservationResult.action,
+  const providerEventId = String(
+    getStringHeader(headers, 'x-webhook-id') || payload?.eventId || payload?.id || ''
+  ).trim()
+  if (!providerEventId || providerEventId.length > 255) {
+    throw new Error('Channel webhook event id is required')
   }
+  const replayKey = `${channelId}:${providerEventId}`
+  const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex')
+
+  return serializableChannelTransaction(context, async (transactionContext: any) => {
+    await transactionContext.prisma.$executeRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      `hotel-channel-event:${replayKey}`
+    )
+    const existing = await transactionContext.sudo().query.ChannelSyncEvent.findOne({
+      where: { replayKey },
+      query: 'id payload',
+    })
+    if (existing) {
+      if (existing.payload?.payloadHash !== payloadHash) throw new Error('Channel event id was reused with different payload evidence')
+      return { success: true, duplicate: true, action: 'replayed' }
+    }
+
+    const channel = await transactionContext.sudo().query.Channel.findOne({
+      where: { id: channelId },
+      query: 'id name mappingRules',
+    })
+    if (!channel) throw new Error('Channel not found')
+
+    const eventType = payload?.eventType || payload?.event || payload?.type || 'reservation.created'
+    const mappedReservation = mapReservationPayload(payload)
+    const action = resolveEventType(eventType)
+    const reservationResult = await upsertChannelReservation(
+      transactionContext,
+      channel,
+      mappedReservation,
+      action,
+      { eventKey: replayKey, payloadHash }
+    )
+
+    await logChannelSyncEvent(transactionContext, {
+      channelId: channel.id,
+      action: 'webhook_event',
+      status: 'success',
+      replayKey,
+      message: `Webhook handled: ${eventType}`,
+      payload: {
+        eventType,
+        providerEventId,
+        payloadHash,
+        externalId: mappedReservation.externalId,
+        action: reservationResult.action,
+      },
+    })
+
+    return { success: true, duplicate: false, action: reservationResult.action }
+  })
 }
 
 export async function retryFailedChannelSyncs(context: any) {
@@ -710,6 +794,9 @@ export async function retryFailedChannelSyncs(context: any) {
     query: 'id channel { id } action attempts payload',
     take: 25,
   })
+
+  let succeeded = 0
+  let failed = 0
 
   for (const event of failedEvents) {
     const attempts = (event.attempts || 0) + 1
@@ -729,6 +816,7 @@ export async function retryFailedChannelSyncs(context: any) {
           message: 'Retry succeeded',
         },
       })
+      succeeded += 1
     } catch (error: any) {
       await context.sudo().query.ChannelSyncEvent.updateOne({
         where: { id: event.id },
@@ -742,6 +830,14 @@ export async function retryFailedChannelSyncs(context: any) {
       })
 
       await appendChannelSyncError(context, event.channel.id, error.message)
+      failed += 1
     }
+  }
+
+  return {
+    processed: failedEvents.length,
+    succeeded,
+    failed,
+    retriedAt: new Date().toISOString(),
   }
 }

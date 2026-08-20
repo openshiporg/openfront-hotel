@@ -19,12 +19,20 @@ export interface OnboardingState {
 }
 
 const initialItemsState = {
+  hotelSettings: [],
   roomTypes: [],
   rooms: [],
   ratePlans: [],
   seasonalRates: [],
   guests: [],
   bookings: [],
+  bookingPayments: [],
+  housekeepingTasks: [],
+  maintenanceRequests: [],
+  channels: [],
+  channelReservations: [],
+  channelSyncEvents: [],
+  loyaltyTransactions: [],
   inventory: [],
   dailyMetrics: [],
 };
@@ -45,6 +53,8 @@ export function useOnboardingState() {
 
   useEffect(() => {
     const templateData = getSeedForTemplate(state.selectedTemplate, seedData);
+    // The selected template is external state for this hook; reset its derived editor data.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState((prev) => ({
       ...prev,
       currentJsonData: templateData,

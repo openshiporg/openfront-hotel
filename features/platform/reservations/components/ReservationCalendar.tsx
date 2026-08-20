@@ -2,14 +2,6 @@
 
 import React from 'react';
 import {
-  addDays,
-  differenceInCalendarDays,
-  format,
-  isSameDay,
-  parseISO,
-  startOfDay,
-} from 'date-fns';
-import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
@@ -39,7 +31,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { useToast } from '@/components/ui/use-toast';
 
 export type ReservationStatus =
   | 'pending'
@@ -47,6 +38,7 @@ export type ReservationStatus =
   | 'checked_in'
   | 'checked_out'
   | 'cancelled'
+  | 'cancellation_pending'
   | 'no_show';
 
 export interface ReservationCalendarReservation {
@@ -81,6 +73,10 @@ interface ReservationCalendarProps {
   rooms: ReservationCalendarRoom[];
   loading?: boolean;
   onRefresh?: () => void;
+  onViewRangeChange?: (start: Date, end: Date) => void;
+  onUpdateStayDates?: (bookingId: string, checkInDate: string, checkOutDate: string) => Promise<void> | void;
+  onStatusChange?: (bookingId: string, status: ReservationStatus) => Promise<void> | void;
+  onCancel?: (bookingId: string) => Promise<void> | void;
 }
 
 const STATUS_STYLES: Record<ReservationStatus, string> = {
@@ -89,6 +85,7 @@ const STATUS_STYLES: Record<ReservationStatus, string> = {
   checked_in: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   checked_out: 'bg-gray-100 text-gray-700 border-gray-200',
   cancelled: 'bg-rose-100 text-rose-700 border-rose-200',
+  cancellation_pending: 'bg-amber-100 text-amber-800 border-amber-200',
   no_show: 'bg-orange-100 text-orange-700 border-orange-200',
 };
 
@@ -98,6 +95,7 @@ const STATUS_LABELS: Record<ReservationStatus, string> = {
   checked_in: 'Checked In',
   checked_out: 'Checked Out',
   cancelled: 'Cancelled',
+  cancellation_pending: 'Cancellation pending',
   no_show: 'No Show',
 };
 
@@ -113,11 +111,33 @@ const SOURCE_LABELS: Record<string, string> = {
 
 const VIEW_DAYS = 14;
 const LANE_HEIGHT = 34;
+const DAY_MS = 86_400_000;
+
+function utcStartOfDay(value: Date | string = new Date()) {
+  const date = new Date(value);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function addUtcDays(value: Date, days: number) {
+  return new Date(value.getTime() + days * DAY_MS);
+}
+
+function utcDayDifference(left: Date, right: Date) {
+  return Math.round((utcStartOfDay(left).getTime() - utcStartOfDay(right).getTime()) / DAY_MS);
+}
+
+function isSameUtcDay(left: Date, right: Date) {
+  return utcStartOfDay(left).getTime() === utcStartOfDay(right).getTime();
+}
+
+function formatUtc(value: Date | string, options: Intl.DateTimeFormatOptions) {
+  return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' }).format(new Date(value));
+}
 
 function getReservationRange(reservation: ReservationCalendarReservation) {
   return {
-    start: startOfDay(parseISO(reservation.checkInDate)),
-    end: startOfDay(parseISO(reservation.checkOutDate)),
+    start: utcStartOfDay(reservation.checkInDate),
+    end: utcStartOfDay(reservation.checkOutDate),
   };
 }
 
@@ -190,10 +210,16 @@ export function ReservationCalendar({
   rooms,
   loading,
   onRefresh,
+  onViewRangeChange,
+  onUpdateStayDates,
+  onStatusChange,
+  onCancel,
 }: ReservationCalendarProps) {
-  const { toast } = useToast();
-  const [viewStart, setViewStart] = React.useState<Date>(startOfDay(new Date()));
+  const [viewStart, setViewStart] = React.useState<Date>(utcStartOfDay());
   const [selectedReservationId, setSelectedReservationId] = React.useState<string | null>(null);
+  const [manualCheckIn, setManualCheckIn] = React.useState('');
+  const [manualCheckOut, setManualCheckOut] = React.useState('');
+  const [savingDates, setSavingDates] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [roomTypeFilter, setRoomTypeFilter] = React.useState('all');
@@ -202,17 +228,24 @@ export function ReservationCalendar({
   const [dayWidth, setDayWidth] = React.useState(72);
 
   const gridRef = React.useRef<HTMLDivElement | null>(null);
+  const internalReservationsRef = React.useRef(reservations);
   const dragStateRef = React.useRef<{
     id: string;
     mode: 'move' | 'resize-start' | 'resize-end';
     startX: number;
     originalStart: Date;
     originalEnd: Date;
+    deltaDays: number;
   } | null>(null);
 
   React.useEffect(() => {
+    internalReservationsRef.current = reservations;
     setInternalReservations(reservations);
   }, [reservations]);
+
+  React.useEffect(() => {
+    onViewRangeChange?.(viewStart, addUtcDays(viewStart, VIEW_DAYS));
+  }, [onViewRangeChange, viewStart]);
 
   React.useEffect(() => {
     if (!gridRef.current) return;
@@ -233,29 +266,29 @@ export function ReservationCalendar({
       if (!dragStateRef.current || dayWidth <= 0) return;
       const { id, mode, startX, originalStart, originalEnd } = dragStateRef.current;
       const deltaDays = Math.round((event.clientX - startX) / dayWidth);
-      if (deltaDays === 0) return;
+      dragStateRef.current.deltaDays = deltaDays;
 
-      setInternalReservations((prev) =>
-        prev.map((reservation) => {
+      setInternalReservations((prev) => {
+        const next = prev.map((reservation) => {
           if (reservation.id !== id) return reservation;
 
           let newStart = originalStart;
           let newEnd = originalEnd;
 
           if (mode === 'move') {
-            newStart = addDays(originalStart, deltaDays);
-            newEnd = addDays(originalEnd, deltaDays);
+            newStart = addUtcDays(originalStart, deltaDays);
+            newEnd = addUtcDays(originalEnd, deltaDays);
           }
 
           if (mode === 'resize-start') {
-            const candidate = addDays(originalStart, deltaDays);
+            const candidate = addUtcDays(originalStart, deltaDays);
             if (candidate < originalEnd) {
               newStart = candidate;
             }
           }
 
           if (mode === 'resize-end') {
-            const candidate = addDays(originalEnd, deltaDays);
+            const candidate = addUtcDays(originalEnd, deltaDays);
             if (candidate > originalStart) {
               newEnd = candidate;
             }
@@ -266,18 +299,28 @@ export function ReservationCalendar({
             checkInDate: newStart.toISOString(),
             checkOutDate: newEnd.toISOString(),
           };
-        })
-      );
+        });
+        internalReservationsRef.current = next;
+        return next;
+      });
     };
 
-    const handleMouseUp = () => {
-      if (dragStateRef.current) {
-        dragStateRef.current = null;
-        toast({
-          title: 'Dates Updated',
-          description: 'Reservation dates adjusted in the calendar view.',
-        });
+    const handleMouseUp = async () => {
+      if (!dragStateRef.current) return;
+
+      const draggedReservationId = dragStateRef.current.id;
+      const changed = dragStateRef.current.deltaDays !== 0;
+      dragStateRef.current = null;
+      if (!changed) return;
+      const reservation = internalReservationsRef.current.find((item) => item.id === draggedReservationId);
+
+      if (reservation && onUpdateStayDates) {
+        await onUpdateStayDates(reservation.id, reservation.checkInDate, reservation.checkOutDate);
+        return;
       }
+
+      internalReservationsRef.current = reservations;
+      setInternalReservations(reservations);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -287,10 +330,10 @@ export function ReservationCalendar({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [dayWidth, toast]);
+  }, [dayWidth, onUpdateStayDates, reservations]);
 
   const days = React.useMemo(
-    () => Array.from({ length: VIEW_DAYS }, (_, index) => addDays(viewStart, index)),
+    () => Array.from({ length: VIEW_DAYS }, (_, index) => addUtcDays(viewStart, index)),
     [viewStart]
   );
 
@@ -406,8 +449,38 @@ export function ReservationCalendar({
     (reservation) => reservation.id === selectedReservationId
   );
 
+  const selectedCheckInDate = selectedReservation?.checkInDate;
+  const selectedCheckOutDate = selectedReservation?.checkOutDate;
+  React.useEffect(() => {
+    if (!selectedCheckInDate || !selectedCheckOutDate) return;
+    setManualCheckIn(selectedCheckInDate.slice(0, 10));
+    setManualCheckOut(selectedCheckOutDate.slice(0, 10));
+  }, [selectedCheckInDate, selectedCheckOutDate]);
+
   const handleSelectReservation = (reservation: ReservationCalendarReservation) => {
     setSelectedReservationId(reservation.id);
+    setManualCheckIn(reservation.checkInDate.slice(0, 10));
+    setManualCheckOut(reservation.checkOutDate.slice(0, 10));
+  };
+
+  const saveManualStayDates = async () => {
+    if (!selectedReservation || !onUpdateStayDates || !manualCheckIn || !manualCheckOut) return;
+    const withDate = (original: string, datePart: string) => {
+      const [year, month, day] = datePart.split('-').map(Number);
+      const date = new Date(original);
+      date.setUTCFullYear(year, month - 1, day);
+      return date.toISOString();
+    };
+    setSavingDates(true);
+    try {
+      await onUpdateStayDates(
+        selectedReservation.id,
+        withDate(selectedReservation.checkInDate, manualCheckIn),
+        withDate(selectedReservation.checkOutDate, manualCheckOut),
+      );
+    } finally {
+      setSavingDates(false);
+    }
   };
 
   const handleStartDrag = (
@@ -420,21 +493,15 @@ export function ReservationCalendar({
       id: reservation.id,
       mode,
       startX: event.clientX,
-      originalStart: startOfDay(parseISO(reservation.checkInDate)),
-      originalEnd: startOfDay(parseISO(reservation.checkOutDate)),
+      originalStart: new Date(reservation.checkInDate),
+      originalEnd: new Date(reservation.checkOutDate),
+      deltaDays: 0,
     };
   };
 
-  const handleStatusChange = (reservationId: string, status: ReservationStatus) => {
-    setInternalReservations((prev) =>
-      prev.map((reservation) =>
-        reservation.id === reservationId ? { ...reservation, status } : reservation
-      )
-    );
-    toast({
-      title: 'Reservation Updated',
-      description: `Status set to ${STATUS_LABELS[status]}.`,
-    });
+  const handleStatusChange = async (reservationId: string, status: ReservationStatus) => {
+    if (!onStatusChange) return;
+    await onStatusChange(reservationId, status);
   };
 
   return (
@@ -455,21 +522,21 @@ export function ReservationCalendar({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setViewStart(startOfDay(new Date()))}
+                onClick={() => setViewStart(utcStartOfDay())}
               >
                 Today
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                onClick={() => setViewStart(addDays(viewStart, -VIEW_DAYS))}
+                onClick={() => setViewStart(addUtcDays(viewStart, -VIEW_DAYS))}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                onClick={() => setViewStart(addDays(viewStart, VIEW_DAYS))}
+                onClick={() => setViewStart(addUtcDays(viewStart, VIEW_DAYS))}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -538,8 +605,9 @@ export function ReservationCalendar({
             </div>
           )}
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-[220px_1fr] gap-4">
+        <CardContent className="min-w-0 max-w-full">
+          <div data-qa-layout="reservation-calendar-scroll" className="max-w-full overflow-x-auto pb-2">
+          <div className="grid min-w-[900px] grid-cols-[220px_minmax(0,1fr)] gap-4">
             <div className="space-y-2">
               <div className="text-xs uppercase text-muted-foreground">Rooms</div>
               <div className="space-y-1">
@@ -571,11 +639,11 @@ export function ReservationCalendar({
                     key={day.toISOString()}
                     className={cn(
                       'rounded-md border border-transparent bg-muted/30 px-2 py-2 text-center',
-                      isSameDay(day, new Date()) && 'border-blue-200 bg-blue-50 text-blue-700'
+                      isSameUtcDay(day, new Date()) && 'border-blue-200 bg-blue-50 text-blue-700'
                     )}
                   >
-                    <p className="font-medium">{format(day, 'EEE')}</p>
-                    <p>{format(day, 'MMM d')}</p>
+                    <p className="font-medium">{formatUtc(day, { weekday: 'short' })}</p>
+                    <p>{formatUtc(day, { month: 'short', day: 'numeric' })}</p>
                   </div>
                 ))}
               </div>
@@ -596,8 +664,8 @@ export function ReservationCalendar({
                     >
                       {rowReservations.map((reservation) => {
                         const range = getReservationRange(reservation);
-                        const startIndex = differenceInCalendarDays(range.start, viewStart);
-                        const endIndex = differenceInCalendarDays(range.end, viewStart);
+                        const startIndex = utcDayDifference(range.start, viewStart);
+                        const endIndex = utcDayDifference(range.end, viewStart);
                         const clampedStart = Math.max(0, startIndex);
                         const clampedEnd = Math.min(VIEW_DAYS, endIndex);
                         if (clampedEnd <= 0 || clampedStart >= VIEW_DAYS) {
@@ -624,6 +692,7 @@ export function ReservationCalendar({
                               height: LANE_HEIGHT - 10,
                             }}
                             onClick={() => handleSelectReservation(reservation)}
+                            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handleSelectReservation(reservation); } }}
                             role="button"
                             tabIndex={0}
                           >
@@ -668,6 +737,7 @@ export function ReservationCalendar({
               </div>
             </div>
           </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -697,8 +767,8 @@ export function ReservationCalendar({
                 <div className="rounded-md border p-3">
                   <p className="text-xs uppercase text-muted-foreground">Stay</p>
                   <p className="font-medium">
-                    {format(parseISO(selectedReservation.checkInDate), 'MMM d')} -{' '}
-                    {format(parseISO(selectedReservation.checkOutDate), 'MMM d, yyyy')}
+                    {formatUtc(selectedReservation.checkInDate, { month: 'short', day: 'numeric' })} -{' '}
+                    {formatUtc(selectedReservation.checkOutDate, { month: 'short', day: 'numeric', year: 'numeric' })}
                   </p>
                   <p className="text-sm text-muted-foreground">
                     Guests: {selectedReservation.numberOfGuests || 1}
@@ -717,18 +787,23 @@ export function ReservationCalendar({
                 </div>
               </div>
 
+              {['pending', 'confirmed'].includes(selectedReservation.status) && onUpdateStayDates ? (
+                <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                  <div className="space-y-1"><label htmlFor="manualCheckIn" className="text-xs font-medium uppercase text-muted-foreground">Arrival date</label><Input id="manualCheckIn" type="date" value={manualCheckIn} onChange={event => setManualCheckIn(event.target.value)} /></div>
+                  <div className="space-y-1"><label htmlFor="manualCheckOut" className="text-xs font-medium uppercase text-muted-foreground">Departure date</label><Input id="manualCheckOut" type="date" value={manualCheckOut} onChange={event => setManualCheckOut(event.target.value)} /></div>
+                  <Button size="sm" variant="outline" onClick={saveManualStayDates} disabled={savingDates || !manualCheckIn || !manualCheckOut}>Save dates</Button>
+                </div>
+              ) : null}
+
               <div className="flex flex-wrap gap-2">
-                {selectedReservation.status !== 'checked_in' &&
-                  selectedReservation.status !== 'checked_out' &&
-                  selectedReservation.status !== 'cancelled' && (
-                    <Button
-                      size="sm"
-                      onClick={() => handleStatusChange(selectedReservation.id, 'checked_in')}
-                    >
-                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                      Quick Check-In
+                {selectedReservation.status === 'confirmed' && (
+                  <>
+                    <Button size="sm" onClick={() => handleStatusChange(selectedReservation.id, 'checked_in')}>
+                      <CheckCircle2 className="mr-2 h-4 w-4" />Quick Check-In
                     </Button>
-                  )}
+                    <Button size="sm" variant="outline" onClick={() => handleStatusChange(selectedReservation.id, 'no_show')}>Mark no show</Button>
+                  </>
+                )}
                 {selectedReservation.status === 'checked_in' && (
                   <Button
                     size="sm"
@@ -740,14 +815,13 @@ export function ReservationCalendar({
                   </Button>
                 )}
                 {selectedReservation.status === 'pending' && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleStatusChange(selectedReservation.id, 'confirmed')}
-                  >
+                  <Button size="sm" variant="outline" onClick={() => handleStatusChange(selectedReservation.id, 'confirmed')}>
                     Confirm Reservation
                   </Button>
                 )}
+                {['pending', 'confirmed'].includes(selectedReservation.status) && onCancel ? (
+                  <Button size="sm" variant="destructive" onClick={() => onCancel(selectedReservation.id)}>Cancel reservation</Button>
+                ) : null}
               </div>
             </div>
           ) : (

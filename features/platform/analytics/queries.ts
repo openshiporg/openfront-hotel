@@ -1,31 +1,19 @@
-import { gql } from 'graphql-request';
-
-export const GET_ANALYTICS_DATA = gql`
-  query GetAnalyticsData {
-    dailyMetrics(orderBy: { date: desc }, take: 30) {
-      id
-      date
-      occupancyRate
-      averageDailyRate
-      revenuePerAvailableRoom
-      totalRevenue
-      newReservations
-      checkIns
-      checkOuts
-      cancellations
-    }
-    roomTypes {
-      id
-      name
-      rooms {
-        id
-        status
+export const GET_ANALYTICS_DATA = String.raw`
+  query GetOperationalReport($start: DateTime!, $end: DateTime!) {
+    hotelAnalyticsOperations(propertyKey: "the-alder-house", start: $start, end: $end) {
+      summary {
+        start end businessDate currencyCode availableRoomNights occupiedRoomNights occupancyRate
+        roomRevenueMinor taxMinor feeMinor totalRevenueMinor adrMinor revparMinor
+        arrivals departures newReservations cancellations noShows paymentsMinor refundsMinor
+        openFolioBalanceMinor openFolioCount
       }
-    }
-    bookings(where: { status: { equals: "confirmed" } }) {
-      id
-      source
-      totalAmount
+      days {
+        date availableRoomNights occupiedRoomNights occupancyRate
+        roomRevenueMinor taxMinor feeMinor totalRevenueMinor adrMinor revparMinor
+        arrivals departures newReservations cancellations noShows paymentsMinor refundsMinor
+      }
+      channels { source bookings revenueMinor }
+      roomTypes { id name availableRoomNights occupiedRoomNights occupancyRate roomRevenueMinor adrMinor }
     }
   }
 `;

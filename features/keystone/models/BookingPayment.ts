@@ -3,6 +3,7 @@ import { allOperations } from '@keystone-6/core/access'
 import {
   text,
   float,
+  integer,
   select,
   timestamp,
   relationship,
@@ -11,6 +12,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 // Generate a unique payment reference
 function generatePaymentReference(): string {
@@ -23,17 +25,19 @@ export const BookingPayment = list({
   access: {
     operation: {
       query: permissions.canManagePayments,
-      create: permissions.canManagePayments,
-      update: permissions.canManagePayments,
-      delete: permissions.canManagePayments,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['paymentReference', 'booking', 'amount', 'paymentType', 'status', 'createdAt'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
@@ -75,7 +79,8 @@ export const BookingPayment = list({
       },
     }),
 
-    // Amount
+    // Signed integer minor units are authoritative; amount is legacy display compatibility.
+    amountMinor: integer({ validation: { isRequired: true }, defaultValue: 0, label: 'Amount (minor units)' }),
     amount: float({
       validation: { isRequired: true },
       label: 'Amount',
@@ -116,6 +121,7 @@ export const BookingPayment = list({
     // Status
     status: select({
       type: 'string',
+      access: { update: () => false },
       options: [
         { label: 'Pending', value: 'pending' },
         { label: 'Processing', value: 'processing' },
@@ -256,6 +262,7 @@ export const BookingPayment = list({
     // Relationships
     booking: relationship({
       ref: 'Booking.payments',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'confirmationNumber',
@@ -264,6 +271,7 @@ export const BookingPayment = list({
     }),
     paymentProvider: relationship({
       ref: 'PaymentProvider.bookingPayments',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',
@@ -271,7 +279,7 @@ export const BookingPayment = list({
       label: 'Payment Provider',
     }),
     paymentSession: relationship({
-      ref: 'BookingPaymentSession',
+      ref: 'BookingPaymentSession.payment',
       ui: {
         displayMode: 'select',
         labelField: 'id',
@@ -280,6 +288,16 @@ export const BookingPayment = list({
       db: {
         foreignKey: true,
       },
+    }),
+    events: relationship({
+      ref: 'PaymentEvent.payment',
+      many: true,
+      ui: { displayMode: 'count' },
+    }),
+    refundIntents: relationship({
+      ref: 'RefundIntent.sourcePayment',
+      many: true,
+      ui: { displayMode: 'count' },
     }),
 
     // Processed by (staff member)
@@ -311,9 +329,15 @@ export const BookingPayment = list({
   },
   hooks: {
     beforeOperation: async ({ operation, resolvedData, item }) => {
+      if (
+        (operation === 'update' || operation === 'delete') &&
+        ['completed', 'refunded'].includes(String(item?.status || ''))
+      ) {
+        throw new Error('Settled payment records are immutable. Post an append-only adjustment instead.')
+      }
+
       if (operation === 'update' && resolvedData.status) {
         const now = new Date().toISOString()
-        // Auto-set timestamps based on status changes
         if (resolvedData.status === 'completed' && !item?.processedAt) {
           resolvedData.processedAt = now
         }

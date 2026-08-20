@@ -1,0 +1,52 @@
+/* Hallmark · macrostructure: Split Arrival · tone: luxury · theme: custom (vibe: limestone brass editorial)
+ * nav: N7 minimal split · footer: Ft5 statement · genre: editorial
+ */
+
+:root {
+  --lodging-paper: oklch(96.5% 0.01 85);
+  --lodging-paper-2: oklch(93.5% 0.014 82);
+  --lodging-paper-3: oklch(90% 0.016 78);
+  --lodging-night: oklch(17% 0.018 75);
+  --lodging-night-soft: oklch(24% 0.02 75);
+  --lodging-ink: oklch(22% 0.02 75);
+  --lodging-ink-muted: oklch(46% 0.02 75);
+  --lodging-ink-faint: oklch(58% 0.015 78);
+  --lodging-accent: oklch(58% 0.09 65);
+  --lodging-accent-deep: oklch(44% 0.085 58);
+  --lodging-accent-pale: oklch(92% 0.03 78);
+  --lodging-rule: oklch(86% 0.012 80);
+  --lodging-rule-strong: oklch(78% 0.015 78);
+  --lodging-focus: oklch(52% 0.11 62);
+  --lodging-danger: oklch(48% 0.16 25);
+
+  --font-display: var(--font-lodging-display);
+  --font-body: var(--font-lodging-body);
+
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+
+  --text-eyebrow: 0.6875rem;
+  --text-body: 1rem;
+  --text-lead: 1.125rem;
+  --text-title: clamp(1.75rem, 3vw, 2.5rem);
+  --text-headline: clamp(2.25rem, 4.5vw, 3.75rem);
+  --text-display: clamp(2.75rem, 7vw, 5.5rem);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+  --dur-fast: 150ms;
+  --dur-mid: 280ms;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+}
+
+html,
+body {
+  overflow-x: clip;
+}

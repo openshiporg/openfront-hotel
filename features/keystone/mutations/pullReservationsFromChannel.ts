@@ -10,7 +10,7 @@ export default async function pullReservationsFromChannelMutation(
   { channelId }: PullReservationsInput,
   context: any
 ) {
-  if (!permissions.canManageBookings({ session: context.session })) {
+  if (!permissions.canManageBookings({ session: context.session }) || !permissions.canManageIntegrations({ session: context.session })) {
     throw new Error('Not authorized to sync channel reservations')
   }
 

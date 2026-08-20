@@ -1,5 +1,4 @@
 import { list } from '@keystone-6/core'
-import { allOperations } from '@keystone-6/core/access'
 import {
   text,
   integer,
@@ -8,13 +7,16 @@ import {
   relationship,
 } from '@keystone-6/core/fields'
 
-import { isSignedIn, permissions } from '../access'
+import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const Room = list({
   access: {
     operation: {
-      query: () => true, create: isSignedIn, update: isSignedIn,
+      query: permissions.canManageRooms,
+      create: permissions.canManageRooms,
+      update: permissions.canManageRooms,
       delete: permissions.canManageRooms,
     },
   },
@@ -40,6 +42,7 @@ export const Room = list({
     // Room type relationship
     roomType: relationship({
       ref: 'RoomType.rooms',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',
@@ -59,6 +62,7 @@ export const Room = list({
     // Status
     status: select({
       type: 'string',
+      access: { create: () => false, update: () => false },
       options: [
         { label: 'Vacant', value: 'vacant' },
         { label: 'Occupied', value: 'occupied' },
@@ -110,5 +114,24 @@ export const Room = list({
       label: 'Room Assignments',
     }),
     ...trackingFields,
+  },
+  hooks: {
+    resolveInput: async ({ resolvedData }) => ({
+      ...resolvedData,
+      ...(typeof resolvedData.roomNumber === 'string'
+        ? { roomNumber: resolvedData.roomNumber.trim().toUpperCase() }
+        : {}),
+    }),
+    beforeOperation: async ({ operation, item, context }) => {
+      if (operation !== 'delete' || !item?.id) return;
+      const [assignments, housekeeping, maintenance] = await Promise.all([
+        context.prisma.roomAssignment.count({ where: { roomId: String(item.id) } }),
+        context.prisma.housekeepingTask.count({ where: { roomId: String(item.id) } }),
+        context.prisma.maintenanceRequest.count({ where: { roomId: String(item.id) } }),
+      ]);
+      if (assignments || housekeeping || maintenance) {
+        throw new Error('Room history exists; retire operational availability instead of deleting the room.');
+      }
+    },
   },
 })

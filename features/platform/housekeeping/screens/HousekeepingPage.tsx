@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { request } from 'graphql-request';
 import { 
   HousekeepingDashboard, 
   HousekeepingRoom, 
@@ -11,8 +10,9 @@ import {
 } from '@/features/platform/housekeeping/components/HousekeepingDashboard';
 import { PageContainer } from '@/features/dashboard/components/PageContainer';
 import { useToast } from '@/components/ui/use-toast';
-import { GET_HOUSEKEEPING_DATA, UPDATE_HOUSEKEEPING_TASK, UPDATE_ROOM_STATUS } from '@/features/platform/housekeeping/queries';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { WorkspaceError, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
+import { getHousekeepingWorkspace, reportHousekeepingMaintenanceIssue, updateHousekeepingTaskAction } from '../actions';
 
 export function HousekeepingPage() {
   const { toast } = useToast();
@@ -20,6 +20,7 @@ export function HousekeepingPage() {
   const router = useRouter();
 
   const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [rooms, setRooms] = React.useState<HousekeepingRoom[]>([]);
   const [tasks, setTasks] = React.useState<HousekeepingTask[]>([]);
   const [staff, setStaff] = React.useState<StaffMember[]>([]);
@@ -31,9 +32,9 @@ export function HousekeepingPage() {
 
   const fetchData = React.useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const endpoint = process.env.NEXT_PUBLIC_GRAPHQL_ENDPOINT || '/api/graphql';
-      const data: any = await request(endpoint, GET_HOUSEKEEPING_DATA);
+      const data: any = await getHousekeepingWorkspace();
 
       const mappedRooms: HousekeepingRoom[] = (data.rooms || []).map((r: any) => ({
         id: r.id,
@@ -43,7 +44,7 @@ export function HousekeepingPage() {
         roomType: r.roomType?.name,
       }));
 
-      const mappedTasks: HousekeepingTask[] = (data.housekeepingTasks || []).map((t: any) => ({
+      const mappedTasks: HousekeepingTask[] = (data.tasks || []).map((t: any) => ({
         id: t.id,
         room: {
           id: t.room?.id,
@@ -60,13 +61,16 @@ export function HousekeepingPage() {
         notes: t.notes,
       }));
 
-      const mappedStaff: StaffMember[] = (data.users || []).map((u: any) => ({
-        id: u.id,
-        name: u.name,
-        assignedRooms: mappedTasks.filter(t => t.assignedTo?.id === u.id).length,
-        completedToday: 0, // Would need a separate query for completed tasks today
-        status: 'available',
-      }));
+      const mappedStaff: StaffMember[] = (data.assignees || []).map((u: any) => {
+        const activeAssigned = mappedTasks.filter(t => t.assignedTo?.id === u.id && t.status !== 'completed').length;
+        return {
+          id: u.id,
+          name: u.name,
+          assignedRooms: activeAssigned,
+          completedToday: mappedTasks.filter(t => t.assignedTo?.id === u.id && t.status === 'completed').length,
+          status: activeAssigned > 0 ? 'busy' : 'available',
+        };
+      });
 
       const cleanRooms = mappedRooms.filter(r => r.status === 'vacant').length;
       const metrics: HousekeepingMetrics = {
@@ -76,8 +80,8 @@ export function HousekeepingPage() {
         inProgress: mappedTasks.filter(t => t.status === 'in_progress').length,
         inspectionNeeded: mappedTasks.filter(t => t.status === 'inspection_needed').length,
         maintenance: mappedRooms.filter(r => r.status === 'maintenance').length,
-        averageCleanTime: 25,
-        completedToday: 0,
+        averageCleanTime: Number(data.metrics?.averageCleanMinutes || 0),
+        completedToday: Number(data.metrics?.completedToday || 0),
         pendingTasks: mappedTasks.filter(t => t.status === 'pending').length,
       };
 
@@ -87,9 +91,11 @@ export function HousekeepingPage() {
       setMetrics(metrics);
     } catch (error) {
       console.error('Failed to load housekeeping data:', error);
+      const message = error instanceof Error ? error.message : 'Unable to load housekeeping data.';
+      setError(message);
       toast({
-        title: 'Error',
-        description: 'Unable to load housekeeping data.',
+        title: 'Housekeeping workspace unavailable',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -103,27 +109,7 @@ export function HousekeepingPage() {
 
   const handleUpdateTaskStatus = async (taskId: string, status: string) => {
     try {
-      const endpoint = process.env.NEXT_PUBLIC_GRAPHQL_ENDPOINT || '/api/graphql';
-      
-      const updateData: any = { status };
-      if (status === 'in_progress') updateData.startedAt = new Date().toISOString();
-      if (status === 'completed') updateData.completedAt = new Date().toISOString();
-
-      await request(endpoint, UPDATE_HOUSEKEEPING_TASK, {
-        id: taskId,
-        data: updateData
-      });
-
-      // If task is completed, we often want to update the room status too
-      if (status === 'completed') {
-        const task = tasks.find(t => t.id === taskId);
-        if (task?.room?.id) {
-          await request(endpoint, UPDATE_ROOM_STATUS, {
-            id: task.room.id,
-            status: 'vacant' // Assuming it becomes vacant/clean
-          });
-        }
-      }
+      await updateHousekeepingTaskAction(taskId, status);
 
       toast({
         title: 'Updated',
@@ -140,8 +126,24 @@ export function HousekeepingPage() {
     }
   };
 
-  const handleReportIssue = (roomId: string) => {
-    router.push(`/dashboard/Room/${roomId}`);
+  const handleReportIssue = async (roomId: string) => {
+    try {
+      const room = rooms.find((candidate) => candidate.id === roomId);
+      await reportHousekeepingMaintenanceIssue(roomId);
+      toast({
+        title: 'Maintenance request created',
+        description: `Room ${room?.roomNumber || ''} was escalated to maintenance.`,
+      });
+      await fetchData();
+      router.push('/dashboard/platform/maintenance');
+    } catch (error) {
+      console.error('Failed to report maintenance issue:', error);
+      toast({
+        title: 'Error',
+        description: 'Unable to escalate room to maintenance.',
+        variant: 'destructive',
+      });
+    }
   };
 
   const updateSearchParam = (key: string, value: string) => {
@@ -168,7 +170,9 @@ export function HousekeepingPage() {
 
   return (
     <PageContainer title="Housekeeping" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full p-4 md:p-6">
+      <div className="min-w-0 max-w-full space-y-4 p-4 md:p-6">
+        {error ? <WorkspaceError message={error} onRetry={fetchData} /> : null}
+        {loading && !metrics ? <WorkspaceLoading label="Loading housekeeping readiness" /> : null}
         {metrics && (
           <HousekeepingDashboard
             rooms={rooms}

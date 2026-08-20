@@ -14,7 +14,7 @@ export default async function pushInventoryToChannelMutation(
   { channelId, dateRange }: PushInventoryInput,
   context: any
 ) {
-  if (!permissions.canManageBookings({ session: context.session })) {
+  if (!permissions.canManageBookings({ session: context.session }) || !permissions.canManageIntegrations({ session: context.session })) {
     throw new Error('Not authorized to sync channel inventory')
   }
 

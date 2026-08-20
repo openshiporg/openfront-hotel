@@ -1,17 +1,17 @@
-import { capturePayment } from '../utils/paymentProviderAdapter';
+import { completePayment } from '../utils/paymentProviderAdapter';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
+import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
+import { assertCustomerPaymentProvider } from '../lib/paymentSecurity';
+import { finalizeBookingPayment } from '../lib/bookingPaymentSettlement';
 
-function toMajorUnit(amountInCents: number) {
-  return amountInCents / 100;
-}
-
-function mapCapturedStatus(status?: string | null) {
-  if (!status) return 'completed';
-  if (status === 'succeeded' || status === 'captured' || status === 'COMPLETED') return 'completed';
-  if (status === 'processing' || status === 'requires_capture' || status === 'APPROVED') return 'processing';
-  if (status === 'failed' || status === 'canceled' || status === 'cancelled' || status === 'DENIED') return 'failed';
-  return 'completed';
-}
+const PAYMENT_QUERY = `
+  id
+  status
+  amount
+  providerPaymentId
+  stripePaymentIntentId
+  paymentProvider { id code name metadata }
+`;
 
 async function completeBookingPayment(
   root: unknown,
@@ -26,137 +26,73 @@ async function completeBookingPayment(
   },
   context: any
 ) {
-  const sudoContext = context.sudo();
-
+  await assertGuestBookingAccess(context, bookingId);
   await ensureDefaultPaymentProviders(context);
 
-  const session = await sudoContext.query.BookingPaymentSession.findOne({
+  const session = await context.sudo().query.BookingPaymentSession.findOne({
     where: { id: paymentSessionId },
     query: `
-      id
-      amount
-      isInitiated
-      data
-      booking {
-        id
-        confirmationNumber
-        totalAmount
-        balanceDue
-        paymentStatus
-      }
-      paymentProvider {
-        id
-        code
-        name
-        createPaymentFunction
-        capturePaymentFunction
-        refundPaymentFunction
-        getPaymentStatusFunction
-        generatePaymentLinkFunction
-        handleWebhookFunction
-        metadata
-        credentials
-      }
+      id amount data
+      payment { ${PAYMENT_QUERY} }
+      booking { id status paymentStatus balanceDue }
+      paymentProvider { id code name metadata }
     `,
   });
 
-  if (!session || !session.booking || session.booking.id !== bookingId) {
-    throw new Error('Payment session not found for booking');
+  if (!session || session.booking?.id !== bookingId) {
+    throw new Error('Payment session not found for booking.');
   }
+  if (session.payment) return session.payment;
+  if (!session.paymentProvider) throw new Error('Payment provider missing from session.');
 
   const provider = session.paymentProvider;
-  if (!provider) {
-    throw new Error('Payment provider missing from session');
+  assertCustomerPaymentProvider(provider.code);
+  if (!['pending', 'confirmed'].includes(session.booking.status)) {
+    throw new Error(`Payments cannot be completed for a ${session.booking.status} booking.`);
+  }
+  if (session.booking.paymentStatus === 'paid' || Number(session.booking.balanceDue || 0) <= 0) {
+    throw new Error('This booking has no outstanding balance.');
   }
 
-  const paymentIdentifier =
-    providerPaymentId ||
-    session.data?.paymentIntentId ||
-    session.data?.orderId ||
-    session.data?.id;
-
-  if (!paymentIdentifier && provider.code !== 'pp_manual_manual') {
-    throw new Error('Provider payment identifier is required to complete payment');
+  const storedPaymentId =
+    session.data?.paymentIntentId || session.data?.orderId || session.data?.id || null;
+  if (providerPaymentId && storedPaymentId && providerPaymentId !== storedPaymentId) {
+    throw new Error('Provider payment identifier does not match this payment session.');
+  }
+  const paymentIdentifier = providerPaymentId || storedPaymentId;
+  if (!paymentIdentifier) {
+    throw new Error('Provider payment identifier is required to complete payment.');
   }
 
-  const captureResult = await capturePayment({
+  const result = await completePayment({
     provider,
     paymentId: paymentIdentifier,
     amount: session.amount,
   });
+  const settlement = result?.settlement || {};
+  if (!settlement.isSettled) {
+    throw new Error('The payment provider has not confirmed settlement.');
+  }
+  if (String(settlement.bookingId || '') !== bookingId) {
+    throw new Error('Provider settlement is not linked to this booking.');
+  }
 
-  const normalizedStatus = mapCapturedStatus(captureResult?.status);
-  const amountInCents = typeof captureResult?.amount === 'number' ? Math.round(captureResult.amount) : session.amount;
-
-  const bookingPayment = await sudoContext.query.BookingPayment.createOne({
-    data: {
-      booking: { connect: { id: bookingId } },
-      paymentProvider: { connect: { id: provider.id } },
-      paymentSession: { connect: { id: session.id } },
-      amount: toMajorUnit(amountInCents),
-      currency: 'USD',
-      paymentType: 'full_payment',
-      paymentMethod:
-        provider.code === 'pp_paypal_paypal'
-          ? 'paypal'
-          : provider.code === 'pp_manual_manual'
-            ? 'other'
-            : 'credit_card',
-      status: normalizedStatus,
-      providerPaymentId: paymentIdentifier || null,
-      providerCaptureId: captureResult?.data?.purchase_units?.[0]?.payments?.captures?.[0]?.id || captureResult?.data?.id || null,
-      providerData: captureResult?.data || {},
-      stripePaymentIntentId: provider.code === 'pp_stripe_stripe' ? paymentIdentifier || null : null,
-      description: `Payment for booking ${session.booking.confirmationNumber}`,
-      receiptEmail: session.booking?.guestEmail,
-    },
-    query: `
-      id
-      status
-      amount
-      providerPaymentId
-      stripePaymentIntentId
-      paymentProvider {
-        id
-        code
-        name
-      }
-    `,
+  const finalized = await finalizeBookingPayment({
+    context,
+    bookingId,
+    paymentSessionId: session.id,
+    providerCode: provider.code,
+    providerPaymentId: String(settlement.providerPaymentId || paymentIdentifier),
+    providerCaptureId: String(settlement.providerPaymentId || paymentIdentifier),
+    amount: Number(settlement.amount),
+    currencyCode: String(settlement.currencyCode || ''),
+    providerData: result.data || {},
   });
 
-  await sudoContext.query.BookingPaymentSession.updateOne({
-    where: { id: session.id },
-    data: {
-      isInitiated: true,
-      paymentAuthorizedAt: new Date().toISOString(),
-      data: {
-        ...(session.data || {}),
-        completionResult: captureResult?.data || {},
-      },
-    },
+  return context.sudo().query.BookingPayment.findOne({
+    where: { id: finalized.paymentId },
+    query: PAYMENT_QUERY,
   });
-
-  const booking = await sudoContext.query.Booking.findOne({
-    where: { id: bookingId },
-    query: 'id totalAmount balanceDue payments { id amount status paymentType }',
-  });
-
-  const completedPayments = (booking?.payments || []).filter((payment: any) => payment.status === 'completed');
-  const paidAmount = completedPayments.reduce((sum: number, payment: any) => sum + Number(payment.amount || 0), 0);
-  const totalAmount = Number(booking?.totalAmount || 0);
-  const remainingBalance = Math.max(0, totalAmount - paidAmount);
-
-  await sudoContext.query.Booking.updateOne({
-    where: { id: bookingId },
-    data: {
-      paymentStatus: remainingBalance <= 0 ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid',
-      balanceDue: remainingBalance,
-      status: remainingBalance <= 0 ? 'confirmed' : undefined,
-      confirmedAt: remainingBalance <= 0 ? new Date().toISOString() : undefined,
-    },
-  });
-
-  return bookingPayment;
 }
 
 export default completeBookingPayment;

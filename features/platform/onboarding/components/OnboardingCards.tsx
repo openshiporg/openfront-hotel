@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -164,8 +165,11 @@ function OnboardingCard({
 
         <InfoCardFooter isHovered={isHovered}>
           <div className="m-2 space-x-2">
-            <Button size="sm" onClick={onOpenDialog} className="text-xs h-6">
-              Get started
+            <Button size="sm" asChild className="text-xs h-6">
+              <Link href="/dashboard/platform/property">Configure real property</Link>
+            </Button>
+            <Button size="sm" variant="outline" onClick={onOpenDialog} className="text-xs h-6">
+              Load demo
             </Button>
             <Button
               variant="ghost"

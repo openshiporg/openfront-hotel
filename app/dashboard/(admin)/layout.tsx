@@ -11,7 +11,11 @@ export default async function ListLayout({ children }: { children: React.ReactNo
   ]);
   
   const adminMeta = adminMetaResponse.success ? adminMetaResponse.data : null;
-  const user = userResponse.success ? userResponse.data?.authenticatedItem : null;
+  const authenticatedItem = userResponse.success ? userResponse.data?.authenticatedItem : null;
+  const capabilities = userResponse.success ? userResponse.data?.hotelOperatorCapabilities : null;
+  const user = authenticatedItem
+    ? { ...authenticatedItem, role: { ...(authenticatedItem.role || {}), ...(capabilities || {}) } }
+    : null;
 
   return (
     <DashboardLayout adminMeta={adminMeta} authenticatedItem={user}>

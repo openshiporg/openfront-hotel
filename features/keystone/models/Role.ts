@@ -7,7 +7,7 @@ import { trackingFields } from './trackingFields';
 export const Role = list({
   access: {
     operation: {
-      query: () => true,
+      query: permissions.canManageRoles,
       create: permissions.canManageRoles,
       update: permissions.canManageRoles,
       delete: permissions.canManageRoles,
@@ -26,5 +26,16 @@ export const Role = list({
       many: true,
     }),
     ...trackingFields
+  },
+  hooks: {
+    afterOperation: async ({ operation, item, context }) => {
+      if (operation !== 'update' || !item?.id) return;
+      // Direct Prisma is intentional here: invalidation must update every
+      // bearer of this role even though ordinary User updates are restricted.
+      await context.prisma.user.updateMany({
+        where: { roleId: item.id },
+        data: { authVersion: { increment: 1 } },
+      });
+    },
   },
 });

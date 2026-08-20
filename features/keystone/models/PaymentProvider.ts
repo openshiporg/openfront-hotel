@@ -1,15 +1,20 @@
 import { list } from '@keystone-6/core';
+import { denyAll } from '@keystone-6/core/access';
 import { checkbox, json, relationship, text } from '@keystone-6/core/fields';
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
+import { encryptSensitiveText } from '../lib/sensitiveData';
+
+const canManagePaymentIntegrations = ({ session }: any) =>
+  permissions.canManagePayments({ session }) && permissions.canManageIntegrations({ session });
 
 export const PaymentProvider = list({
   access: {
     operation: {
-      query: permissions.canManagePayments,
-      create: permissions.canManagePayments,
-      update: permissions.canManagePayments,
-      delete: permissions.canManagePayments,
+      query: canManagePaymentIntegrations,
+      create: canManagePaymentIntegrations,
+      update: canManagePaymentIntegrations,
+      delete: canManagePaymentIntegrations,
     },
   },
   ui: {
@@ -40,6 +45,26 @@ export const PaymentProvider = list({
     }),
     credentials: json({
       defaultValue: {},
+      access: {
+        read: denyAll,
+        create: canManagePaymentIntegrations,
+        update: canManagePaymentIntegrations,
+      },
+      hooks: {
+        resolveInput: ({ resolvedData }) => {
+          const credentials = resolvedData.credentials;
+          if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return credentials;
+          return Object.fromEntries(Object.entries(credentials).map(([key, value]) => [
+            key,
+            key === 'sandbox' ? Boolean(value) : encryptSensitiveText(value),
+          ]));
+        },
+      },
+      ui: {
+        itemView: { fieldMode: 'hidden' },
+        createView: { fieldMode: 'hidden' },
+        listView: { fieldMode: 'hidden' },
+      },
     }),
     metadata: json({
       defaultValue: {},
@@ -56,6 +81,10 @@ export const PaymentProvider = list({
     }),
     bookingPayments: relationship({
       ref: 'BookingPayment.paymentProvider',
+      many: true,
+    }),
+    refundIntents: relationship({
+      ref: 'RefundIntent.paymentProvider',
       many: true,
     }),
     ...trackingFields,

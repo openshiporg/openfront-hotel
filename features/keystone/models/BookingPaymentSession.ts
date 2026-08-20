@@ -2,20 +2,24 @@ import { list, graphql } from '@keystone-6/core';
 import { checkbox, integer, json, relationship, text, timestamp, virtual } from '@keystone-6/core/fields';
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
+import { requiredRelationshipDb } from './requiredRelationship';
 
 export const BookingPaymentSession = list({
   access: {
     operation: {
       query: permissions.canManagePayments,
-      create: permissions.canManagePayments,
-      update: permissions.canManagePayments,
-      delete: permissions.canManagePayments,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['booking', 'paymentProvider', 'amount', 'isSelected', 'isInitiated', 'createdAt'],
     },
+    itemView: { defaultFieldMode: 'read' },
   },
   fields: {
     isSelected: checkbox({
@@ -44,15 +48,36 @@ export const BookingPaymentSession = list({
       defaultValue: {},
     }),
     idempotencyKey: text({
-      isIndexed: true,
+      isIndexed: 'unique',
     }),
     booking: relationship({
       ref: 'Booking.paymentSessions',
+      db: requiredRelationshipDb,
     }),
     paymentProvider: relationship({
       ref: 'PaymentProvider.bookingPaymentSessions',
+      db: requiredRelationshipDb,
+    }),
+    payment: relationship({
+      ref: 'BookingPayment.paymentSession',
+      ui: {
+        itemView: { fieldMode: 'read' },
+        createView: { fieldMode: 'hidden' },
+      },
     }),
     paymentAuthorizedAt: timestamp(),
     ...trackingFields,
+  },
+  hooks: {
+    beforeOperation: async ({ operation, item, context }) => {
+      if ((operation !== 'update' && operation !== 'delete') || !item?.id) return;
+      const settledPayment = await context.prisma.bookingPayment.findUnique({
+        where: { paymentSessionId: String(item.id) },
+        select: { id: true },
+      });
+      if (settledPayment) {
+        throw new Error('Settled payment sessions are immutable.');
+      }
+    },
   },
 });

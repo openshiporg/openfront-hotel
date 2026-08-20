@@ -1,8 +1,12 @@
+import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
+
 async function activeBookingPaymentSession(
   root: unknown,
   { bookingId }: { bookingId: string },
   context: any
 ) {
+  await assertGuestBookingAccess(context, bookingId);
+
   const booking = await context.sudo().query.Booking.findOne({
     where: { id: bookingId },
     query: `

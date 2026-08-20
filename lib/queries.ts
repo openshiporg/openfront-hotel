@@ -6,7 +6,8 @@ export const GET_BOOKING_PAYMENT_PROVIDERS = gql`
       id
       name
       code
-      metadata
+      displayName
+      publicClientKey
     }
   }
 `;
@@ -15,16 +16,12 @@ export const INITIATE_BOOKING_PAYMENT_SESSION = gql`
   mutation InitiateBookingPaymentSession(
     $bookingId: ID!
     $paymentProviderCode: String!
-    $amount: Float
-    $currency: String
     $returnUrl: String
     $cancelUrl: String
   ) {
     initiateBookingPaymentSession(
       bookingId: $bookingId
       paymentProviderCode: $paymentProviderCode
-      amount: $amount
-      currency: $currency
       returnUrl: $returnUrl
       cancelUrl: $cancelUrl
     ) {
@@ -32,12 +29,15 @@ export const INITIATE_BOOKING_PAYMENT_SESSION = gql`
       amount
       isSelected
       isInitiated
-      data
+      clientSecret
+      paymentIntentId
+      orderId
+      approveLink
       paymentProvider {
         id
         name
         code
-        metadata
+        displayName
       }
     }
   }
@@ -86,16 +86,28 @@ export const COMPLETE_BOOKING_PAYMENT = gql`
 // Query to get all room types with their details
 export const GET_ROOM_TYPES = gql`
   query GetRoomTypes {
-    roomTypes {
+    roomTypes: storefrontRoomTypes {
       id
       name
-      description
+      shortDescription
+      eyebrow
+      viewDescription
+      thumbnail
       baseRate
       maxOccupancy
       bedConfiguration
       amenities
       squareFeet
       roomsCount
+      roomImages {
+        id
+        url
+        imagePath
+        altText
+        caption
+        order
+        isPrimary
+      }
     }
   }
 `;
@@ -103,48 +115,54 @@ export const GET_ROOM_TYPES = gql`
 // Query to get available rooms for a date range
 export const GET_AVAILABLE_ROOMS = gql`
   query GetAvailableRooms($checkInDate: DateTime!, $checkOutDate: DateTime!) {
-    roomTypes {
+    roomTypes: storefrontAvailability(checkInDate: $checkInDate, checkOutDate: $checkOutDate) {
       id
       name
-      description
+      shortDescription
+      eyebrow
+      viewDescription
+      thumbnail
       baseRate
       maxOccupancy
       bedConfiguration
       amenities
       squareFeet
-      rooms(where: {
-        status: { equals: "vacant" }
-      }) {
+      availableCount
+      roomImages {
         id
-        roomNumber
-        status
+        url
+        imagePath
+        altText
+        caption
+        order
+        isPrimary
       }
     }
-    bookings(where: {
-      OR: [
-        {
-          AND: [
-            { checkInDate: { lte: $checkOutDate } },
-            { checkOutDate: { gte: $checkInDate } }
-          ]
-        }
-      ],
-      status: {
-        notIn: ["cancelled", "no_show"]
-      }
-    }) {
-      id
-      checkInDate
-      checkOutDate
-      roomAssignments {
-        id
-        room {
-          id
-        }
-        roomType {
-          id
-        }
-      }
+  }
+`;
+
+export const GET_STOREFRONT_QUOTE = gql`
+  query GetStorefrontQuote(
+    $roomTypeId: ID!
+    $ratePlanId: ID!
+    $checkInDate: DateTime!
+    $checkOutDate: DateTime!
+    $numberOfAdults: Int!
+    $numberOfChildren: Int
+    $promoCode: String
+  ) {
+    storefrontQuote(
+      roomTypeId: $roomTypeId
+      ratePlanId: $ratePlanId
+      checkInDate: $checkInDate
+      checkOutDate: $checkOutDate
+      numberOfAdults: $numberOfAdults
+      numberOfChildren: $numberOfChildren
+      promoCode: $promoCode
+    ) {
+      roomTypeId roomTypeName ratePlanId ratePlanName cancellationPolicy mealPlan
+      checkInDate checkOutDate nights numberOfGuests ratePerNight roomSubtotal taxAmount feesAmount totalAmount
+      roomSubtotalMinor taxAmountMinor feesAmountMinor totalAmountMinor currencyCode pricingVersion quoteToken
     }
   }
 `;
@@ -152,29 +170,39 @@ export const GET_AVAILABLE_ROOMS = gql`
 // Query to get a single room type with full details
 export const GET_ROOM_TYPE = gql`
   query GetRoomType($id: ID!) {
-    roomType(where: { id: $id }) {
+    roomType: storefrontRoomType(id: $id) {
       id
       name
-      description
+      shortDescription
+      eyebrow
+      viewDescription
+      thumbnail
       baseRate
+      baseRateMinor
       maxOccupancy
       bedConfiguration
       amenities
       squareFeet
-      rooms {
+      roomImages {
         id
-        roomNumber
-        floor
-        status
+        url
+        imagePath
+        altText
+        caption
+        order
+        isPrimary
       }
-      ratePlans(where: { status: { equals: "active" } }) {
+      ratePlans {
         id
         name
         description
         baseRate
+        baseRateMinor
+        currencyCode
         minimumStay
         cancellationPolicy
         mealPlan
+        isPromotional
       }
     }
   }
@@ -183,17 +211,18 @@ export const GET_ROOM_TYPE = gql`
 // Query to get active rate plans
 export const GET_RATE_PLANS = gql`
   query GetRatePlans {
-    ratePlans(where: { status: { equals: "active" }, isPublic: { equals: true } }) {
+    roomTypes: storefrontRoomTypes {
       id
       name
-      description
-      baseRate
-      minimumStay
-      cancellationPolicy
-      mealPlan
-      roomType {
+      ratePlans {
         id
         name
+        description
+        baseRate
+        minimumStay
+        cancellationPolicy
+        mealPlan
+        isPromotional
       }
     }
   }
@@ -201,7 +230,7 @@ export const GET_RATE_PLANS = gql`
 
 // Mutation to create a storefront booking placeholder before payment completion
 export const CREATE_STOREFRONT_BOOKING = gql`
-  mutation CreateStorefrontBooking($data: BookingCreateInput!) {
+  mutation CreateStorefrontBooking($data: StorefrontBookingCreateInput!) {
     createStorefrontBooking(data: $data) {
       id
       confirmationNumber
@@ -221,8 +250,8 @@ export const CREATE_STOREFRONT_BOOKING = gql`
 `;
 
 export const CANCEL_BOOKING = gql`
-  mutation CancelBooking($bookingId: ID!, $refundAmount: Float, $refundReason: String) {
-    cancelBooking(bookingId: $bookingId, refundAmount: $refundAmount, refundReason: $refundReason) {
+  mutation CancelBooking($bookingId: ID!, $refundReason: String, $idempotencyKey: String!) {
+    cancelBooking(bookingId: $bookingId, refundReason: $refundReason, idempotencyKey: $idempotencyKey) {
       id
       status
       paymentStatus
@@ -231,10 +260,9 @@ export const CANCEL_BOOKING = gql`
   }
 `;
 
-// Query to get booking by confirmation number
-export const GET_BOOKING_BY_CONFIRMATION = gql`
-  query GetBookingByConfirmation($confirmationNumber: String!) {
-    bookings(where: { confirmationNumber: { equals: $confirmationNumber } }) {
+export const VERIFY_GUEST_BOOKING = gql`
+  mutation VerifyGuestBooking($confirmationNumber: String!, $email: String!) {
+    booking: verifyGuestBooking(confirmationNumber: $confirmationNumber, email: $email) {
       id
       confirmationNumber
       guestName
@@ -261,10 +289,7 @@ export const GET_BOOKING_BY_CONFIRMATION = gql`
           id
           name
         }
-        room {
-          id
-          roomNumber
-        }
+        roomNumber
         ratePerNight
         guestName
       }
@@ -274,10 +299,61 @@ export const GET_BOOKING_BY_CONFIRMATION = gql`
   }
 `;
 
-// Query to get bookings by email
+export const GET_GUEST_BOOKING = gql`
+  query GetGuestBooking($bookingId: ID!) {
+    booking: guestBooking(bookingId: $bookingId) {
+      id
+      confirmationNumber
+      guestName
+      guestEmail
+      guestPhone
+      checkInDate
+      checkOutDate
+      numberOfNights
+      numberOfGuests
+      numberOfAdults
+      numberOfChildren
+      roomRate
+      taxAmount
+      feesAmount
+      totalAmount
+      depositAmount
+      balanceDue
+      status
+      paymentStatus
+      specialRequests
+      confirmationDeliveryStatus
+      updateDeliveryStatus
+      cancellationDeliveryStatus
+      roomAssignments {
+        id
+        roomType {
+          id
+          name
+          thumbnail
+          roomImages {
+            id
+            url
+            imagePath
+            altText
+            caption
+            order
+            isPrimary
+          }
+        }
+        roomNumber
+        ratePerNight
+      }
+      createdAt
+      confirmedAt
+      cancelledAt
+    }
+  }
+`;
+
 export const GET_BOOKINGS_BY_EMAIL = gql`
   query GetBookingsByEmail($email: String!) {
-    bookings(where: { guestEmail: { equals: $email } }, orderBy: { createdAt: desc }) {
+    bookings: guestBookings(email: $email) {
       id
       confirmationNumber
       guestName

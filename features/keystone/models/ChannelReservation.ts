@@ -1,5 +1,4 @@
 import { list } from '@keystone-6/core'
-import { allOperations } from '@keystone-6/core/access'
 import {
   text,
   timestamp,
@@ -8,35 +7,47 @@ import {
   json,
 } from '@keystone-6/core/fields'
 
-import { isSignedIn, permissions } from '../access'
+import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const ChannelReservation = list({
   access: {
     operation: {
       query: permissions.canManageBookings,
-      create: permissions.canManageBookings,
-      update: permissions.canManageBookings,
-      delete: permissions.canManageBookings,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['externalId', 'channel', 'guestName', 'checkInDate', 'checkOutDate', 'channelStatus'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
     // Channel relationship
     channel: relationship({
       ref: 'Channel.channelReservations',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',
       },
       label: 'Channel',
+    }),
+
+    channelKey: text({
+      isIndexed: 'unique',
+      validation: { isRequired: true },
+      db: { extendPrismaSchema: field => field.replace(' @default("")', '') },
+      access: { create: () => false, update: () => false },
+      ui: { itemView: { fieldMode: 'read' }, createView: { fieldMode: 'hidden' } },
     }),
 
     // External booking ID from the channel
@@ -161,15 +172,5 @@ export const ChannelReservation = list({
     }),
 
     ...trackingFields,
-  },
-  hooks: {
-    afterOperation: async ({ operation, item, context }) => {
-      // TODO: Implement hook to create/update corresponding Reservation
-      // when a ChannelReservation is created or updated
-      if (operation === 'create' || operation === 'update') {
-        // This would create or update the linked Booking/Reservation
-        // based on the channel reservation data
-      }
-    },
   },
 })

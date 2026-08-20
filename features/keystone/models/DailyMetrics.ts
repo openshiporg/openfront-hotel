@@ -1,5 +1,4 @@
 import { list, graphql } from '@keystone-6/core'
-import { allOperations } from '@keystone-6/core/access'
 import {
   timestamp,
   integer,
@@ -8,7 +7,7 @@ import {
   virtual,
 } from '@keystone-6/core/fields'
 
-import { isSignedIn, permissions } from '../access'
+import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
 
 export const DailyMetrics = list({
@@ -18,12 +17,15 @@ export const DailyMetrics = list({
   access: {
     operation: {
       query: permissions.canManageBookings,
-      create: permissions.canManageBookings,
-      update: permissions.canManageBookings,
-      delete: permissions.canManageBookings,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    isHidden: true,
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['date', 'occupancyRate', 'totalRevenue', 'averageDailyRate', 'revenuePerAvailableRoom'],
     },

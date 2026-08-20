@@ -13,11 +13,14 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const RatePlan = list({
   access: {
     operation: {
-      query: () => true, create: isSignedIn, update: isSignedIn,
+      query: permissions.canManageRooms,
+      create: permissions.canManageRooms,
+      update: permissions.canManageRooms,
       delete: permissions.canManageRooms,
     },
   },
@@ -50,6 +53,7 @@ export const RatePlan = list({
     // Room type relationship
     roomType: relationship({
       ref: 'RoomType.ratePlans',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',
@@ -57,14 +61,18 @@ export const RatePlan = list({
       label: 'Room Type',
     }),
 
-    // Base rate
+    // Integer minor units are authoritative; baseRate is legacy display compatibility.
+    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base Rate (minor units)' }),
+    currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
     baseRate: float({
+      defaultValue: 0,
       validation: { isRequired: true, min: 0 },
-      label: 'Base Rate',
-      ui: {
-        description: 'Base nightly rate for this plan',
-      },
+      access: { create: () => false, update: () => false },
+      label: 'Legacy Base Rate',
+      ui: { itemView: { fieldMode: 'read' }, description: 'Derived compatibility value; minor units are authoritative.' },
     }),
+
+    bookings: relationship({ ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),
 
     // Seasonal adjustments stored as JSON
     seasonalAdjustments: json({
@@ -187,6 +195,7 @@ export const RatePlan = list({
     // Status
     status: select({
       type: 'string',
+      access: { update: () => false },
       options: [
         { label: 'Active', value: 'active' },
         { label: 'Inactive', value: 'inactive' },
@@ -201,6 +210,7 @@ export const RatePlan = list({
 
     // Flags
     isPublic: checkbox({
+      access: { update: () => false },
       defaultValue: true,
       label: 'Public Rate',
       ui: {
@@ -233,5 +243,32 @@ export const RatePlan = list({
     }),
 
     ...trackingFields,
+  },
+  hooks: {
+    resolveInput: ({ resolvedData }) => ({
+      ...resolvedData,
+      ...(Number.isSafeInteger(resolvedData.baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 } : {}),
+    }),
+    validateInput: ({ resolvedData, item, addValidationError }) => {
+      const promotional = resolvedData.isPromotional ?? item?.isPromotional ?? false;
+      const promoCode = String(resolvedData.promoCode ?? item?.promoCode ?? '').trim();
+      const currencyCode = String(resolvedData.currencyCode ?? item?.currencyCode ?? 'USD').trim().toUpperCase();
+      const minimumStay = Number(resolvedData.minimumStay ?? item?.minimumStay ?? 1);
+      const maximumStay = resolvedData.maximumStay ?? item?.maximumStay;
+      if (currencyCode !== 'USD') {
+        addValidationError('The bounded initial release supports USD rate plans only.');
+      }
+      if (promotional && !promoCode) {
+        addValidationError('Promotional rate plans require a promo code. Public packages without a code should not be marked promotional.');
+      }
+      if (maximumStay !== null && maximumStay !== undefined && Number(maximumStay) < minimumStay) {
+        addValidationError('Maximum stay cannot be shorter than minimum stay.');
+      }
+      const validFrom = resolvedData.validFrom ?? item?.validFrom;
+      const validTo = resolvedData.validTo ?? item?.validTo;
+      if (validFrom && validTo && new Date(validTo) < new Date(validFrom)) {
+        addValidationError('Rate-plan validity end cannot precede its start.');
+      }
+    },
   },
 })

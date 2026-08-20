@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+.runtime
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.hallmark

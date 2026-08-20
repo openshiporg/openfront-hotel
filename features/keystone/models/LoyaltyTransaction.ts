@@ -9,28 +9,32 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const LoyaltyTransaction = list({
   access: {
     operation: {
       query: permissions.canManageGuests,
-      create: permissions.canManageGuests,
-      update: permissions.canManageGuests,
-      delete: permissions.canManageBookings,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['guest', 'points', 'type', 'description', 'createdAt'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
     // Guest relationship
     guest: relationship({
       ref: 'Guest',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'email',

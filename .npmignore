@@ -1,0 +1,15 @@
+.git
+.github
+.next
+node_modules
+.runtime
+.env
+.env.*
+!.env.example
+!npm-shrinkwrap.json
+*.log
+*.tap
+*.tsbuildinfo
+.DS_Store
+.hallmark
+coverage

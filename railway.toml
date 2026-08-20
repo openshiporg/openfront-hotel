@@ -1,7 +1,14 @@
-# Railway can't access internal databases during build, so we move
-# npm run migrate from build to start command
 [build]
-buildCommand = "keystone build --no-ui && next build"
+buildCommand = "npm run build"
 
 [deploy]
-startCommand = "npm run migrate && next start"
+# Apply committed migrations once in Railway's pre-deploy phase, not from every
+# web replica. A failed migration prevents the new application from starting.
+preDeployCommand = "npm run release:migrate"
+startCommand = "npm start"
+# Liveness permits first-admin/property setup on a fresh database. Do not open
+# public booking traffic until the stricter /api/ready endpoint returns 200.
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

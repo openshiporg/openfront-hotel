@@ -196,6 +196,8 @@ export function HousekeepingDashboard({
 
   const pendingTasks = tasks.filter((t) => t.status === 'pending');
   const inProgressTasks = tasks.filter((t) => t.status === 'in_progress');
+  const inspectionTasks = tasks.filter((t) => t.status === 'inspection_needed');
+  const onHoldTasks = tasks.filter((t) => t.status === 'on_hold');
   const completedTasks = tasks.filter((t) => t.status === 'completed');
 
   const cleanlinessPercentage = metrics.totalRooms > 0 
@@ -203,9 +205,9 @@ export function HousekeepingDashboard({
     : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header with Metrics */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold">Housekeeping Dashboard</h2>
           <p className="text-muted-foreground">Real-time room status and task management</p>
@@ -221,7 +223,7 @@ export function HousekeepingDashboard({
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 gap-4 min-[360px]:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
@@ -322,16 +324,16 @@ export function HousekeepingDashboard({
       </Card>
 
       {/* Main Content */}
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-3">
         {/* Room Grid / Floor Plan */}
-        <div className="lg:col-span-2">
-          <Card>
+        <div className="min-w-0 lg:col-span-2">
+          <Card className="min-w-0">
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Room Status</CardTitle>
-                <div className="flex gap-2">
+                <div className="grid w-full grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:w-auto">
                   <Select value={selectedFloor} onValueChange={onFloorChange}>
-                    <SelectTrigger className="w-[120px]">
+                    <SelectTrigger className="w-full sm:w-[120px]">
                       <SelectValue placeholder="Floor" />
                     </SelectTrigger>
                     <SelectContent>
@@ -344,7 +346,7 @@ export function HousekeepingDashboard({
                     </SelectContent>
                   </Select>
                   <Select value={selectedStatus} onValueChange={onStatusChange}>
-                    <SelectTrigger className="w-[130px]">
+                    <SelectTrigger className="w-full sm:w-[130px]">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -359,7 +361,7 @@ export function HousekeepingDashboard({
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+              <div className="grid grid-cols-2 gap-2 min-[360px]:grid-cols-4 sm:grid-cols-6 md:grid-cols-8">
                 {filteredRooms.map((room) => (
                   <button
                     key={room.id}
@@ -415,8 +417,8 @@ export function HousekeepingDashboard({
         </div>
 
         {/* Staff Assignment */}
-        <div>
-          <Card>
+        <div className="min-w-0">
+          <Card className="min-w-0">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <User className="h-5 w-5" />
@@ -461,14 +463,20 @@ export function HousekeepingDashboard({
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="pending">
-            <TabsList>
-              <TabsTrigger value="pending">
+            <TabsList data-qa-layout="housekeeping-tabs" className="grid h-auto w-full grid-cols-1 gap-1 min-[360px]:grid-cols-2 lg:grid-cols-5">
+              <TabsTrigger className="min-w-0 whitespace-normal" value="pending">
                 Pending ({pendingTasks.length})
               </TabsTrigger>
-              <TabsTrigger value="in_progress">
+              <TabsTrigger className="min-w-0 whitespace-normal" value="in_progress">
                 In Progress ({inProgressTasks.length})
               </TabsTrigger>
-              <TabsTrigger value="completed">
+              <TabsTrigger className="min-w-0 whitespace-normal" value="inspection">
+                Inspection ({inspectionTasks.length})
+              </TabsTrigger>
+              <TabsTrigger className="min-w-0 whitespace-normal" value="on_hold">
+                On hold ({onHoldTasks.length})
+              </TabsTrigger>
+              <TabsTrigger className="min-w-0 whitespace-normal" value="completed">
                 Completed ({completedTasks.length})
               </TabsTrigger>
             </TabsList>
@@ -500,6 +508,14 @@ export function HousekeepingDashboard({
                   />
                 ))
               )}
+            </TabsContent>
+
+            <TabsContent value="inspection" className="space-y-2 mt-4">
+              {inspectionTasks.length === 0 ? <p className="text-center py-8 text-muted-foreground">No inspections waiting</p> : inspectionTasks.map(task => <TaskCard key={task.id} task={task} onComplete={() => onUpdateTaskStatus?.(task.id, 'completed')} onStart={() => onUpdateTaskStatus?.(task.id, 'in_progress')} />)}
+            </TabsContent>
+
+            <TabsContent value="on_hold" className="space-y-2 mt-4">
+              {onHoldTasks.length === 0 ? <p className="text-center py-8 text-muted-foreground">No tasks on hold</p> : onHoldTasks.map(task => <TaskCard key={task.id} task={task} onStart={() => onUpdateTaskStatus?.(task.id, 'in_progress')} />)}
             </TabsContent>
 
             <TabsContent value="completed" className="space-y-2 mt-4">
@@ -536,8 +552,8 @@ function TaskCard({
     : null;
 
   return (
-    <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-      <div className="flex items-center gap-3">
+    <div className="flex min-w-0 flex-col gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-3">
         <div className="text-center min-w-[50px]">
           <p className="font-bold text-lg">{task.room.roomNumber}</p>
           <p className="text-xs text-muted-foreground">F{task.room.floor}</p>
@@ -564,13 +580,14 @@ function TaskCard({
           </div>
         </div>
       </div>
-      <div className="flex gap-2">
-        {task.status === 'pending' && onStart && (
+      <div className="flex flex-wrap gap-2">
+        {['pending', 'inspection_needed', 'on_hold'].includes(task.status) && onStart && (
           <Button size="sm" onClick={onStart}>
             <Play className="h-4 w-4 mr-1" />
             Start
           </Button>
         )}
+        {task.status === 'inspection_needed' && onComplete ? <Button size="sm" onClick={onComplete}><Check className="mr-1 h-4 w-4" />Pass inspection</Button> : null}
         {task.status === 'in_progress' && (
           <>
             {onPause && (

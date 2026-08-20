@@ -4,28 +4,41 @@ import {
   timestamp,
   integer,
   relationship,
+  text,
   virtual,
 } from '@keystone-6/core/fields'
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { requiredRelationshipDb } from './requiredRelationship'
 
 export const RoomInventory = list({
   access: {
     operation: {
-      query: () => true, create: isSignedIn, update: isSignedIn,
-      delete: permissions.canManageRooms,
+      query: permissions.canManageRooms,
+      create: () => false,
+      update: () => false,
+      delete: () => false,
     },
   },
   ui: {
+    hideCreate: true,
+    hideDelete: true,
     listView: {
       initialColumns: ['date', 'roomType', 'totalRooms', 'bookedRooms', 'availableRooms'],
     },
     itemView: {
-      defaultFieldMode: 'edit',
+      defaultFieldMode: 'read',
     },
   },
   fields: {
+    inventoryKey: text({
+      isIndexed: 'unique',
+      validation: { isRequired: true },
+      db: { extendPrismaSchema: field => field.replace(' @default("")', '') },
+      access: { create: () => false, update: () => false },
+      ui: { itemView: { fieldMode: 'read' }, createView: { fieldMode: 'hidden' } },
+    }),
     // Date for this inventory record
     date: timestamp({
       validation: { isRequired: true },
@@ -39,6 +52,7 @@ export const RoomInventory = list({
     // Room type relationship
     roomType: relationship({
       ref: 'RoomType',
+      db: requiredRelationshipDb,
       ui: {
         displayMode: 'select',
         labelField: 'name',

@@ -45,6 +45,14 @@ export const permissionFields = {
     defaultValue: false,
     label: "User can access onboarding and hotel setup"
   }),
+  canManageAudit: checkbox({
+    defaultValue: false,
+    label: "User can review immutable audit and delivery evidence"
+  }),
+  canManageIntegrations: checkbox({
+    defaultValue: false,
+    label: "User can manage integrations, outbox replay, and channel delivery"
+  }),
 }
 
 export const permissionsList = Object.keys(permissionFields)

@@ -8,15 +8,36 @@ export type OnboardingStatus = 'not_started' | 'in_progress' | 'completed' | 'di
 export async function updateOnboardingStatus(status: OnboardingStatus) {
   try {
     const query = `
-      mutation UpdateOnboardingStatus($data: UserUpdateProfileInput!) {
-        updateActiveUser(data: $data) {
+      mutation UpdateOnboardingStatus($where: UserWhereUniqueInput!, $data: UserUpdateInput!) {
+        updateUser(where: $where, data: $data) {
           id
           onboardingStatus
         }
       }
     `;
 
+    const authResponse = await keystoneClient<{ authenticatedItem?: { id: string } }>(`
+      query CurrentOnboardingUser {
+        authenticatedItem {
+          ... on User {
+            id
+          }
+        }
+      }
+    `);
+
+    if (!authResponse.success) {
+      return { success: false, error: authResponse.error };
+    }
+
+    const userId = authResponse.data?.authenticatedItem?.id;
+
+    if (!userId) {
+      return { success: false, error: 'You must be signed in to update onboarding status.' };
+    }
+
     const response = await keystoneClient(query, {
+      where: { id: userId },
       data: { onboardingStatus: status }
     });
 
@@ -28,7 +49,7 @@ export async function updateOnboardingStatus(status: OnboardingStatus) {
     revalidatePath('/dashboard');
     revalidatePath('/dashboard/(admin)');
 
-    return { success: true, data: response.data?.updateActiveUser };
+    return { success: true, data: response.data?.updateUser };
   } catch (error) {
     console.error('Error updating onboarding status:', error);
     return {

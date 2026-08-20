@@ -1,5 +1,5 @@
 import { list } from '@keystone-6/core'
-import { allOperations } from '@keystone-6/core/access'
+import { allOperations, denyAll } from '@keystone-6/core/access'
 import {
   text,
   select,
@@ -11,6 +11,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { encryptSensitiveText } from '../lib/sensitiveData'
 
 export const Guest = list({
   access: {
@@ -18,7 +19,7 @@ export const Guest = list({
       query: permissions.canManageGuests,
       create: permissions.canManageGuests,
       update: permissions.canManageGuests,
-      delete: permissions.canManageBookings,
+      delete: () => false,
     },
   },
   ui: {
@@ -79,6 +80,7 @@ export const Guest = list({
     // Loyalty program
     loyaltyNumber: text({
       isIndexed: 'unique',
+      db: { isNullable: true },
       label: 'Loyalty Number',
       ui: {
         description: 'Guest loyalty program number',
@@ -140,8 +142,10 @@ export const Guest = list({
     }),
     idNumber: text({
       label: 'ID Number',
+      access: { read: denyAll, create: permissions.canManageGuests, update: permissions.canManageGuests },
+      hooks: { resolveInput: ({ resolvedData }) => encryptSensitiveText(resolvedData) },
       ui: {
-        description: 'Identification document number (encrypted)',
+        description: 'Encrypted identification document number; never returned by generic GraphQL.',
       },
     }),
     nationality: text({
@@ -226,27 +230,62 @@ export const Guest = list({
 
     // Tracking
     lastStayAt: timestamp({
+      access: { create: () => false, update: () => false },
       label: 'Last Stay',
       ui: {
-        description: 'Date of last completed stay',
-        itemView: { fieldMode: 'read' },
+        description: 'Legacy checkout cache; platform guest views derive completed stays from bookings.',
+        itemView: { fieldMode: 'hidden' },
+        listView: { fieldMode: 'hidden' },
       },
     }),
     totalStays: text({
+      access: { create: () => false, update: () => false },
       label: 'Total Stays',
       ui: {
-        description: 'Number of completed stays',
-        itemView: { fieldMode: 'read' },
+        description: 'Legacy checkout cache; platform guest views derive completed stays from bookings.',
+        itemView: { fieldMode: 'hidden' },
+        listView: { fieldMode: 'hidden' },
       },
     }),
     totalSpent: text({
-      label: 'Total Spent',
+      access: { create: () => false, update: () => false },
+      label: 'Completed Stay Gross',
       ui: {
-        description: 'Total amount spent across all stays',
-        itemView: { fieldMode: 'read' },
+        description: 'Legacy checkout cache; operational reports derive immutable revenue and payment facts.',
+        itemView: { fieldMode: 'hidden' },
+        listView: { fieldMode: 'hidden' },
       },
     }),
 
     ...trackingFields,
+  },
+  hooks: {
+    resolveInput: async ({ resolvedData }) => ({
+      ...resolvedData,
+      ...(typeof resolvedData.email === 'string' ? { email: resolvedData.email.trim().toLowerCase() } : {}),
+      ...(typeof resolvedData.firstName === 'string' ? { firstName: resolvedData.firstName.trim() } : {}),
+      ...(typeof resolvedData.lastName === 'string' ? { lastName: resolvedData.lastName.trim() } : {}),
+      ...(typeof resolvedData.phone === 'string' ? { phone: resolvedData.phone.trim() } : {}),
+    }),
+    afterOperation: async ({ operation, item, originalItem, context }) => {
+      if (operation !== 'update' || !item?.id) return;
+      const identityChanged =
+        item.firstName !== originalItem?.firstName ||
+        item.lastName !== originalItem?.lastName ||
+        item.email !== originalItem?.email ||
+        item.phone !== originalItem?.phone;
+      if (!identityChanged) return;
+      await context.prisma.booking.updateMany({
+        where: {
+          guestProfileId: String(item.id),
+          status: { in: ['pending', 'confirmed', 'checked_in'] },
+        },
+        data: {
+          guestName: [item.firstName, item.lastName].filter(Boolean).join(' '),
+          guestEmail: String(item.email || ''),
+          guestPhone: String(item.phone || ''),
+        },
+      });
+    },
   },
 })

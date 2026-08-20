@@ -57,7 +57,7 @@ export function CustomSetupSteps({ onJsonUpdate = () => {}, onBack }: CustomSetu
   };
 
   const generateAIPrompt = () => {
-    return `I need help customizing my hotel onboarding JSON for Openfront Hotel.
+    return `I need help customizing the hotel onboarding JSON for The Alder House.
 
 Your first response should briefly summarize the current setup:
 - room types
@@ -67,11 +67,10 @@ Your first response should briefly summarize the current setup:
 - guests
 - sample reservations
 - availability snapshots
-- daily metrics
 
 Then ask what should change for this property.
 
-When I am done, return one complete JSON object that keeps the same overall structure and is valid for direct paste into Openfront Hotel onboarding.`;
+When I am done, return one complete JSON object that keeps the same overall structure and is valid for direct paste into the hotel onboarding flow.`;
   };
 
   const validateAndApplyJson = () => {
@@ -97,7 +96,7 @@ When I am done, return one complete JSON object that keeps the same overall stru
     {
       number: 1,
       title: 'Copy Base Hotel Configuration',
-      description: 'Start with the default hotel demo dataset.',
+      description: 'Start with the default property sample dataset.',
       content: (
         <DataCard
           title="Hotel Onboarding Data"
@@ -111,7 +110,7 @@ When I am done, return one complete JSON object that keeps the same overall stru
     {
       number: 2,
       title: 'Copy AI Customization Prompt',
-      description: 'Use this with any AI assistant to reshape the hotel demo data.',
+      description: 'Use this with any AI assistant to reshape the property sample data.',
       content: (
         <DataCard
           title="AI Prompt"
@@ -199,7 +198,7 @@ When I am done, return one complete JSON object that keeps the same overall stru
       <div className="space-y-2">
         <Label className="text-sm font-medium">Custom Hotel Setup</Label>
         <p className="text-xs text-muted-foreground">
-          Build a property-specific demo dataset without leaving the canonical onboarding flow.
+          Build a property-specific sample dataset without leaving the canonical onboarding flow.
         </p>
       </div>
 
