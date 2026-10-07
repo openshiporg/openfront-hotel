@@ -316,7 +316,11 @@ export function HousekeepingDashboard({
             <span className="text-sm font-medium">Overall Cleanliness</span>
             <span className="text-sm font-medium">{cleanlinessPercentage}%</span>
           </div>
-          <Progress value={cleanlinessPercentage} className="h-3" />
+          <Progress
+            value={cleanlinessPercentage}
+            className="h-3"
+            aria-label="Overall room cleanliness"
+          />
           <p className="text-xs text-muted-foreground mt-2">
             {metrics.cleanRooms} of {metrics.totalRooms} rooms are clean and ready
           </p>
@@ -333,7 +337,10 @@ export function HousekeepingDashboard({
                 <CardTitle>Room Status</CardTitle>
                 <div className="grid w-full grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:w-auto">
                   <Select value={selectedFloor} onValueChange={onFloorChange}>
-                    <SelectTrigger className="w-full sm:w-[120px]">
+                    <SelectTrigger
+                      className="w-full sm:w-[120px]"
+                      aria-label="Filter rooms by floor"
+                    >
                       <SelectValue placeholder="Floor" />
                     </SelectTrigger>
                     <SelectContent>
@@ -346,7 +353,10 @@ export function HousekeepingDashboard({
                     </SelectContent>
                   </Select>
                   <Select value={selectedStatus} onValueChange={onStatusChange}>
-                    <SelectTrigger className="w-full sm:w-[130px]">
+                    <SelectTrigger
+                      className="w-full sm:w-[130px]"
+                      aria-label="Filter rooms by status"
+                    >
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -591,7 +601,12 @@ function TaskCard({
         {task.status === 'in_progress' && (
           <>
             {onPause && (
-              <Button size="sm" variant="outline" onClick={onPause}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onPause}
+                aria-label={`Put room ${task.room.roomNumber} task on hold`}
+              >
                 <Pause className="h-4 w-4" />
               </Button>
             )}

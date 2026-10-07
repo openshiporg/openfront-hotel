@@ -1,6 +1,5 @@
 'use server';
 
-import { randomUUID } from 'node:crypto';
 
 import { keystoneClient } from '@/features/dashboard/lib/keystoneClient';
 import { boundedId, boundedInteger, boundedText, requireActionData } from '@/features/platform/lib/actionResult';
@@ -19,8 +18,8 @@ const PAYMENTS_WORKSPACE = String.raw`
 `;
 const REFUND_QUOTE = String.raw`query($paymentId:ID!){hotelRefundQuote(propertyKey:"the-alder-house",paymentId:$paymentId){refundableMinor currencyCode}}`;
 const REQUEST_REFUND = String.raw`
-  mutation($paymentId:ID!,$amountMinor:Int!,$reason:String!,$key:String!){
-    requestBookingPaymentRefund(paymentId:$paymentId,amountMinor:$amountMinor,reason:$reason,idempotencyKey:$key){
+  mutation($paymentId:ID!,$amountMinor:Int!,$reason:String!,$key:String!,$approvalId:ID){
+    requestBookingPaymentRefund(paymentId:$paymentId,amountMinor:$amountMinor,reason:$reason,idempotencyKey:$key,approvalId:$approvalId){
       status paymentId intentId amountMinor
     }
   }
@@ -37,13 +36,14 @@ export async function getRefundQuoteAction(paymentId: string) {
 }
 
 export async function requestPaymentRefundAction(input: {
-  paymentId: string; amountMinor: number; reason: string;
+  approvalId?: string; idempotencyKey: string; paymentId: string; amountMinor: number; reason: string;
 }) {
   const response = await keystoneClient<any>(REQUEST_REFUND, {
     paymentId: boundedId(input.paymentId, 'Payment ID'),
     amountMinor: boundedInteger(input.amountMinor, 'Refund amount', { min: 1 }),
     reason: boundedText(input.reason, 'Refund reason', 500, true),
-    key: randomUUID(),
+    key: boundedText(input.idempotencyKey, 'Attempt key', 100, true),
+    approvalId: input.approvalId?.trim() ? boundedId(input.approvalId, 'Approval ID') : null,
   });
   return requireActionData(response).requestBookingPaymentRefund;
 }

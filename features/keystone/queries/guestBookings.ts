@@ -3,7 +3,7 @@ import {
   getGuestAccessBookingIds,
 } from '../lib/guestBookingAccess';
 import { STOREFRONT_BOOKING_QUERY } from '../lib/storefrontBooking';
-import { bookingCommunicationStatus } from '../lib/hotelCommunications';
+import { bookingCommunicationStatus } from '../communications/commands';
 
 async function guestBookings(
   root: unknown,

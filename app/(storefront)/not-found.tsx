@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export default function StorefrontNotFound(){return <main className="lodging-container hotel-section"><p className="lodging-eyebrow">Page not found</p><h1 className="lodging-headline mt-4">Find your way back to the house.</h1><p className="mt-5">This page may have moved. Your reservation can still be found through secure lookup.</p><div className="flex flex-wrap gap-5 mt-6"><Link href="/rooms" className="lodging-button">Explore rooms</Link><Link href="/bookings/lookup" className="lodging-link">Find a reservation</Link></div></main>}

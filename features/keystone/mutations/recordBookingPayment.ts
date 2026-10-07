@@ -1,5 +1,5 @@
 import { permissions } from '../access';
-import { recordOperatorBookingPayment } from '../lib/folioPosting';
+import { recordOperatorBookingPayment } from '../folios/commands';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 
 export default async function recordBookingPayment(

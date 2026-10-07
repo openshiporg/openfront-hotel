@@ -12,9 +12,9 @@ export const PaymentProvider = list({
   access: {
     operation: {
       query: canManagePaymentIntegrations,
-      create: canManagePaymentIntegrations,
+      create: denyAll,
       update: canManagePaymentIntegrations,
-      delete: canManagePaymentIntegrations,
+      delete: denyAll,
     },
   },
   ui: {
@@ -30,6 +30,8 @@ export const PaymentProvider = list({
       validation: { isRequired: true },
     }),
     code: text({
+      access: { update: denyAll },
+      ui: { itemView: { fieldMode: 'read' } },
       isIndexed: 'unique',
       validation: {
         isRequired: true,
@@ -41,14 +43,16 @@ export const PaymentProvider = list({
       },
     }),
     isInstalled: checkbox({
+      access: { update: denyAll },
       defaultValue: true,
+      ui: { itemView: { fieldMode: 'read' } },
     }),
     credentials: json({
       defaultValue: {},
       access: {
         read: denyAll,
-        create: canManagePaymentIntegrations,
-        update: canManagePaymentIntegrations,
+        create: denyAll,
+        update: denyAll,
       },
       hooks: {
         resolveInput: ({ resolvedData }) => {
@@ -67,25 +71,33 @@ export const PaymentProvider = list({
       },
     }),
     metadata: json({
+      access: { update: denyAll },
       defaultValue: {},
+      ui: { itemView: { fieldMode: 'read' } },
     }),
-    createPaymentFunction: text({ validation: { isRequired: true } }),
-    capturePaymentFunction: text({ validation: { isRequired: true } }),
-    refundPaymentFunction: text({ validation: { isRequired: true } }),
-    getPaymentStatusFunction: text({ validation: { isRequired: true } }),
-    generatePaymentLinkFunction: text({ validation: { isRequired: true } }),
-    handleWebhookFunction: text({ validation: { isRequired: true } }),
+    createPaymentFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
+    capturePaymentFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
+    refundPaymentFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
+    getPaymentStatusFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
+    generatePaymentLinkFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
+    handleWebhookFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
     bookingPaymentSessions: relationship({
       ref: 'BookingPaymentSession.paymentProvider',
       many: true,
+      access: { create: denyAll, update: denyAll },
+      ui: { itemView: { fieldMode: 'read' } },
     }),
     bookingPayments: relationship({
       ref: 'BookingPayment.paymentProvider',
       many: true,
+      access: { create: denyAll, update: denyAll },
+      ui: { itemView: { fieldMode: 'read' } },
     }),
     refundIntents: relationship({
       ref: 'RefundIntent.paymentProvider',
       many: true,
+      access: { create: denyAll, update: denyAll },
+      ui: { itemView: { fieldMode: 'read' } },
     }),
     ...trackingFields,
   },

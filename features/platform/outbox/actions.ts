@@ -21,7 +21,7 @@ const OUTBOX_WORKSPACE = String.raw`
     }
   }
 `;
-const REPLAY_OUTBOX = String.raw`mutation($id:ID!,$key:String!){replayHotelOutboxEvent(eventId:$id,idempotencyKey:$key){id eventKey status replayed}}`;
+const REPLAY_OUTBOX = String.raw`mutation($id:ID!,$key:String!,$ack:Boolean!){replayHotelOutboxEvent(eventId:$id,idempotencyKey:$key,acknowledgeUnknownDelivery:$ack){id eventKey status replayed}}`;
 const REPLAY_REFUND = String.raw`mutation($id:ID!,$key:String!){replayRefundIntent(intentId:$id,idempotencyKey:$key){id status}}`;
 
 export async function getOutboxWorkspace() {
@@ -29,13 +29,13 @@ export async function getOutboxWorkspace() {
   return requireActionData(response);
 }
 
-export async function replayOutboxEvidence(kindValue: 'event' | 'refund', idValue: string) {
+export async function replayOutboxEvidence(kindValue: 'event' | 'refund', idValue: string, acknowledgeUnknownDelivery = false) {
   const kind = boundedEnum(kindValue, 'Replay kind', ['event', 'refund'] as const);
   const id = boundedId(idValue, kind === 'event' ? 'Outbox event ID' : 'Refund intent ID');
-  const response = await keystoneClient<any>(kind === 'event' ? REPLAY_OUTBOX : REPLAY_REFUND, {
-    id,
-    key: randomUUID(),
-  });
+  const variables = kind === 'event'
+    ? { id, key: randomUUID(), ack: acknowledgeUnknownDelivery }
+    : { id, key: randomUUID() };
+  const response = await keystoneClient<any>(kind === 'event' ? REPLAY_OUTBOX : REPLAY_REFUND, variables);
   const data = requireActionData(response);
   return kind === 'event' ? data.replayHotelOutboxEvent : data.replayRefundIntent;
 }

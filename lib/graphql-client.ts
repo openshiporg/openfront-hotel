@@ -1,8 +1,9 @@
 import { GraphQLClient } from 'graphql-request';
+import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
+import { resolveInternalBaseUrl } from '@/features/keystone/lib/internal-origin';
 
 export function getServerBaseUrl(env: NodeJS.ProcessEnv = process.env) {
-  const port = /^\d+$/.test(env.PORT || '') ? env.PORT : '3000';
-  return `http://127.0.0.1:${port}`;
+  return resolveInternalBaseUrl(env);
 }
 
 export function getGraphQLEndpoint() {
@@ -13,16 +14,18 @@ export function getGraphQLEndpoint() {
   return `${getServerBaseUrl()}/api/graphql`;
 }
 
+const graphqlFetch = createBoundedGraphqlFetch(8_000);
+
 export const graphqlClient = new GraphQLClient(getGraphQLEndpoint(), {
   headers: {},
   fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-    fetch(input, { ...init, credentials: 'include' }),
+    graphqlFetch(input, { ...init, credentials: 'include' }),
 });
 
 export async function graphqlQuery<T>(query: string, variables?: any): Promise<T> {
   try {
     const client = typeof window === 'undefined'
-      ? new GraphQLClient(getGraphQLEndpoint(), { headers: {} })
+      ? new GraphQLClient(getGraphQLEndpoint(), { headers: {}, fetch: graphqlFetch })
       : graphqlClient;
     const data = await client.request<T>(query, variables);
     return data;

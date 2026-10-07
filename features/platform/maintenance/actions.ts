@@ -30,11 +30,18 @@ export async function getMaintenanceWorkspace() {
 }
 
 export async function updateMaintenanceStatusAction(requestId: string, status: string, notes: string) {
-  const response = await keystoneClient<any>(UPDATE_STATUS, {
-    requestId: boundedId(requestId, 'Maintenance request ID'),
-    status: boundedEnum(status, 'Maintenance status', ['reported', 'assigned', 'in_progress', 'completed', 'verified', 'cancelled'] as const),
-    notes: boundedText(notes, 'Notes', 1000),
-    key: randomUUID(),
-  });
-  return requireActionData(response).updateMaintenanceRequestStatus;
+  try {
+    const response = await keystoneClient<any>(UPDATE_STATUS, {
+      requestId: boundedId(requestId, 'Maintenance request ID'),
+      status: boundedEnum(status, 'Maintenance status', ['reported', 'assigned', 'in_progress', 'completed', 'verified', 'cancelled'] as const),
+      notes: boundedText(notes, 'Notes', 1000),
+      key: randomUUID(),
+    });
+    return { ok: true as const, data: requireActionData(response).updateMaintenanceRequestStatus };
+  } catch {
+    return {
+      ok: false as const,
+      message: 'The request was not updated. Refresh and complete any linked room inspection before retrying.',
+    };
+  }
 }

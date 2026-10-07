@@ -1,6 +1,5 @@
 'use server';
 
-import { randomUUID } from 'node:crypto';
 
 import { keystoneClient } from '@/features/dashboard/lib/keystoneClient';
 import {
@@ -40,28 +39,47 @@ const ASSIGN_ROOM = String.raw`mutation($bookingId:ID!,$roomId:ID!,$key:String!)
 
 const BOOKING_STATUSES = ['pending', 'confirmed', 'checked_in', 'checked_out', 'cancelled', 'cancellation_pending', 'no_show'] as const;
 
+type FrontDeskMutationResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; message: string };
+
+async function safeFrontDeskMutation<T>(
+  operation: () => Promise<T>,
+  message: string,
+): Promise<FrontDeskMutationResult<T>> {
+  try {
+    return { ok: true, data: await operation() };
+  } catch {
+    return { ok: false, message };
+  }
+}
+
 export async function getFrontDeskWorkspace(start: string, end: string) {
   const range = boundedDateRange(start, end, 31);
   const response = await keystoneClient<any>(FRONT_DESK, range);
   return requireActionData(response).hotelFrontDesk;
 }
 
-export async function updateFrontDeskBookingStatus(bookingId: string, status: string) {
-  const response = await keystoneClient<any>(UPDATE_STATUS, {
-    bookingId: boundedId(bookingId, 'Booking ID'),
-    status: boundedEnum(status, 'Booking status', BOOKING_STATUSES),
-    key: randomUUID(),
-  });
-  return requireActionData(response).updateBookingStatus;
+export async function updateFrontDeskBookingStatus(bookingId: string, status: string, idempotencyKey: string) {
+  return safeFrontDeskMutation(async () => {
+    const response = await keystoneClient<any>(UPDATE_STATUS, {
+      bookingId: boundedId(bookingId, 'Booking ID'),
+      status: boundedEnum(status, 'Booking status', BOOKING_STATUSES),
+      key: boundedText(idempotencyKey, 'Idempotency key', 200, true),
+    });
+    return requireActionData(response).updateBookingStatus;
+  }, 'The reservation was not updated. Refresh and review its status, room readiness, business date, and folio requirements.');
 }
 
-export async function cancelFrontDeskBooking(bookingId: string) {
-  const response = await keystoneClient<any>(CANCEL_BOOKING, {
-    bookingId: boundedId(bookingId, 'Booking ID'),
-    reason: 'Cancelled by front desk',
-    key: randomUUID(),
-  });
-  return requireActionData(response).cancelBooking;
+export async function cancelFrontDeskBooking(bookingId: string, idempotencyKey: string) {
+  return safeFrontDeskMutation(async () => {
+    const response = await keystoneClient<any>(CANCEL_BOOKING, {
+      bookingId: boundedId(bookingId, 'Booking ID'),
+      reason: 'Cancelled by front desk',
+      key: boundedText(idempotencyKey, 'Idempotency key', 200, true),
+    });
+    return requireActionData(response).cancelBooking;
+  }, 'Cancellation was not recorded. Refresh and review the reservation cancellation, payment, and folio state.');
 }
 
 export async function resolveFrontDeskModification(input: {
@@ -70,23 +88,28 @@ export async function resolveFrontDeskModification(input: {
   checkInDate?: string | null;
   checkOutDate?: string | null;
   staffNote?: string | null;
+  idempotencyKey: string;
 }) {
-  const response = await keystoneClient<any>(RESOLVE_MODIFICATION, {
-    bookingId: boundedId(input.bookingId, 'Booking ID'),
-    decision: boundedEnum(input.decision, 'Decision', ['approved', 'declined'] as const),
-    checkInDate: input.checkInDate ? boundedIsoDate(input.checkInDate, 'Check-in date') : null,
-    checkOutDate: input.checkOutDate ? boundedIsoDate(input.checkOutDate, 'Check-out date') : null,
-    staffNote: input.staffNote ? boundedText(input.staffNote, 'Staff note', 1000) : null,
-    key: randomUUID(),
-  });
-  return requireActionData(response).resolveBookingModificationRequest;
+  return safeFrontDeskMutation(async () => {
+    const response = await keystoneClient<any>(RESOLVE_MODIFICATION, {
+      bookingId: boundedId(input.bookingId, 'Booking ID'),
+      decision: boundedEnum(input.decision, 'Decision', ['approved', 'declined'] as const),
+      checkInDate: input.checkInDate ? boundedIsoDate(input.checkInDate, 'Check-in date') : null,
+      checkOutDate: input.checkOutDate ? boundedIsoDate(input.checkOutDate, 'Check-out date') : null,
+      staffNote: input.staffNote ? boundedText(input.staffNote, 'Staff note', 1000) : null,
+      key: boundedText(input.idempotencyKey, 'Idempotency key', 200, true),
+    });
+    return requireActionData(response).resolveBookingModificationRequest;
+  }, 'The change request was not resolved. Refresh and review its dates, inventory, and current status.');
 }
 
-export async function assignFrontDeskRoom(bookingId: string, roomId: string) {
-  const response = await keystoneClient<any>(ASSIGN_ROOM, {
-    bookingId: boundedId(bookingId, 'Booking ID'),
-    roomId: boundedId(roomId, 'Room ID'),
-    key: randomUUID(),
-  });
-  return requireActionData(response).assignRoomToBooking;
+export async function assignFrontDeskRoom(bookingId: string, roomId: string, idempotencyKey: string) {
+  return safeFrontDeskMutation(async () => {
+    const response = await keystoneClient<any>(ASSIGN_ROOM, {
+      bookingId: boundedId(bookingId, 'Booking ID'),
+      roomId: boundedId(roomId, 'Room ID'),
+      key: boundedText(idempotencyKey, 'Idempotency key', 200, true),
+    });
+    return requireActionData(response).assignRoomToBooking;
+  }, 'The room was not assigned. Refresh and choose a compatible ready, unassigned room.');
 }

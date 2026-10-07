@@ -1,4 +1,5 @@
 'use client';
+import { formatStayDate } from '@/lib/hotelCalendarDate';
 
 import React from 'react';
 import Link from 'next/link';
@@ -561,7 +562,7 @@ function BookingCard({ booking }: { booking: GuestBooking }) {
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <span>
-                {format(parseISO(booking.checkInDate), 'MMM d')} - {format(parseISO(booking.checkOutDate), 'MMM d, yyyy')}
+                {formatStayDate(booking.checkInDate, { month: "short", day: "numeric", year: "numeric" })} - {formatStayDate(booking.checkOutDate, { month: "short", day: "numeric", year: "numeric" })}
               </span>
               <span>{nights} night{nights !== 1 ? 's' : ''}</span>
               {booking.roomType && <span>{booking.roomType}</span>}

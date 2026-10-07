@@ -1,6 +1,9 @@
 'use client';
 
 import React from 'react';
+import { StayServiceDesk } from '@/features/platform/stay-service/components/StayServiceDesk';
+import { HousekeepingDispatch } from '../components/HousekeepingDispatch';
+import { RoomOutageControls } from '../components/RoomOutageControls';
 import { 
   HousekeepingDashboard, 
   HousekeepingRoom, 
@@ -58,6 +61,7 @@ export function HousekeepingPage() {
         assignedTo: t.assignedTo,
         startedAt: t.startedAt,
         completedAt: t.completedAt,
+        updatedAt: t.updatedAt,
         notes: t.notes,
       }));
 
@@ -173,6 +177,9 @@ export function HousekeepingPage() {
       <div className="min-w-0 max-w-full space-y-4 p-4 md:p-6">
         {error ? <WorkspaceError message={error} onRetry={fetchData} /> : null}
         {loading && !metrics ? <WorkspaceLoading label="Loading housekeeping readiness" /> : null}
+        <StayServiceDesk rooms={rooms} staff={staff} />
+        <RoomOutageControls rooms={rooms} />
+        <HousekeepingDispatch tasks={tasks} staff={staff} onRefresh={fetchData} />
         {metrics && (
           <HousekeepingDashboard
             rooms={rooms}

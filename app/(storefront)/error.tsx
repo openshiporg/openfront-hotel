@@ -1,0 +1,3 @@
+'use client';
+import Link from 'next/link';
+export default function StorefrontError({reset}:{error:Error&{digest?:string};reset:()=>void}){return <main className="lodging-container hotel-section"><div className="hotel-notice"><p className="lodging-eyebrow">We couldn’t open this page</p><h1 className="lodging-title mt-4">Let’s try that again.</h1><p role="alert">The page is temporarily unavailable. If you were making a payment, check your reservation before starting another payment.</p><div className="flex flex-wrap gap-5 mt-6"><button className="lodging-button" onClick={reset}>Try again</button><Link href="/bookings/lookup" className="lodging-link">Find your reservation</Link><Link href="/contact" className="lodging-link">Contact the property</Link></div></div></main>}

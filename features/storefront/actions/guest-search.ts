@@ -3,6 +3,7 @@
 import { cookies, headers } from 'next/headers';
 
 import { getServerBaseUrl } from '@/lib/graphql-client';
+import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
 import { GET_BOOKINGS_BY_EMAIL, VERIFY_GUEST_BOOKING } from '@/lib/queries';
 
 export type BookingLookupActionState = {
@@ -20,6 +21,8 @@ export type AccountLookupActionState = {
 };
 
 class PublicGraphqlBoundaryError extends Error {}
+
+const boundedGraphqlFetch = createBoundedGraphqlFetch(8_000);
 
 const NO_MATCH = "We couldn't match those details. Check the confirmation number and email, then try again.";
 const SEARCH_ERROR = 'The reservation search did not complete. Please try again.';
@@ -63,12 +66,11 @@ async function relayGuestAccessCookie(response: Response) {
 }
 
 async function publicGraphql<T>(query: string, variables: Record<string, string>): Promise<T> {
-  const response = await fetch(`${getServerBaseUrl()}/api/graphql`, {
+  const response = await boundedGraphqlFetch(`${getServerBaseUrl()}/api/graphql`, {
     method: 'POST',
     headers: await incomingRequestHeaders(),
     body: JSON.stringify({ query, variables }),
     cache: 'no-store',
-    signal: AbortSignal.timeout(8_000),
   });
   const payload = await response.json().catch(() => null) as {
     data?: T;
@@ -146,4 +148,10 @@ export async function lookupAccountAction(
   } catch (error) {
     return { status: 'error', message: publicFailure(error), bookings: null, formData: submitted };
   }
+}
+
+/** Revoke this browser's signed guest access without touching staff authentication. */
+export async function signOutGuestAction(): Promise<void> {
+  const store = await cookies();
+  store.delete('hotel-guest-access');
 }

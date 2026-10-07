@@ -96,6 +96,7 @@ export const Room = list({
 
     // Relationships
     housekeepingTasks: relationship({
+      access: { create: () => false, update: () => false },
       ref: 'HousekeepingTask.room',
       many: true,
       ui: {
@@ -106,6 +107,7 @@ export const Room = list({
       label: 'Housekeeping Tasks',
     }),
     roomAssignments: relationship({
+      access: { create: () => false, update: () => false },
       ref: 'RoomAssignment.room',
       many: true,
       ui: {
@@ -122,7 +124,11 @@ export const Room = list({
         ? { roomNumber: resolvedData.roomNumber.trim().toUpperCase() }
         : {}),
     }),
-    beforeOperation: async ({ operation, item, context }) => {
+    beforeOperation: async ({ operation, item, context, resolvedData }) => {
+      if (operation === 'update' && item?.id && resolvedData.roomType !== undefined) {
+        const assignments = await context.prisma.roomAssignment.count({ where: { roomId: String(item.id) } });
+        if (assignments) throw new Error('A room with assignment history cannot change room type; create a new physical-room record when reclassifying retired inventory.');
+      }
       if (operation !== 'delete' || !item?.id) return;
       const [assignments, housekeeping, maintenance] = await Promise.all([
         context.prisma.roomAssignment.count({ where: { roomId: String(item.id) } }),

@@ -58,6 +58,7 @@ export function validateProductionConfig(env: NodeJS.ProcessEnv = process.env): 
   strongDomainSecret(env, 'SESSION_SECRET');
   strongDomainSecret(env, 'HOTEL_DATA_ENCRYPTION_KEY');
   strongDomainSecret(env, 'HOTEL_QUOTE_SECRET');
+  if (String(env.RESET_ACTION_SECRET || '').trim()) strongDomainSecret(env, 'RESET_ACTION_SECRET');
   const site = httpsOrigin(env, 'NEXT_PUBLIC_SITE_URL');
   const auth = httpsOrigin(env, 'NEXTAUTH_URL');
   if (site !== auth) throw new Error('NEXT_PUBLIC_SITE_URL and NEXTAUTH_URL must use the same canonical origin.');

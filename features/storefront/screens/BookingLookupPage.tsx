@@ -1,4 +1,5 @@
 'use client';
+import { formatStayDate } from '@/lib/hotelCalendarDate';
 
 import * as React from 'react';
 import Link from 'next/link';
@@ -56,10 +57,6 @@ export default function BookingLookupPage() {
 
   React.useEffect(() => {
     if (state.status !== 'matched' || !result) return;
-    localStorage.setItem(
-      'openfront_guest_context',
-      JSON.stringify({ email: result.guestEmail || state.formData.email, name: result.guestName }),
-    );
     toast({ title: 'Reservation found', description: 'You can now view the full stay details.' });
   }, [result, state.formData.email, state.status, toast]);
 
@@ -67,14 +64,15 @@ export default function BookingLookupPage() {
 
   return (
     <main className="lodging-page min-h-screen">
-      <div className="lodging-container max-w-3xl py-16 md:py-24">
-        <header className="mb-12 border-b border-[var(--lodging-rule)] pb-10 text-center">
+      <div className="lodging-container max-w-3xl py-12 md:py-16">
+        <header className="hotel-page-head">
           <p className="lodging-eyebrow mb-4 text-[var(--lodging-accent-deep)]">Manage your stay</p>
-          <h1 className="lodging-display">Find your booking.</h1>
+          <h1 className="lodging-display">Your stay starts here.</h1>
           <p className="lodging-lead mx-auto mt-5 max-w-xl">
             Use your confirmation number and the email on the reservation to view stay details, add the stay to your calendar, or request changes.
           </p>
         </header>
+        <nav aria-label="Guest portal" className="hotel-subnav mb-8"><Link href="/bookings/lookup" aria-current="page">Find a reservation</Link><Link href="/account">Verified stays</Link><Link href="/contact">Contact the house</Link></nav>
 
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <form action={formAction} className="lodging-surface min-w-0 space-y-6 p-6 md:p-8">
@@ -94,6 +92,7 @@ export default function BookingLookupPage() {
                 ref={confirmationRef}
                 id="confirmationNumber"
                 name="confirmationNumber"
+                maxLength={80}
                 defaultValue={state.formData.confirmationNumber}
                 placeholder="BK-XXXX-XXXX"
                 className="lodging-input uppercase"
@@ -110,6 +109,7 @@ export default function BookingLookupPage() {
                 id="email"
                 name="email"
                 type="email"
+                maxLength={254}
                 defaultValue={state.formData.email}
                 placeholder="you@example.com"
                 className="lodging-input"
@@ -130,11 +130,11 @@ export default function BookingLookupPage() {
             <div className="space-y-4 text-sm leading-7 text-[var(--lodging-ink-muted)]">
               <div className="flex gap-3">
                 <Mail className="mt-0.5 h-4 w-4 shrink-0 text-[var(--lodging-ink-faint)]" />
-                <p>We verify both details before issuing a secure guest session, so a guessed confirmation number never exposes a stay.</p>
+                <p>Use the email recorded on your reservation. The property verifies both details before giving this browser access.</p>
               </div>
               <div className="flex gap-3">
                 <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-[var(--lodging-ink-faint)]" />
-                <p>Upcoming and past bookings are also available from the guest portal.</p>
+                <p>The guest portal brings together reservations you have verified in this browser.</p>
               </div>
             </div>
             <Link href="/account" className="lodging-button-ghost inline-flex">
@@ -154,7 +154,7 @@ export default function BookingLookupPage() {
                 </div>
                 <p className="lodging-serif text-sm text-[var(--lodging-ink-faint)]">{result.confirmationNumber}</p>
                 <p className="text-sm text-[var(--lodging-ink-muted)]">
-                  {new Date(result.checkInDate).toLocaleDateString()} &mdash; {new Date(result.checkOutDate).toLocaleDateString()}
+                  {formatStayDate(result.checkInDate, { month: "short", day: "numeric", year: "numeric" })} &mdash; {formatStayDate(result.checkOutDate, { month: "short", day: "numeric", year: "numeric" })}
                 </p>
                 <p className="text-sm text-[var(--lodging-ink-muted)]">
                   {assignment?.roomType?.name || 'Room type pending'}
@@ -163,7 +163,7 @@ export default function BookingLookupPage() {
               </div>
               <div className="flex shrink-0 flex-wrap gap-3">
                 <Link href="/account" className="lodging-button-ghost">View all stays</Link>
-                <button type="button" className="lodging-button" onClick={() => router.push(`/booking/${result.id}`)}>
+                <button type="button" className="lodging-button" onClick={() => router.push(`/booking/${encodeURIComponent(result.id)}`)}>
                   Open booking <ArrowRight className="h-4 w-4" />
                 </button>
               </div>

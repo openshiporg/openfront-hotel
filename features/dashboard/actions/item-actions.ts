@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { keystoneClient } from '../lib/keystoneClient'
+import { safeGraphQLError } from '../lib/safeGraphQLError'
 
 // Server actions following Keystone's exact mutation pattern
 export async function updateItemAction(listKey: string, id: string, data: Record<string, unknown>) {
@@ -37,7 +38,7 @@ export async function updateItemAction(listKey: string, id: string, data: Record
   } catch (error) {
     // Return error in Apollo format
     return {
-      errors: [{ message: error instanceof Error ? error.message : 'Update failed', path: undefined }],
+      errors: [{ message: safeGraphQLError(error).message, path: undefined }],
       data: null
     }
   }
@@ -77,7 +78,7 @@ export async function createItemAction(listKey: string, data: Record<string, unk
   } catch (error) {
     // Return error in Apollo format
     return {
-      errors: [{ message: error instanceof Error ? error.message : 'Create failed', path: undefined }],
+      errors: [{ message: safeGraphQLError(error).message, path: undefined }],
       data: null
     }
   }
@@ -115,7 +116,7 @@ export async function deleteItemAction(listKey: string, id: string) {
   } catch (error) {
     // Return error in Apollo format
     return {
-      errors: [{ message: error instanceof Error ? error.message : 'Delete failed', path: undefined }],
+      errors: [{ message: safeGraphQLError(error).message, path: undefined }],
       data: null
     }
   }
@@ -159,7 +160,7 @@ export async function deleteManyItemsAction(
   } catch (error) {
     // Return error in Apollo format
     return {
-      errors: [{ message: error instanceof Error ? error.message : 'Bulk delete failed', path: undefined }],
+      errors: [{ message: safeGraphQLError(error).message, path: undefined }],
       data: null
     }
   }

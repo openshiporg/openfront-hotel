@@ -1,4 +1,4 @@
-import { getStorefrontBookingQuote } from '../mutations/createStorefrontBooking';
+import { getStorefrontBookingQuote } from '../bookings/createStorefrontBooking';
 import { enforceAbuseLimit } from '../lib/abuseControl';
 
 async function storefrontQuote(
@@ -32,6 +32,8 @@ async function storefrontQuote(
     feesAmountMinor: quote.feesMinor,
     totalAmountMinor: quote.totalMinor,
     currencyCode: quote.currencyCode,
+    securityDepositMinor: quote.securityDepositMinor,
+    depositPercent: quote.depositPercent,
     pricingVersion: quote.pricingVersion,
     quoteToken: quote.quoteToken,
   };

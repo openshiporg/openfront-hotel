@@ -181,7 +181,7 @@ export const RoomType = list({
       },
       label: 'Storefront images',
     }),
-    rooms: relationship({
+    rooms: relationship({ access: { create: () => false, update: () => false },
       ref: 'Room.roomType',
       many: true,
       ui: {
@@ -189,7 +189,7 @@ export const RoomType = list({
       },
       label: 'Rooms',
     }),
-    roomAssignments: relationship({
+    roomAssignments: relationship({ access: { create: () => false, update: () => false },
       ref: 'RoomAssignment.roomType',
       many: true,
       ui: {
@@ -197,7 +197,7 @@ export const RoomType = list({
       },
       label: 'Room Assignments',
     }),
-    ratePlans: relationship({
+    ratePlans: relationship({ access: { create: () => false, update: () => false },
       ref: 'RatePlan.roomType',
       many: true,
       ui: {

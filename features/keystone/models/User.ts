@@ -1,4 +1,5 @@
 import { list } from '@keystone-6/core';
+import { denyAll } from '@keystone-6/core/access';
 import {
   password,
   text,
@@ -7,6 +8,7 @@ import {
   integer,
   select,
   timestamp,
+  json,
 } from '@keystone-6/core/fields';
 import { isSignedIn, permissions, rules } from '../access';
 import { trackingFields } from './trackingFields';
@@ -81,6 +83,12 @@ export const User = list({
       access: { create: () => false, update: () => false },
       ui: { itemView: { fieldMode: 'read' } },
     }),
+    mfaEnabled: checkbox({ defaultValue: false, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaSecret: text({ access: { read: () => false, create: () => false, update: () => false } }),
+    mfaPendingSecret: text({ access: { read: () => false, create: () => false, update: () => false } }),
+    mfaPendingExpiresAt: timestamp({ access: { read: () => false, create: () => false, update: () => false } }),
+    mfaLastCounter: integer({ defaultValue: -1, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaRecoveryHashes: json({ defaultValue: [], access: { read: () => false, create: () => false, update: () => false } }),
     onboardingStatus: select({
       options: [
         { label: 'Not Started', value: 'not_started' },
@@ -97,6 +105,8 @@ export const User = list({
     bookings: relationship({
       ref: 'Booking.guest',
       many: true,
+      access: { create: denyAll, update: denyAll },
+      ui: { itemView: { fieldMode: 'read' } },
     }),
     ...trackingFields,
   },

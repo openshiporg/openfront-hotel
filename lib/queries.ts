@@ -99,6 +99,7 @@ export const GET_ROOM_TYPES = gql`
       amenities
       squareFeet
       roomsCount
+      ratePlans { id name description baseRate baseRateMinor currencyCode minimumStay cancellationPolicy mealPlan isPromotional }
       roomImages {
         id
         url
@@ -162,7 +163,7 @@ export const GET_STOREFRONT_QUOTE = gql`
     ) {
       roomTypeId roomTypeName ratePlanId ratePlanName cancellationPolicy mealPlan
       checkInDate checkOutDate nights numberOfGuests ratePerNight roomSubtotal taxAmount feesAmount totalAmount
-      roomSubtotalMinor taxAmountMinor feesAmountMinor totalAmountMinor currencyCode pricingVersion quoteToken
+      roomSubtotalMinor taxAmountMinor feesAmountMinor totalAmountMinor currencyCode pricingVersion depositPercent securityDepositMinor quoteToken
     }
   }
 `;
@@ -245,6 +246,7 @@ export const CREATE_STOREFRONT_BOOKING = gql`
       status
       paymentStatus
       createdAt
+      bookedStayTerms
     }
   }
 `;
@@ -319,8 +321,16 @@ export const GET_GUEST_BOOKING = gql`
       totalAmount
       depositAmount
       balanceDue
+      roomRateMinor
+      taxAmountMinor
+      feesAmountMinor
+      totalAmountMinor
+      balanceDueMinor
+      currencyCode
       status
       paymentStatus
+      refundPendingMinor
+      bookedStayTerms
       specialRequests
       confirmationDeliveryStatus
       updateDeliveryStatus

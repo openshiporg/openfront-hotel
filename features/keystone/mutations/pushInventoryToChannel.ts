@@ -1,5 +1,5 @@
 import { permissions } from '../access'
-import { pushInventoryToChannel } from '../lib/channelSync'
+import { pushInventoryToChannel } from '../channels/commands'
 
 type PushInventoryInput = {
   channelId: string

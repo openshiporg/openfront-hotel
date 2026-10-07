@@ -1,687 +1,75 @@
 'use client';
-
-import * as React from 'react';
-import { Suspense } from 'react';
+import { Suspense,useEffect,useMemo,useRef,useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { ArrowLeft, CreditCard, Loader2 } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { useSearchParams,useRouter } from 'next/navigation';
 import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-
 import { graphqlClient } from '@/lib/graphql-client';
-import { safeQuoteFailureMessage } from '@/features/storefront/lib/qa-workflows';
-import {
-  COMPLETE_BOOKING_PAYMENT,
-  CREATE_STOREFRONT_BOOKING,
-  GET_BOOKING_PAYMENT_PROVIDERS,
-  GET_ROOM_TYPE,
-  GET_STOREFRONT_QUOTE,
-  INITIATE_BOOKING_PAYMENT_SESSION,
-} from '@/lib/queries';
-import { RoomType } from '@/lib/types';
+import { CREATE_STOREFRONT_BOOKING,GET_BOOKING_PAYMENT_PROVIDERS,GET_ROOM_TYPE,GET_STOREFRONT_QUOTE,GET_GUEST_BOOKING,INITIATE_BOOKING_PAYMENT_SESSION,COMPLETE_BOOKING_PAYMENT } from '@/lib/queries';
+import type { Booking,RoomType } from '@/lib/types';
+import { selectDisplayedStayPrice, type StayQuote } from '../lib/quote';
 import { primaryRoomImage } from '@/lib/hotel-storefront';
-import { useHotelSettings } from '@/features/storefront/components/HotelSettingsProvider';
-import { useToast } from '@/components/ui/use-toast';
+import { operationAttempt } from '@/lib/operationAttempt';
+import { formatStayDate } from '@/lib/hotelCalendarDate';
 import { StripeCheckoutForm } from '@/components/booking/StripeCheckoutForm';
-
-interface RoomTypeResponse {
-  roomType: RoomType;
-}
-
-interface StorefrontQuote {
-  roomTypeId: string;
-  roomTypeName: string;
-  ratePlanId: string;
-  ratePlanName: string;
-  cancellationPolicy?: string | null;
-  mealPlan?: string | null;
-  quoteToken: string;
-  nights: number;
-  numberOfGuests: number;
-  ratePerNight: number;
-  roomSubtotal: number;
-  taxAmount: number;
-  feesAmount: number;
-  totalAmount: number;
-  currencyCode: string;
-}
-
-interface CreateBookingResponse {
-  createStorefrontBooking: {
-    id: string;
-    confirmationNumber: string;
+import { useHotelSettings } from '../components/HotelSettingsProvider';
+import { StayPrice } from '../components/StayPrice';
+import { money,reservationPresentation } from '../lib/stay-context';
+import { roomSearchValidationMessage,selectInitialPublicRatePlan,safeQuoteFailureMessage } from '../lib/qa-workflows';
+interface Provider{id:string;name:string;code:string;displayName?:string|null;publicClientKey?:string|null}
+interface Session{id:string;amount:number;clientSecret?:string|null;approveLink?:string|null}
+function BookContent(){
+  const params=useSearchParams();const router=useRouter();const identity=useHotelSettings();const originalQuery=params?.toString()||'';
+  const [resumeId]=useState(()=>params?.get('bookingId')||'');
+  const roomTypeId=params?.get('roomTypeId')||'';const checkIn=params?.get('checkIn')||'';const checkOut=params?.get('checkOut')||'';const adults=params?.get('adults')||'2';const children=params?.get('children')||'0';const requestedRate=params?.get('ratePlanId')||'';const promoCode=params?.get('promoCode')||'';
+  const [room,setRoom]=useState<RoomType|null>(null);const [quote,setQuote]=useState<StayQuote|null>(null);const [bookedTerms,setBookedTerms]=useState<Booking['bookedStayTerms']>(null);const [held,setHeld]=useState<Booking|null>(null);const [bookingId,setBookingId]=useState(resumeId);const [reference,setReference]=useState('');const [loading,setLoading]=useState(true);const [loadError,setLoadError]=useState('');const [revision,setRevision]=useState(0);
+  const [providers,setProviders]=useState<Provider[]>([]);const [providerCode,setProviderCode]=useState('');const [providerError,setProviderError]=useState('');const [session,setSession]=useState<Session|null>(null);const [paymentError,setPaymentError]=useState('');const [busy,setBusy]=useState(false);const [confirming,setConfirming]=useState(false);const actionLock=useRef(false);const confirmationLock=useRef(false);const [accepted,setAccepted]=useState(false);
+  const [form,setForm]=useState({guestName:'',guestEmail:'',guestPhone:'',specialRequests:''});
+  const selectedProvider=providers.find(provider=>provider.code===providerCode);const stripe=useMemo(()=>session?.clientSecret&&selectedProvider?.code==='pp_stripe_stripe'&&selectedProvider.publicClientKey?loadStripe(selectedProvider.publicClientKey):null,[session?.clientSecret,selectedProvider]);
+  useEffect(()=>{let active=true;setLoading(true);setLoadError('');
+    async function load(){try{
+      if(resumeId){const data=await graphqlClient.request<{booking:Booking|null}>(GET_GUEST_BOOKING,{bookingId:resumeId});if(!data.booking)throw new Error('access');if(!active)return;setHeld(data.booking);setBookedTerms(data.booking.bookedStayTerms||null);setReference(data.booking.confirmationNumber);setRoom(data.booking.roomAssignments?.[0]?.roomType||null);setForm({guestName:data.booking.guestName,guestEmail:data.booking.guestEmail,guestPhone:data.booking.guestPhone||'',specialRequests:data.booking.specialRequests||''});}
+      else {const invalid=roomSearchValidationMessage(checkIn,checkOut,adults,children);if(invalid||!roomTypeId||!checkIn||!checkOut){if(active)setLoadError(invalid||'Choose a room and stay dates before reserving.');return;}
+        const data=await graphqlClient.request<{roomType:RoomType}>(GET_ROOM_TYPE,{id:roomTypeId});const plan=selectInitialPublicRatePlan(data.roomType?.ratePlans,requestedRate);if(!plan)throw new Error('rate');const priced=await graphqlClient.request<{storefrontQuote:StayQuote}>(GET_STOREFRONT_QUOTE,{roomTypeId,ratePlanId:plan.id,checkInDate:`${checkIn}T00:00:00Z`,checkOutDate:`${checkOut}T00:00:00Z`,numberOfAdults:Number(adults),numberOfChildren:Number(children),promoCode:promoCode.trim()||null});if(active){setRoom(data.roomType);setQuote(priced.storefrontQuote);}}
+      const methods=await graphqlClient.request<{bookingPaymentProviders:Provider[]}>(GET_BOOKING_PAYMENT_PROVIDERS);if(!active)return;const available=(methods.bookingPaymentProviders||[]).filter(provider=>provider.code==='pp_paypal_paypal'||(provider.code==='pp_stripe_stripe'&&provider.publicClientKey));setProviders(available);setProviderCode(current=>available.some(item=>item.code===current)?current:available[0]?.code||'');setProviderError(available.length?'':'Online payment is unavailable. Contact the property before reserving.');
+    }catch{if(active)setLoadError(resumeId?'This reservation cannot be opened in this guest session. Use secure lookup to restore access.':safeQuoteFailureMessage());}finally{if(active)setLoading(false);}}
+    void load();return()=>{active=false;};
+  },[resumeId,roomTypeId,requestedRate,checkIn,checkOut,adults,children,promoCode,revision]);
+  const keepReservation=(id:string)=>{setBookingId(id);const next=new URLSearchParams(window.location.search);next.set('bookingId',id);window.history.replaceState(null,'',`/book?${next}`);};
+  const startPayment=async(event:React.FormEvent)=>{event.preventDefault();if(actionLock.current||confirmationLock.current)return;if(!providerCode||(!bookingId&&!accepted))return;actionLock.current=true;setBusy(true);setPaymentError('');
+    let currentId=bookingId;
+    try{
+      if(!currentId){if(!quote)throw new Error('quote');
+        const bookingData={...form,guestName:form.guestName.trim(),guestEmail:form.guestEmail.trim(),guestPhone:form.guestPhone.trim(),checkInDate:`${checkIn}T00:00:00Z`,checkOutDate:`${checkOut}T00:00:00Z`,numberOfAdults:Number(adults),numberOfChildren:Number(children),roomTypeId,ratePlanId:quote.ratePlanId,quoteToken:quote.quoteToken,promoCode:promoCode.trim()||null};
+        const {quoteToken:_signedQuote,...attemptPayload}=bookingData;const attempt=await operationAttempt('guest-booking',attemptPayload);
+        const result=await graphqlClient.request<{createStorefrontBooking:Booking}>(CREATE_STOREFRONT_BOOKING,{data:{...bookingData,idempotencyKey:attempt.key}});
+        const created=result.createStorefrontBooking;currentId=created.id;keepReservation(currentId);setHeld(created);setBookedTerms(created.bookedStayTerms||null);setRoom(created.roomAssignments?.[0]?.roomType||room);setReference(created.confirmationNumber);
+      }
+      const origin=window.location.origin;const cancel=new URLSearchParams(window.location.search);cancel.set('bookingId',currentId);
+      const result=await graphqlClient.request<{initiateBookingPaymentSession:Session}>(INITIATE_BOOKING_PAYMENT_SESSION,{bookingId:currentId,paymentProviderCode:providerCode,returnUrl:`${origin}/${providerCode==='pp_paypal_paypal'?'paypal':'stripe'}/return?bookingId=${encodeURIComponent(currentId)}`,cancelUrl:`${origin}/book?${cancel}`});
+      const next=result.initiateBookingPaymentSession;if(!next?.id||!Number.isInteger(next.amount)||next.amount<0)throw new Error('session');if(providerCode==='pp_paypal_paypal'&&!next.approveLink||providerCode==='pp_stripe_stripe'&&!next.clientSecret)throw new Error('provider');setSession(next);
+    }catch{setPaymentError(currentId?'Payment could not be started for this reservation. It may have expired or its balance may have changed. Check reservation status before trying another payment.':'We could not complete this reservation request. Check the current rate and availability, then retry with the same details. If you already received a booking reference, use secure lookup.');}
+    finally{actionLock.current=false;setBusy(false);}
   };
+  const completePayment=async(providerPaymentId:string)=>{if(confirmationLock.current||!bookingId||!session)return;confirmationLock.current=true;setConfirming(true);setPaymentError('');try{
+    await graphqlClient.request(COMPLETE_BOOKING_PAYMENT,{bookingId,paymentSessionId:session.id,providerPaymentId});
+    // The destination reads authoritative reservation and financial status, including compensation.
+    router.push(`/booking/${encodeURIComponent(bookingId)}`);
+  }catch{setPaymentError('We could not verify the final reservation status. Payment may have been received. Open your reservation before attempting another payment.');}finally{confirmationLock.current=false;setConfirming(false);}};
+  if(loading)return <main className="lodging-container hotel-section" role="status">Preparing your stay details…</main>;
+  if(loadError)return <main className="lodging-container hotel-section"><div className="hotel-notice" role="alert"><p className="lodging-eyebrow">Your reservation</p><h1 className="lodging-title mt-3">Let’s check the details.</h1><p>{loadError}</p><div className="flex flex-wrap gap-5"><button className="lodging-button" onClick={()=>setRevision(value=>value+1)}>Try again</button><Link href={resumeId?'/bookings/lookup':`/rooms?${originalQuery}`} className="lodging-link">{resumeId?'Secure booking lookup':'Review rooms & dates'}</Link></div></div></main>;
+  const arrival=held?.checkInDate||checkIn;const departure=held?.checkOutDate||checkOut;const canPay=!held||held.status==='pending'||held.status==='confirmed';const displayedTerms=selectDisplayedStayPrice(bookingId,quote,bookedTerms);const paymentCurrency=displayedTerms?.currencyCode||held?.currencyCode||'USD';
+  return <main className="lodging-container pb-16"><nav aria-label="Booking steps" className="hotel-journey"><Link href={`/rooms/${room?.id||roomTypeId}?${originalQuery}`}>01 / Room & rate</Link><span aria-current="step">02 / Guest & payment</span><span>03 / Reservation status</span></nav><header className="hotel-page-head !pt-0"><p className="lodging-eyebrow">{bookingId?'Continue your reservation':'Direct reservations'}</p><h1 className="lodging-display">Your stay starts here.</h1><p>{bookingId?`Reservation ${reference||bookingId}. Review its current status before continuing payment.`:'Review the full stay price and rate terms, then enter the details of the lead guest.'}</p></header>
+  <div className="grid gap-10 pt-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(320px,1fr)]"><div className="min-w-0 space-y-8">{held&&<div className="hotel-status"><p className="lodging-eyebrow">{reservationPresentation(held.status).label}</p><p>{reservationPresentation(held.status).copy}</p><Link href={`/booking/${held.id}`} className="lodging-link">Open reservation & statement ↗</Link></div>}
+  {canPay&&<><form id="hotel-guest-form" onSubmit={startPayment} className="space-y-7"><fieldset disabled={Boolean(bookingId)||busy} className="space-y-5"><legend className="lodging-title mb-5">Guest details.</legend><div className="grid sm:grid-cols-2 gap-5">{[['guestName','Full name','text','name'],['guestEmail','Email address','email','email'],['guestPhone','Phone number','tel','tel']].map(([name,label,type,autoComplete])=><label key={name} className="hotel-field">{label}<input name={name} type={type} autoComplete={autoComplete} required maxLength={name==='guestName'?120:254} value={form[name as keyof typeof form]} onChange={event=>setForm(previous=>({...previous,[name]:event.target.value}))}/></label>)}</div><label className="hotel-field">Special requests (optional)<textarea className="lodging-textarea" rows={3} maxLength={2000} value={form.specialRequests} onChange={event=>setForm(previous=>({...previous,specialRequests:event.target.value}))}/></label><p className="text-xs">Requests are subject to the property’s confirmation. For requirements essential to your stay, <Link className="underline" href="/contact">contact the property</Link> before reserving.</p></fieldset>
+  {!bookingId&&<label className="flex items-start gap-3 text-sm border-y border-[var(--lodging-rule)] py-5"><input type="checkbox" required checked={accepted} onChange={event=>setAccepted(event.target.checked)} className="mt-1"/><span>I have reviewed the full stay price, payment amounts and cancellation terms for the selected rate. <Link href="/policies" target="_blank" className="underline">Booking policies (new tab)</Link></span></label>}
+  <fieldset disabled={busy||confirming||Boolean(session)}><legend className="lodging-title mb-5">Payment method.</legend>{providers.map(provider=><label className="flex items-center gap-3 border border-[var(--lodging-rule)] p-4 mb-3 text-sm" key={provider.id}><input type="radio" name="paymentProvider" checked={providerCode===provider.code} onChange={()=>{setProviderCode(provider.code);setPaymentError('');}}/>{provider.displayName||provider.name}</label>)}{providerError&&<div className="hotel-notice" role="alert"><p>{providerError}</p><Link className="lodging-link" href="/contact">Contact the property</Link></div>}</fieldset>
+  {!session&&<button className="lodging-button w-full" disabled={busy||!providerCode||(!bookingId&&!accepted)}>{busy?'Preparing secure payment…':bookingId?'Check current amount & continue':'Continue to secure payment →'}</button>}
+  </form>
+  {bookingId&&<div className="hotel-notice"><p className="text-sm">This reservation is subject to the latest availability and payment checks. A pending booking or an open payment form is not confirmation.</p><Link href={`/booking/${bookingId}`} className="lodging-link">Check reservation status ↗</Link></div>}
+  {session&&<section aria-label="Secure payment" className="border border-[var(--lodging-rule)] p-5 space-y-5"><div className="hotel-money-row total"><span>Payment amount</span><strong>{money(session.amount,paymentCurrency)}</strong></div><p className="text-xs">This amount is returned by the current payment session. Final reservation status appears after verification.</p>{session.approveLink?<a className="lodging-button w-full" href={session.approveLink}>Continue to PayPal →</a>:stripe&&session.clientSecret?<Elements stripe={stripe} options={{clientSecret:session.clientSecret}}><StripeCheckoutForm amount={session.amount/100} currencyCode={paymentCurrency} bookingId={bookingId} paymentSessionId={session.id} onSuccess={completePayment} onError={setPaymentError}/></Elements>:<p role="status">Preparing the secure payment form…</p>}{confirming&&<p role="status">Verifying payment and reservation status…</p>}</section>}
+  </>}
+  {paymentError&&<div role="alert" className="hotel-notice"><p>{paymentError}</p><div className="flex flex-wrap gap-5">{bookingId?<Link className="lodging-button" href={`/booking/${bookingId}`}>Review reservation status</Link>:<button className="lodging-link" onClick={()=>{setAccepted(false);setRevision(value=>value+1);}}>Refresh price & availability</button>}<Link className="lodging-link" href="/bookings/lookup">Find a reservation</Link></div></div>}
+  </div><aside className="min-w-0"><div className="border border-[var(--lodging-rule)] p-6 space-y-6">{room&&<><img src={primaryRoomImage(room)} alt={room.name} className="w-full aspect-[1.5] object-cover"/><h2 className="lodging-title">{room.name}</h2></>}<dl className="space-y-3 text-sm"><div className="flex justify-between gap-6"><dt>Arrival</dt><dd>{formatStayDate(arrival,{month:'short',day:'numeric',year:'numeric'})}</dd></div><div className="flex justify-between gap-6"><dt>Departure</dt><dd>{formatStayDate(departure,{month:'short',day:'numeric',year:'numeric'})}</dd></div><div className="flex justify-between gap-6"><dt>Guests in one room</dt><dd>{held?.numberOfGuests||Number(adults)+Number(children)}</dd></div></dl>{displayedTerms?<StayPrice quote={displayedTerms} paymentAmountMinor={session?.amount}/>:held&&<section aria-label="Recorded booking total"><div className="hotel-money-row"><span>Taxes included</span><span>{money(held.taxAmountMinor??Math.round((held.taxAmount||0)*100),paymentCurrency)}</span></div><div className="hotel-money-row"><span>Fees included</span><span>{money(held.feesAmountMinor??Math.round((held.feesAmount||0)*100),paymentCurrency)}</span></div><div className="hotel-money-row total"><span>Recorded stay total</span><span>{money(held.totalAmountMinor??Math.round((held.totalAmount||0)*100),paymentCurrency)}</span></div><p className="text-xs mt-4">The original rate breakdown is unavailable. These are persisted booking amounts, not a current quote. The current collectible amount is checked before payment; review your reservation for recorded rate terms and statement.</p></section>}<p className="text-xs border-t border-[var(--lodging-rule)] pt-5">Check-in from {identity.checkIn}; check-out by {identity.checkOut}, local property time.</p><Link href={`/rooms/${room?.id||roomTypeId}?${originalQuery}`} className="lodging-link">Review room details</Link></div></aside></div></main>;
 }
-
-interface PaymentProvider {
-  id: string;
-  name: string;
-  code: string;
-  displayName?: string | null;
-  publicClientKey?: string | null;
-}
-
-interface BookingPaymentProvidersResponse {
-  bookingPaymentProviders: PaymentProvider[];
-}
-
-interface BookingPaymentSessionResponse {
-  initiateBookingPaymentSession: {
-    id: string;
-    amount: number;
-    clientSecret?: string | null;
-    paymentIntentId?: string | null;
-    orderId?: string | null;
-    approveLink?: string | null;
-    paymentProvider?: PaymentProvider | null;
-  };
-}
-
-interface CompleteBookingPaymentResponse {
-  completeBookingPayment: {
-    id: string;
-    status: string;
-    providerPaymentId?: string | null;
-    paymentProvider?: PaymentProvider | null;
-  };
-}
-
-function BookContent() {
-  const identity = useHotelSettings();
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const { toast } = useToast();
-
-  const [roomType, setRoomType] = React.useState<RoomType | null>(null);
-  const [quote, setQuote] = React.useState<StorefrontQuote | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [isCreatingPayment, setIsCreatingPayment] = React.useState(false);
-  const [isConfirmingBooking, setIsConfirmingBooking] = React.useState(false);
-  const [clientSecret, setClientSecret] = React.useState<string | null>(null);
-  const [paymentError, setPaymentError] = React.useState<string | null>(null);
-  const [bookingId, setBookingId] = React.useState<string | null>(null);
-  const [confirmationNumber, setConfirmationNumber] = React.useState<string>('');
-  const [paymentSessionId, setPaymentSessionId] = React.useState<string | null>(null);
-  const [paymentProviders, setPaymentProviders] = React.useState<PaymentProvider[]>([]);
-  const [providersLoading, setProvidersLoading] = React.useState(true);
-  const [providerError, setProviderError] = React.useState<string | null>(null);
-  const [selectedPaymentProviderCode, setSelectedPaymentProviderCode] = React.useState<string>('');
-  const [paypalApproveLink, setPaypalApproveLink] = React.useState<string | null>(null);
-  const selectedProvider = paymentProviders.find((provider) => provider.code === selectedPaymentProviderCode);
-  const stripePromise = React.useMemo(
-    () => selectedProvider?.code === 'pp_stripe_stripe' && selectedProvider.publicClientKey
-      ? loadStripe(selectedProvider.publicClientKey)
-      : null,
-    [selectedProvider?.code, selectedProvider?.publicClientKey],
-  );
-
-  const roomTypeId = searchParams?.get('roomTypeId');
-  const requestedRatePlanId = searchParams?.get('ratePlanId');
-  const checkIn = searchParams?.get('checkIn');
-  const checkOut = searchParams?.get('checkOut');
-  const adults = searchParams?.get('adults');
-  const children = searchParams?.get('children');
-  const promoCode = searchParams?.get('promoCode');
-
-  const adultsCountRaw = parseInt(adults || '1', 10);
-  const childrenCountRaw = parseInt(children || '0', 10);
-  const adultsCount = Number.isFinite(adultsCountRaw) ? adultsCountRaw : 1;
-  const childrenCount = Number.isFinite(childrenCountRaw) ? childrenCountRaw : 0;
-  const totalGuests = adultsCount + childrenCount;
-  const nightsCount = quote?.nights || 0;
-  const roomRate = quote?.ratePerNight || 0;
-  const taxAmount = quote?.taxAmount || 0;
-  const totalAmount = quote?.totalAmount || 0;
-
-  const [formData, setFormData] = React.useState({
-    guestName: '',
-    guestEmail: '',
-    guestPhone: '',
-    specialRequests: '',
-  });
-
-  const [existingGuest, setExistingGuest] = React.useState<any>(null);
-
-  React.useEffect(() => {
-    const saved = localStorage.getItem('openfront_guest_context');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setFormData((prev) => ({
-          ...prev,
-          guestName: parsed.name || '',
-          guestEmail: parsed.email || '',
-          guestPhone: parsed.phone || '',
-        }));
-        setExistingGuest(parsed);
-      } catch (e) {
-        /* ignore */
-      }
-    }
-  }, []);
-
-  React.useEffect(() => {
-    const fetchRoomType = async () => {
-      if (!roomTypeId || !checkIn || !checkOut) {
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const roomData = await graphqlClient.request<RoomTypeResponse>(GET_ROOM_TYPE, { id: roomTypeId });
-        const ratePlanId = requestedRatePlanId || roomData.roomType.ratePlans?.[0]?.id;
-        if (!ratePlanId) throw new Error('No published rate plan is available for this room.');
-        const quoteData = await graphqlClient.request<{ storefrontQuote: StorefrontQuote }>(GET_STOREFRONT_QUOTE, {
-          roomTypeId,
-          ratePlanId,
-          checkInDate: new Date(checkIn).toISOString(),
-          checkOutDate: new Date(checkOut).toISOString(),
-          numberOfAdults: adultsCount,
-          numberOfChildren: childrenCount,
-          promoCode: promoCode || null,
-        });
-        setRoomType(roomData.roomType);
-        setQuote(quoteData.storefrontQuote);
-      } catch {
-        toast({ title: 'Unable to price stay', description: safeQuoteFailureMessage(), variant: 'destructive' });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchRoomType();
-  }, [roomTypeId, requestedRatePlanId, checkIn, checkOut, adultsCount, childrenCount, promoCode, toast]);
-
-  React.useEffect(() => {
-    const fetchPaymentProviders = async () => {
-      setProvidersLoading(true);
-      setProviderError(null);
-      try {
-        const data = await graphqlClient.request<BookingPaymentProvidersResponse>(GET_BOOKING_PAYMENT_PROVIDERS);
-        const configuredProviders = data.bookingPaymentProviders || [];
-        const providers = configuredProviders.filter((provider) =>
-          provider.code !== 'pp_stripe_stripe' || Boolean(provider.publicClientKey),
-        );
-        setPaymentProviders(providers);
-        setSelectedPaymentProviderCode((current) =>
-          providers.some((provider) => provider.code === current)
-            ? current
-            : providers[0]?.code || '',
-        );
-        if (configuredProviders.length === 0) {
-          setProviderError('Online payment is not configured for this property. Contact the front desk before booking.');
-        } else if (providers.length === 0) {
-          setProviderError('The configured payment method is unavailable in this browser build. Contact the front desk before booking.');
-        }
-      } catch {
-        setPaymentProviders([]);
-        setSelectedPaymentProviderCode('');
-        setProviderError('Payment methods could not be loaded. Retry this page or contact the front desk.');
-      } finally {
-        setProvidersLoading(false);
-      }
-    };
-
-    fetchPaymentProviders();
-  }, []);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handlePaymentSuccess = async (providerPaymentId: string, paymentSessionIdOverride?: string) => {
-    if (isConfirmingBooking) return;
-
-    setPaymentError(null);
-    setIsConfirmingBooking(true);
-
-    try {
-      if (!checkIn || !checkOut || !roomTypeId) {
-        throw new Error('Missing booking information. Please start over.');
-      }
-
-      const bookingData = {
-        guestName: formData.guestName,
-        guestEmail: formData.guestEmail,
-        guestPhone: formData.guestPhone,
-        checkInDate: new Date(checkIn).toISOString(),
-        checkOutDate: new Date(checkOut).toISOString(),
-        numberOfAdults: adultsCount,
-        numberOfChildren: childrenCount,
-        roomTypeId,
-        ratePlanId: quote?.ratePlanId,
-        quoteToken: quote?.quoteToken,
-        promoCode: promoCode || null,
-        specialRequests: formData.specialRequests || '',
-      };
-
-      let resolvedBookingId = bookingId;
-      let resolvedConfirmationNumber = confirmationNumber;
-
-      if (!resolvedBookingId) {
-        const response = await graphqlClient.request<CreateBookingResponse>(CREATE_STOREFRONT_BOOKING, { data: bookingData });
-        resolvedBookingId = response.createStorefrontBooking.id;
-        resolvedConfirmationNumber = response.createStorefrontBooking.confirmationNumber;
-        setBookingId(resolvedBookingId);
-        setConfirmationNumber(resolvedConfirmationNumber);
-      }
-
-      const resolvedPaymentSessionId = paymentSessionIdOverride || paymentSessionId;
-
-      if (!resolvedBookingId || !resolvedPaymentSessionId) {
-        throw new Error('Missing booking payment session. Please restart payment.');
-      }
-
-      await graphqlClient.request<CompleteBookingPaymentResponse>(COMPLETE_BOOKING_PAYMENT, {
-        bookingId: resolvedBookingId,
-        paymentSessionId: resolvedPaymentSessionId,
-        providerPaymentId,
-      });
-
-      localStorage.setItem(
-        'openfront_guest_context',
-        JSON.stringify({
-          id: existingGuest?.id,
-          name: formData.guestName,
-          email: formData.guestEmail,
-          phone: formData.guestPhone,
-          lastBookingId: resolvedBookingId,
-        }),
-      );
-
-      toast({
-        title: 'Booking confirmed',
-        description: `Confirmation ${resolvedConfirmationNumber || 'is ready in your reservation details'}`,
-      });
-
-      router.push(`/booking/${resolvedBookingId}`);
-    } catch {
-      const message = 'Unable to confirm the booking. No additional charge was attempted; review the stay and payment details, then try again.';
-      setPaymentError(message);
-      toast({ title: 'Booking failed', description: message, variant: 'destructive' });
-    } finally {
-      setIsConfirmingBooking(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.guestName || !formData.guestEmail || !formData.guestPhone) {
-      toast({ title: 'Missing information', description: 'Please fill in all required fields.', variant: 'destructive' });
-      return;
-    }
-
-    if (!checkIn || !checkOut || !roomTypeId) {
-      toast({ title: 'Invalid booking', description: 'Missing booking information. Please start over.', variant: 'destructive' });
-      return;
-    }
-
-    if (!selectedPaymentProviderCode) {
-      const message = providerError || 'No payment provider is currently available. Contact the front desk before booking.';
-      setPaymentError(message);
-      toast({ title: 'Payment provider unavailable', description: message, variant: 'destructive' });
-      return;
-    }
-
-    if (totalAmount <= 0) {
-      toast({ title: 'Invalid amount', description: 'Total amount must be greater than zero.', variant: 'destructive' });
-      return;
-    }
-
-    setIsCreatingPayment(true);
-    setPaymentError(null);
-    setPaypalApproveLink(null);
-
-    try {
-      const bookingData = {
-        guestName: formData.guestName,
-        guestEmail: formData.guestEmail,
-        guestPhone: formData.guestPhone,
-        checkInDate: new Date(checkIn).toISOString(),
-        checkOutDate: new Date(checkOut).toISOString(),
-        numberOfAdults: adultsCount,
-        numberOfChildren: childrenCount,
-        roomTypeId,
-        ratePlanId: quote?.ratePlanId,
-        quoteToken: quote?.quoteToken,
-        promoCode: promoCode || null,
-        specialRequests: formData.specialRequests || '',
-      };
-
-      let resolvedBookingId = bookingId;
-      if (!resolvedBookingId) {
-        const response = await graphqlClient.request<CreateBookingResponse>(CREATE_STOREFRONT_BOOKING, { data: bookingData });
-        resolvedBookingId = response.createStorefrontBooking.id;
-        setBookingId(resolvedBookingId);
-        setConfirmationNumber(response.createStorefrontBooking.confirmationNumber);
-      }
-
-      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-      const cancelParams = new URLSearchParams({
-        roomTypeId,
-        ratePlanId: quote?.ratePlanId || '',
-        checkIn,
-        checkOut,
-        adults: String(adultsCount),
-        children: String(childrenCount),
-      });
-      if (promoCode) cancelParams.set('promoCode', promoCode);
-      const baseCancelUrl = `${origin}/book?${cancelParams.toString()}`;
-      const returnPath = selectedPaymentProviderCode === 'pp_paypal_paypal'
-        ? '/paypal/return'
-        : '/stripe/return';
-      const returnParams = new URLSearchParams({ bookingId: resolvedBookingId });
-      const sessionResponse = await graphqlClient.request<BookingPaymentSessionResponse>(INITIATE_BOOKING_PAYMENT_SESSION, {
-        bookingId: resolvedBookingId,
-        paymentProviderCode: selectedPaymentProviderCode,
-        returnUrl: `${origin}${returnPath}?${returnParams.toString()}`,
-        cancelUrl: baseCancelUrl,
-      });
-
-      const session = sessionResponse.initiateBookingPaymentSession;
-      setPaymentSessionId(session.id);
-
-      if (selectedPaymentProviderCode === 'pp_paypal_paypal') {
-        const approveLink = session.approveLink;
-        if (!approveLink) throw new Error('PayPal approval link was not returned.');
-        const url = new URL(approveLink);
-        url.searchParams.set('bookingId', resolvedBookingId);
-        url.searchParams.set('paymentSessionId', session.id);
-        setPaypalApproveLink(url.toString());
-      } else {
-        const nextClientSecret = session.clientSecret;
-        if (!nextClientSecret) throw new Error('Stripe client secret was not returned.');
-        setClientSecret(nextClientSecret);
-      }
-    } catch {
-      const message = 'The selected secure payment method could not start. No payment was confirmed; choose another available method or contact the front desk.';
-      setPaymentError(message);
-      toast({ title: 'Payment failed', description: message, variant: 'destructive' });
-    } finally {
-      setIsCreatingPayment(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <main className="lodging-page flex min-h-screen items-center justify-center">
-        <Loader2 className="h-7 w-7 animate-spin text-[var(--lodging-accent-deep)]" />
-      </main>
-    );
-  }
-
-  if (!roomType || !checkIn || !checkOut) {
-    return (
-      <main className="lodging-page min-h-screen">
-        <div className="lodging-container max-w-xl py-24 text-center">
-          <p className="lodging-eyebrow mb-4 text-[var(--lodging-accent-deep)]">Booking</p>
-          <h1 className="lodging-headline mb-4">Incomplete details</h1>
-          <p className="lodging-lead mx-auto mb-10 max-w-md">
-            We couldn&rsquo;t find the room or dates for this reservation. Please start your search again.
-          </p>
-          <Link href="/rooms" className="lodging-button">Browse available rooms</Link>
-        </div>
-      </main>
-    );
-  }
-
-  return (
-    <main className="lodging-page min-h-screen">
-      <div className="lodging-container max-w-5xl py-12 md:py-16">
-        <Link href={`/rooms/${roomTypeId}`} className="lodging-link inline-flex items-center gap-2">
-          <ArrowLeft className="h-4 w-4" /> Back to room details
-        </Link>
-
-        <header className="mt-8 border-b border-[var(--lodging-rule)] pb-8">
-          <p className="lodging-eyebrow mb-3 text-[var(--lodging-accent-deep)]">Direct booking</p>
-          <h1 className="lodging-display">Confirm your stay.</h1>
-          <p className="lodging-lead mt-5 max-w-xl">
-            {existingGuest
-              ? `Welcome back, ${existingGuest.name.split(' ')[0]}. We've pre-filled your details from a previous visit—confirm they are still correct.`
-              : 'Reserve directly with the property. Your details and payment stay between you and the front desk.'}
-          </p>
-        </header>
-
-        <div className="mt-10 grid gap-10 lg:grid-cols-[1.4fr_1fr] lg:items-start">
-          {/* Guest + payment form */}
-          <form onSubmit={handleSubmit} className="min-w-0 space-y-10">
-            <section className="space-y-6">
-              <h2 className="lodging-title text-[clamp(1.5rem,2.5vw,2rem)]">Guest information</h2>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label htmlFor="guestName" className="lodging-label">Full name</label>
-                  <input
-                    id="guestName"
-                    name="guestName"
-                    value={formData.guestName}
-                    onChange={handleInputChange}
-                    placeholder="Jordan Avery"
-                    required
-                    className="lodging-input"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="guestEmail" className="lodging-label">Email</label>
-                  <input
-                    id="guestEmail"
-                    name="guestEmail"
-                    type="email"
-                    value={formData.guestEmail}
-                    onChange={handleInputChange}
-                    placeholder="you@example.com"
-                    required
-                    className="lodging-input"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="guestPhone" className="lodging-label">Phone</label>
-                  <input
-                    id="guestPhone"
-                    name="guestPhone"
-                    type="tel"
-                    value={formData.guestPhone}
-                    onChange={handleInputChange}
-                    placeholder="+1 (555) 123-4567"
-                    required
-                    className="lodging-input"
-                  />
-                </div>
-                <fieldset className="space-y-2" aria-describedby="payment-provider-state">
-                  <legend className="lodging-label">Payment method</legend>
-                  {providersLoading ? (
-                    <p id="payment-provider-state" role="status" className="text-sm text-[var(--lodging-ink-muted)]">Loading secure payment methods…</p>
-                  ) : paymentProviders.length > 0 ? (
-                    <div className="grid gap-2" id="payment-provider-state">
-                      {paymentProviders.map((provider) => (
-                        <label key={provider.id} className="flex cursor-pointer items-center gap-3 border border-[var(--lodging-rule)] p-3 text-sm text-[var(--lodging-ink)]">
-                          <input
-                            type="radio"
-                            name="paymentProvider"
-                            value={provider.code}
-                            checked={selectedPaymentProviderCode === provider.code}
-                            onChange={(event) => {
-                              setSelectedPaymentProviderCode(event.target.value);
-                              setClientSecret(null);
-                              setPaypalApproveLink(null);
-                              setPaymentError(null);
-                            }}
-                          />
-                          <span>{provider.displayName || provider.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <div id="payment-provider-state" role="alert" className="border-l-2 border-[var(--lodging-danger)] pl-4 text-sm leading-6 text-[var(--lodging-danger)]">
-                      <p>{providerError || 'No online payment method is available.'}</p>
-                      <Link href="/contact" className="lodging-link mt-2 inline-flex">Contact the front desk</Link>
-                    </div>
-                  )}
-                </fieldset>
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="specialRequests" className="lodging-label">Special requests (optional)</label>
-                <textarea
-                  id="specialRequests"
-                  name="specialRequests"
-                  value={formData.specialRequests}
-                  onChange={handleInputChange}
-                  placeholder="Early check-in, high floor, extra pillows..."
-                  rows={3}
-                  className="lodging-textarea"
-                />
-              </div>
-            </section>
-
-            <div className="lodging-divider" />
-
-            <section className="space-y-6">
-              <div>
-                <h2 className="lodging-title text-[clamp(1.5rem,2.5vw,2rem)]">Payment</h2>
-                <p className="lodging-lead mt-2 text-base">
-                  {clientSecret
-                    ? 'Your reservation is held while you complete this secure payment.'
-                    : 'Continue to start a secure payment session with your selected provider.'}
-                </p>
-              </div>
-
-              <button
-                type="submit"
-                className="lodging-button w-full disabled:opacity-60"
-                disabled={providersLoading || !selectedPaymentProviderCode || !!providerError || isCreatingPayment || !!clientSecret || !!paypalApproveLink}
-              >
-                {isCreatingPayment ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Initializing secure payment...
-                  </>
-                ) : (
-                  <>
-                    <CreditCard className="h-4 w-4" /> {clientSecret ? 'Payment ready' : 'Continue to secure payment'}
-                  </>
-                )}
-              </button>
-
-              {paymentError ? (
-                <p role="alert" aria-live="polite" className="border-l-2 border-[var(--lodging-danger)] pl-4 text-sm leading-6 text-[var(--lodging-danger)]">
-                  {paymentError}
-                </p>
-              ) : null}
-
-              {paypalApproveLink ? (
-                <div className="space-y-5 border-l border-[var(--lodging-rule-strong)] pl-6">
-                  <div>
-                    <p className="lodging-eyebrow mb-2 text-[var(--lodging-accent-deep)]">PayPal</p>
-                    <p className="text-sm leading-6 text-[var(--lodging-ink-muted)]">
-                      Approve the charge with PayPal, then return here to complete the reservation.
-                    </p>
-                  </div>
-                  <a href={paypalApproveLink} target="_blank" rel="noopener noreferrer" className="lodging-button inline-flex">
-                    Continue to PayPal
-                  </a>
-                </div>
-              ) : null}
-
-              {clientSecret && stripePromise ? (
-                <div className="lodging-surface space-y-5 p-6">
-                  <Elements stripe={stripePromise} options={{ clientSecret }}>
-                    <StripeCheckoutForm
-                      amount={totalAmount}
-                      bookingId={bookingId!}
-                      paymentSessionId={paymentSessionId!}
-                      onSuccess={(stripePaymentId) => handlePaymentSuccess(stripePaymentId)}
-                      onError={(error) => {
-                        setPaymentError(error);
-                        toast({ title: 'Payment failed', description: error, variant: 'destructive' });
-                      }}
-                    />
-                  </Elements>
-                </div>
-              ) : null}
-            </section>
-          </form>
-
-          {/* Stay summary */}
-          <aside className="lg:sticky lg:top-24">
-            <div className="lodging-surface space-y-6 p-6 md:p-8">
-              <p className="lodging-eyebrow text-[var(--lodging-accent-deep)]">Stay summary</p>
-              <div className="aspect-[4/3] overflow-hidden bg-[var(--lodging-paper-3)]">
-                <img
-                  src={primaryRoomImage(roomType)}
-                  alt={roomType.roomImages?.[0]?.altText || `${roomType.name} room`}
-                  className="lodging-image h-full w-full"
-                />
-              </div>
-              <h3 className="lodging-title text-[clamp(1.5rem,2.5vw,2rem)]">{roomType.name}</h3>
-
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-[var(--lodging-ink-faint)]">Check-in</span>
-                  <span className="text-[var(--lodging-ink)]">{format(parseISO(checkIn), 'MMM dd, yyyy')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[var(--lodging-ink-faint)]">Check-out</span>
-                  <span className="text-[var(--lodging-ink)]">{format(parseISO(checkOut), 'MMM dd, yyyy')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[var(--lodging-ink-faint)]">Duration</span>
-                  <span className="text-[var(--lodging-ink)]">{nightsCount} {nightsCount === 1 ? 'night' : 'nights'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[var(--lodging-ink-faint)]">Guests</span>
-                  <span className="text-[var(--lodging-ink)]">
-                    {totalGuests} ({adultsCount} {adultsCount === 1 ? 'adult' : 'adults'}
-                    {childrenCount > 0 ? `, ${childrenCount} ${childrenCount === 1 ? 'child' : 'children'}` : ''})
-                  </span>
-                </div>
-              </div>
-
-              <div className="lodging-divider" />
-
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between text-[var(--lodging-ink-muted)]">
-                  <span>Room rate</span>
-                  <span>${roomRate.toFixed(2)} × {nightsCount}</span>
-                </div>
-                <div className="flex justify-between text-[var(--lodging-ink-muted)]">
-                  <span>Subtotal</span>
-                  <span>${(roomRate * nightsCount).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-[var(--lodging-ink-muted)]">
-                  <span>Taxes</span>
-                  <span>${taxAmount.toFixed(2)}</span>
-                </div>
-                <div className="lodging-divider" />
-                <div className="flex items-baseline justify-between">
-                  <span className="lodging-serif text-xl text-[var(--lodging-ink)]">Total</span>
-                  <span className="lodging-serif text-[clamp(1.5rem,2.5vw,2rem)] text-[var(--lodging-ink)]">${totalAmount.toFixed(2)}</span>
-                </div>
-              </div>
-
-              {quote?.feesAmount ? <div className="flex justify-between text-sm text-[var(--lodging-ink-muted)]"><span>Fees</span><span>${quote.feesAmount.toFixed(2)}</span></div> : null}
-              <p className="border-l-2 border-[var(--lodging-accent)] pl-4 text-xs leading-5 text-[var(--lodging-ink-faint)]">
-                Prices include the taxes and service charges shown above. After settlement, confirmation delivery is queued with durable retry evidence and the reservation is always available through secure lookup.
-                Check-in from {identity.checkIn}, check-out by {identity.checkOut}.
-              </p>
-              {quote?.cancellationPolicy ? <p className="text-xs leading-5 text-[var(--lodging-ink-faint)]">Booked cancellation policy: {quote.cancellationPolicy.replaceAll('_', ' ')}.</p> : null}
-            </div>
-          </aside>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-export default function BookPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="lodging-page flex min-h-screen items-center justify-center">
-          <Loader2 className="h-7 w-7 animate-spin text-[var(--lodging-accent-deep)]" />
-        </main>
-      }
-    >
-      <BookContent />
-    </Suspense>
-  );
-}
+export default function BookPage(){return <Suspense fallback={<main className="lodging-container hotel-section" role="status">Preparing your booking…</main>}><BookContent/></Suspense>}

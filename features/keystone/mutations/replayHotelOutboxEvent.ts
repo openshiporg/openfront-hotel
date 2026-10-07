@@ -1,5 +1,5 @@
 import { permissions } from '../access';
-import { replayHotelDeadLetter } from '../lib/hotelOutbox';
+import { replayHotelDeadLetter } from '../communications/outbox';
 import {
   HOTEL_PROPERTY_KEY,
   hashLifecycleRequest,
@@ -9,7 +9,7 @@ import {
 
 export default async function replayHotelOutboxEvent(
   _root: unknown,
-  { eventId, idempotencyKey }: { eventId: string; idempotencyKey: string },
+  { eventId, idempotencyKey, acknowledgeUnknownDelivery = false }: { eventId: string; idempotencyKey: string; acknowledgeUnknownDelivery?: boolean | null },
   context: any,
 ) {
   if (!permissions.canManageIntegrations({ session: context.session })) {
@@ -22,7 +22,7 @@ export default async function replayHotelOutboxEvent(
     const prisma = transactionContext.prisma;
     await lockHotelLifecycle(prisma, `hotel-outbox-replay:${key}`);
     const auditEventKey = `hotel-outbox-replay:${key}`;
-    const request = { eventId, idempotencyKey: key };
+    const request = { eventId, idempotencyKey: key, acknowledgeUnknownDelivery: acknowledgeUnknownDelivery === true };
     const existingAudit = await prisma.hotelAuditEvent.findUnique({ where: { eventKey: auditEventKey } });
     if (existingAudit && existingAudit.requestHash !== hashLifecycleRequest(request)) {
       throw new Error('Outbox replay key is already bound to different evidence.');
@@ -31,6 +31,7 @@ export default async function replayHotelOutboxEvent(
       propertyKey: HOTEL_PROPERTY_KEY,
       eventId,
       idempotencyKey: key,
+      acknowledgeUnknownDelivery: acknowledgeUnknownDelivery === true,
     });
     if (!existingAudit) {
       await recordHotelLifecycleEvent({
@@ -49,6 +50,7 @@ export default async function replayHotelOutboxEvent(
           replayEventKey: result.event.eventKey,
           replayed: result.replayed,
         },
+        metadata: { acknowledgeUnknownDelivery: acknowledgeUnknownDelivery === true },
       });
     }
     return {

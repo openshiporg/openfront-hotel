@@ -39,7 +39,7 @@ export async function getList(listKey: string) {
       fields // Return fields as a record
     }
   } catch (error) {
-    console.error('Error in getList:', error)
+    console.error('Error resolving dashboard list metadata')
     return null
   }
 }

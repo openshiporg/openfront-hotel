@@ -1,3 +1,21 @@
+import { safeGraphQLError, safeGraphQLLog } from './safeGraphQLError';
+import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
+
+const boundedGraphqlFetch = createBoundedGraphqlFetch(30_000);
+
+export function createDashboardGraphQLClient(
+  endpoint: string,
+  headers: Record<string, string>,
+  timeoutMs = 30_000,
+  fetcher: typeof fetch = fetch,
+): GraphQLClient {
+  return new GraphQLClient(endpoint, {
+    credentials: 'include',
+    headers,
+    fetch: createBoundedGraphqlFetch(timeoutMs, fetcher),
+  });
+}
+
 /**
  * GraphQL utilities for data fetching with SWR
  */
@@ -17,78 +35,23 @@ export type KeystoneResponse<T = any> =
 async function createGraphQLClient(): Promise<GraphQLClient> {
   const endpoint = await getGraphQLEndpoint();
   const authHeaders = await getAuthHeaders();
-  return new GraphQLClient(endpoint, {
-    credentials: 'include',
-    headers: authHeaders || {},
-  });
+  return createDashboardGraphQLClient(endpoint, authHeaders || {}, 30_000);
 }
 
 /**
  * Format GraphQL error messages in a more readable way
  */
-function formatGraphQLErrors(error: ClientError): { message: string; errors?: any[] } {
-  if (!error.response) {
-    return { message: error.message };
-  }
-
-  const errors = error.response.errors;
-  if (!errors) {
-    return { message: error.message };
-  }
-
-  // Extract detailed error information
-  const formattedErrors = errors.map(err => {
-    const extensions = err.extensions || {};
-    const path = err.path?.join('.') || '';
-    const code = extensions.code || '';
-    
-    // Get original error if available
-    const originalError = (extensions.originalError as any)?.message || (extensions.exception as any)?.message || '';
-    
-    // Include validation errors if present
-    const validation = extensions.validation || {};
-    const validationErrors = Object.entries(validation)
-      .map(([field, error]) => `${field}: ${error}`)
-      .join(', ');
-
-    // Build detailed error message
-    const details = [
-      originalError && `Original Error: ${originalError}`,
-      path && `Path: ${path}`,
-      code && `Code: ${code}`,
-      validationErrors && `Validation: ${validationErrors}`
-    ].filter(Boolean).join(' | ');
-
-    return {
-      message: err.message,
-      details: details || undefined
-    };
-  });
-
-  // Create a detailed error message
-  const message = formattedErrors
-    .map(err => `${err.message}${err.details ? ` (${err.details})` : ''}`)
-    .join('\n');
-
-  return { 
-    message,
-    errors: errors 
-  };
-}
 
 /**
  * Fetch data from the GraphQL API
  * Automatically handles file uploads by detecting File/Blob objects in variables
  * @param query GraphQL query or mutation
  * @param variables Variables for the query
- * @param cacheOptions Optional cache configuration for the fetch request
  * @returns Structured response with success/error information
  */
 export async function keystoneClient<T = any>(
   query: string,
   variables: Record<string, unknown> = {},
-  // Allow passing standard RequestInit options, including 'cache'
-  requestOptions?: RequestInit
 ): Promise<KeystoneResponse<T>> {
   try {
     // Check if we have any file uploads in the variables
@@ -111,10 +74,10 @@ export async function keystoneClient<T = any>(
     };
 
   } catch (error) {
-    console.error("Error fetching GraphQL data:", error);
+    console.error("GraphQL request failed:", safeGraphQLLog(error));
 
     if (error instanceof ClientError) {
-      const { message, errors } = formatGraphQLErrors(error);
+      const { message, errors } = safeGraphQLError(error);
       return {
         success: false,
         error: message,
@@ -124,7 +87,7 @@ export async function keystoneClient<T = any>(
 
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      error: safeGraphQLError(error).message
     };
   }
 }
@@ -179,7 +142,7 @@ async function _fetchGraphQLWithFiles(
     }
 
     // Send the multipart request
-    const response = await fetch(endpoint, {
+    const response = await boundedGraphqlFetch(endpoint, {
       method: "POST",
       headers,
       credentials: "include",
@@ -187,22 +150,20 @@ async function _fetchGraphQLWithFiles(
     });
 
     if (!response.ok) {
+      console.error('GraphQL upload request failed:', { status: response.status, errorCount: 0 });
       return {
         success: false,
-        error: `GraphQL request failed: ${response.statusText}`
+        error: 'Request could not be completed. Check the affected record and operation status before taking further action, or contact the property administrator.'
       };
     }
 
     const json = await response.json();
 
     if (json.errors) {
-      console.error("GraphQL Errors:", json.errors);
-      return {
-        success: false,
-        error: `GraphQL Error: ${json.errors
-          .map((e: { message: string }) => e.message)
-          .join(", ")}`
-      };
+      const failure = { response: { status: response.status, errors: json.errors } };
+      console.error('GraphQL upload request failed:', safeGraphQLLog(failure));
+      const safe = safeGraphQLError(failure);
+      return { success: false, error: safe.message, errors: safe.errors };
     }
 
     return {
@@ -210,10 +171,10 @@ async function _fetchGraphQLWithFiles(
       data: json.data
     };
   } catch (error) {
-    console.error("Error uploading files:", error);
+    console.error("GraphQL upload request failed:", safeGraphQLLog(error));
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      error: safeGraphQLError(error).message
     };
   }
 }

@@ -15,7 +15,7 @@ import { requiredRelationshipDb } from './requiredRelationship'
 export const GuestDocument = list({
   access: {
     operation: {
-      query: permissions.canManageGuests,
+      query: permissions.canManageGuestPrivacy,
       create: () => false,
       update: () => false,
       delete: () => false,

@@ -6,14 +6,8 @@
 'use server'
 
 import { keystoneClient } from '../lib/keystoneClient'
+import { safeGraphQLError, safeGraphQLLog } from '../lib/safeGraphQLError'
 import { getFieldTypeFromViewsIndex } from '../views/getFieldTypeFromViewsIndex'
-
-interface CacheOptions {
-  next?: {
-    tags?: string[]
-    revalidate?: number
-  }
-}
 
 // Server-side GraphQL selections for different field types
 // This duplicates the client-side selections but is necessary for server actions
@@ -59,7 +53,7 @@ function getFieldGraphQLSelection(field: any): string {
         return selectionFn(field.path, field.fieldMeta)
       }
     } catch (error) {
-      console.warn(`Could not get field type for viewsIndex ${field.viewsIndex}:`, error)
+      console.warn(`Could not get field type for viewsIndex ${field.viewsIndex}`)
     }
   }
   
@@ -70,8 +64,7 @@ function getFieldGraphQLSelection(field: any): string {
 export async function getItemAction(
   list: any,
   itemId: string,
-  options: any = {},
-  cacheOptions?: CacheOptions
+  options: any = {}
 ): Promise<{ success: true; data: any } | { success: false; error: string; errors?: any }> {
   try {
     // Build GraphQL selection for item fields - only non-hidden fields
@@ -110,14 +103,15 @@ export async function getItemAction(
     const response = await keystoneClient(query, {
       id: itemId,
       listKey: list.key
-    }, cacheOptions)
+    })
 
     if (!response.success) {
-      console.error('GraphQL errors:', response.error)
+      const safe = safeGraphQLError({ response: { errors: response.errors } })
+      console.error('GraphQL item request failed:', safeGraphQLLog(response.error))
       return {
         success: false,
-        error: response.error,
-        errors: response.errors
+        error: safe.message,
+        errors: safe.errors
       }
     }
 
@@ -126,10 +120,10 @@ export async function getItemAction(
       data: response.data
     }
   } catch (error) {
-    console.error('Error in getItemAction:', error)
+    console.error('Error in getItemAction:', safeGraphQLLog(error))
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: safeGraphQLError(error).message
     }
   }
 }

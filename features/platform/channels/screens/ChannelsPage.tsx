@@ -1,6 +1,8 @@
 'use client';
+import { formatStayDate } from '@/lib/hotelCalendarDate';
 
 import React from 'react';
+import { ChannelDraftForm } from '../components/ChannelDraftForm';
 import { DownloadCloud, RefreshCw, Send, ShieldCheck, TriangleAlert } from 'lucide-react';
 
 import { PageContainer } from '@/features/dashboard/components/PageContainer';
@@ -200,6 +202,7 @@ export function ChannelsPage() {
     <PageContainer title="Channels" header={header} breadcrumbs={breadcrumbs}>
       <div className="space-y-6 p-4 md:p-6">
         <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">This release does not bundle or claim a maintained/certified Booking.com, Expedia, Airbnb, Mews, or Cloudbeds adapter. Keep channels disabled for the supported initial launch. The custom bridge is an experimental P2 extension boundary and does not ship rate push.</div>
+        <ChannelDraftForm onSaved={fetchChannels} />
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardContent className="pt-6">
@@ -262,7 +265,7 @@ export function ChannelsPage() {
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Retry failures
               </Button>
-              <Button size="sm" disabled>Configuration is P2</Button>
+
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -290,7 +293,8 @@ export function ChannelsPage() {
                       </div>
                       {latestError && (
                         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                          {latestError}
+                          <p>{latestError}</p>
+                          <p className="mt-1 text-xs">Sync event reference: {lastEvent?.id || channel.id}</p>
                         </div>
                       )}
                       {lastEvent && (
@@ -337,7 +341,7 @@ export function ChannelsPage() {
                               {reservation.externalId} {reservation.reservation?.confirmationNumber ? `• ${reservation.reservation.confirmationNumber}` : ''}
                             </p>
                             <p className="text-muted-foreground">
-                              {new Date(reservation.checkInDate).toLocaleDateString()} - {new Date(reservation.checkOutDate).toLocaleDateString()}
+                              {formatStayDate(reservation.checkInDate, { month: "short", day: "numeric", year: "numeric" })} - {formatStayDate(reservation.checkOutDate, { month: "short", day: "numeric", year: "numeric" })}
                               {reservation.roomType?.name ? ` • ${reservation.roomType.name}` : ''}
                             </p>
                             <p className="text-muted-foreground">

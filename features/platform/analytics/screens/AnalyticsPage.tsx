@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-import { ExecutiveDashboard, type OperationalReport } from '@/features/dashboard/analytics/ExecutiveDashboard';
+import { ExecutiveDashboard, type OperationalReport } from '@/features/platform/analytics/components/ExecutiveDashboard';
 import { PageContainer } from '@/features/dashboard/components/PageContainer';
 import { useToast } from '@/components/ui/use-toast';
 import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';

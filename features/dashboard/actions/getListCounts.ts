@@ -6,6 +6,7 @@
 'use server'
 
 import { keystoneClient } from '../lib/keystoneClient'
+import { safeGraphQLError, safeGraphQLLog } from '../lib/safeGraphQLError'
 
 export async function getListCounts(
   lists: Array<{
@@ -32,24 +33,11 @@ export async function getListCounts(
 
     const query = `query GetListCounts { ${countQueries.join('\n')} }`
     
-    const response = await keystoneClient(
-      query,
-      {},
-      {
-        next: {
-          revalidate: 60, // Cache for 1 minute since counts change frequently
-          tags: ['list-counts'],
-        },
-      }
-    )
+    const response = await keystoneClient(query)
 
     return response
   } catch (error: unknown) {
-    console.error('Error fetching list counts:', error)
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : 'Unknown error fetching list counts'
-    return { success: false, error: errorMessage }
+    console.error('Error fetching list counts:', safeGraphQLLog(error))
+    return { success: false, error: safeGraphQLError(error).message }
   }
 }

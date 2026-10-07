@@ -1,6 +1,6 @@
 import { permissions } from '../access';
-import { postOperatorFolioEntry } from '../lib/folioPosting';
-import type { FolioEntryType } from '../lib/folioLedger';
+import { postOperatorFolioEntry } from '../folios/commands';
+import type { FolioEntryType } from '../folios/ledger';
 
 export default async function postFolioEntry(
   root: unknown,
@@ -13,6 +13,7 @@ export default async function postFolioEntry(
     currencyCode,
     description,
     serviceDate,
+    approvalId,
   }: {
     bookingId: string;
     postingKey: string;
@@ -22,6 +23,7 @@ export default async function postFolioEntry(
     currencyCode: string;
     description: string;
     serviceDate?: string | Date | null;
+    approvalId?: string | null;
   },
   context: any
 ) {
@@ -38,5 +40,6 @@ export default async function postFolioEntry(
     currencyCode,
     description,
     serviceDate,
+    approvalId,
   });
 }

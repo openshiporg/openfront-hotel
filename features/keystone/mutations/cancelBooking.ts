@@ -1,6 +1,6 @@
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
-import { requestBookingCancellation } from '../lib/bookingCancellation';
+import { requestBookingCancellation } from '../bookings/cancellation';
 import { permissions } from '../access';
 
 type CancelBookingInput = {

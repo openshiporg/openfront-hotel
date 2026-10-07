@@ -1,464 +1,50 @@
 'use client';
-
-import * as React from 'react';
-import { Suspense } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useSearchParams,useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { ArrowLeft, Loader2, SlidersHorizontal, X } from 'lucide-react';
-import { format, differenceInDays, parseISO } from 'date-fns';
-import { DateRange } from 'react-day-picker';
-
 import { graphqlClient } from '@/lib/graphql-client';
-import { GET_ROOM_TYPES, GET_AVAILABLE_ROOMS } from '@/lib/queries';
-import { RoomType } from '@/lib/types';
-import { Button } from '@/components/ui/button';
+import { GET_ROOM_TYPES,GET_AVAILABLE_ROOMS,GET_STOREFRONT_QUOTE } from '@/lib/queries';
+import type { RoomType } from '@/lib/types';
+import type { StayQuote } from '../lib/quote';
+import { AMENITY_LABELS,BED_CONFIG_LABELS } from '@/lib/hotel-storefront';
 import { RoomCard } from '@/components/booking/RoomCard';
 import { SearchWidget } from '@/components/booking/SearchWidget';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Slider } from '@/components/ui/slider';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet';
-import { Badge } from '@/components/ui/badge';
-
-interface RoomTypesResponse {
-  roomTypes: RoomType[];
-}
-
-interface AvailableRoomType extends RoomType {
-  availableCount: number;
-}
-
-interface AvailableRoomsResponse {
-  roomTypes: AvailableRoomType[];
-}
-
-const AMENITY_OPTIONS = [
-  { value: 'wifi', label: 'WiFi' },
-  { value: 'tv', label: 'TV' },
-  { value: 'minibar', label: 'Minibar' },
-  { value: 'balcony', label: 'Balcony' },
-  { value: 'ac', label: 'Air Conditioning' },
-  { value: 'bathtub', label: 'Bathtub' },
-  { value: 'ocean_view', label: 'Ocean View' },
-  { value: 'city_view', label: 'City View' },
-  { value: 'jacuzzi', label: 'Jacuzzi' },
-  { value: 'kitchenette', label: 'Kitchenette' },
-] as const;
-
-const SORT_OPTIONS = [
-  { value: 'price_asc', label: 'Price: Low to High' },
-  { value: 'price_desc', label: 'Price: High to Low' },
-  { value: 'occupancy_asc', label: 'Occupancy: Low to High' },
-  { value: 'occupancy_desc', label: 'Occupancy: High to Low' },
-  { value: 'size_asc', label: 'Size: Small to Large' },
-  { value: 'size_desc', label: 'Size: Large to Small' },
-] as const;
-
-function RoomsContent() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-  const [roomTypes, setRoomTypes] = React.useState<RoomType[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const checkIn = searchParams?.get('checkIn');
-  const checkOut = searchParams?.get('checkOut');
-  const adults = searchParams?.get('adults');
-  const children = searchParams?.get('children');
-
-  // Filter states from URL params
-  const selectedAmenities = React.useMemo(() => {
-    const amenitiesParam = searchParams?.get('amenities');
-    return amenitiesParam ? amenitiesParam.split(',') : [];
-  }, [searchParams]);
-
-  const [priceRange, setPriceRange] = React.useState<[number, number]>([0, 1000]);
-  const sortBy = searchParams?.get('sortBy') || 'price_asc';
-
-  const nights = checkIn && checkOut
-    ? differenceInDays(parseISO(checkOut), parseISO(checkIn))
-    : 1;
-
-  // Calculate max price from room types
-  React.useEffect(() => {
-    if (roomTypes.length > 0) {
-      const maxPrice = Math.max(...roomTypes.map(rt => rt.baseRate));
-      const priceRangeParam = searchParams?.get('priceRange');
-      if (priceRangeParam) {
-        const [min, max] = priceRangeParam.split('-').map(Number);
-        setPriceRange([min, max]);
-      } else {
-        setPriceRange([0, Math.ceil(maxPrice / 100) * 100]);
+import { Select,SelectTrigger,SelectValue,SelectContent,SelectItem } from '@/components/ui/select';
+import { roomSearchValidationMessage,selectInitialPublicRatePlan } from '../lib/qa-workflows';
+import { stayNights,money,cancellationTerms } from '../lib/stay-context';
+type AvailableRoom=RoomType&{availableCount?:number};
+function RoomsContent(){
+  const params=useSearchParams();const router=useRouter();const query=params?.toString()||'';
+  const from=params?.get('checkIn')||'';const to=params?.get('checkOut')||'';const adults=params?.get('adults')||'2';const children=params?.get('children')||'0';
+  const queryError=roomSearchValidationMessage(from,to,adults,children);const dated=Boolean(from&&to&&!queryError);const nights=stayNights(from,to);
+  const [rooms,setRooms]=useState<AvailableRoom[]>([]);const [quotes,setQuotes]=useState<Record<string,StayQuote>>({});const [loading,setLoading]=useState(true);const [pricing,setPricing]=useState(false);const [error,setError]=useState('');const [retry,setRetry]=useState(0);
+  const amenityQuery=params?.get('amenities')||'';const amenities=useMemo(()=>amenityQuery.split(',').filter(Boolean),[amenityQuery]);const sort=params?.get('sortBy')||'price_asc';const price=params?.get('priceRange')||'';const comparison=(params?.get('compare')||'').split(',').filter(Boolean).slice(0,3);
+  const update=(values:Record<string,string|null>)=>{const next=new URLSearchParams(query);Object.entries(values).forEach(([key,value])=>value?next.set(key,value):next.delete(key));router.push(`/rooms?${next}#results`,{scroll:false});};
+  useEffect(()=>{let active=true;setLoading(true);setError('');setQuotes({});setPricing(false);setRooms([]);
+    async function fetchRooms(){if(queryError){setLoading(false);return;}try{
+      const catalog=(await graphqlClient.request<{roomTypes:RoomType[]}>(GET_ROOM_TYPES)).roomTypes||[];
+      let rows:AvailableRoom[]=catalog;
+      if(dated){const data=await graphqlClient.request<{roomTypes:AvailableRoom[]}>(GET_AVAILABLE_ROOMS,{checkInDate:`${from}T00:00:00Z`,checkOutDate:`${to}T00:00:00Z`});rows=(data.roomTypes||[]).map(room=>({...room,ratePlans:catalog.find(item=>item.id===room.id)?.ratePlans}));}
+      if(!active)return;setRooms(rows);setLoading(false);
+      if(dated){setPricing(true);const queue=rows.filter(room=>(room.availableCount||0)>0&&room.maxOccupancy>=Number(adults)+Number(children));let cursor=0;
+        await Promise.all(Array.from({length:Math.min(3,queue.length)},async()=>{while(active&&cursor<queue.length){const room=queue[cursor++];const plan=selectInitialPublicRatePlan(room.ratePlans?.filter(plan=>!plan.isPromotional&&plan.minimumStay<=nights), null);if(!plan||plan.minimumStay>nights)continue;try{const data=await graphqlClient.request<{storefrontQuote:StayQuote}>(GET_STOREFRONT_QUOTE,{roomTypeId:room.id,ratePlanId:plan.id,checkInDate:`${from}T00:00:00Z`,checkOutDate:`${to}T00:00:00Z`,numberOfAdults:Number(adults),numberOfChildren:Number(children)});if(active)setQuotes(previous=>({...previous,[room.id]:data.storefrontQuote}));}catch{/* A missing quote is not a zero price or proof of sold-out inventory. */}}}));
+        if(active)setPricing(false);
       }
-    }
-  }, [roomTypes, searchParams]);
-
-  // Update URL with filter params
-  const updateFilters = React.useCallback((updates: Record<string, string | null>) => {
-    const params = new URLSearchParams(searchParams?.toString());
-
-    Object.entries(updates).forEach(([key, value]) => {
-      if (value === null || value === '') {
-        params.delete(key);
-      } else {
-        params.set(key, value);
-      }
-    });
-
-    router.push(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [searchParams, router, pathname]);
-
-  const toggleAmenity = (amenity: string) => {
-    const newAmenities = selectedAmenities.includes(amenity)
-      ? selectedAmenities.filter(a => a !== amenity)
-      : [...selectedAmenities, amenity];
-
-    updateFilters({ amenities: newAmenities.length > 0 ? newAmenities.join(',') : null });
-  };
-
-  const handlePriceRangeChange = (value: number[]) => {
-    setPriceRange([value[0], value[1]]);
-  };
-
-  const applyPriceRange = () => {
-    updateFilters({ priceRange: `${priceRange[0]}-${priceRange[1]}` });
-  };
-
-  const handleSortChange = (value: string) => {
-    updateFilters({ sortBy: value });
-  };
-
-  const clearFilters = () => {
-    setPriceRange([0, Math.max(...roomTypes.map(rt => rt.baseRate))]);
-    const params = new URLSearchParams();
-    if (checkIn) params.set('checkIn', checkIn);
-    if (checkOut) params.set('checkOut', checkOut);
-    if (adults) params.set('adults', adults);
-    if (children) params.set('children', children);
-    router.push(`${pathname}?${params.toString()}`, { scroll: false });
-  };
-
-  React.useEffect(() => {
-    const fetchRoomTypes = async () => {
-      try {
-        setLoading(true);
-
-        if (checkIn && checkOut) {
-          const data = await graphqlClient.request<AvailableRoomsResponse>(
-            GET_AVAILABLE_ROOMS,
-            {
-              checkInDate: new Date(checkIn).toISOString(),
-              checkOutDate: new Date(checkOut).toISOString(),
-            }
-          );
-
-          setRoomTypes(
-            (data.roomTypes || []).map((roomType) => ({
-              ...roomType,
-              roomsCount: roomType.availableCount,
-            }))
-          );
-        } else {
-          const data = await graphqlClient.request<RoomTypesResponse>(GET_ROOM_TYPES);
-          setRoomTypes(data.roomTypes || []);
-        }
-
-        setError(null);
-      } catch {
-        setError('Failed to load rooms. Please try again.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchRoomTypes();
-  }, [checkIn, checkOut]);
-
-  // Apply all filters
-  const filteredRoomTypes = React.useMemo(() => {
-    let filtered = [...roomTypes];
-
-    // Filter by guest count
-    if (adults) {
-      const totalGuests = parseInt(adults) + (parseInt(children || '0'));
-      filtered = filtered.filter(rt => rt.maxOccupancy >= totalGuests);
-    }
-
-    // Filter by amenities
-    if (selectedAmenities.length > 0) {
-      filtered = filtered.filter(rt => {
-        const roomAmenities = rt.amenities || [];
-        return selectedAmenities.every(amenity => roomAmenities.includes(amenity));
-      });
-    }
-
-    // Filter by price range
-    const priceRangeParam = searchParams?.get('priceRange');
-    if (priceRangeParam) {
-      const [min, max] = priceRangeParam.split('-').map(Number);
-      filtered = filtered.filter(rt => rt.baseRate >= min && rt.baseRate <= max);
-    }
-
-    return filtered;
-  }, [roomTypes, adults, children, selectedAmenities, searchParams]);
-
-  // Apply sorting
-  const sortedRoomTypes = React.useMemo(() => {
-    const sorted = [...filteredRoomTypes];
-
-    switch (sortBy) {
-      case 'price_asc':
-        return sorted.sort((a, b) => a.baseRate - b.baseRate);
-      case 'price_desc':
-        return sorted.sort((a, b) => b.baseRate - a.baseRate);
-      case 'occupancy_asc':
-        return sorted.sort((a, b) => a.maxOccupancy - b.maxOccupancy);
-      case 'occupancy_desc':
-        return sorted.sort((a, b) => b.maxOccupancy - a.maxOccupancy);
-      case 'size_asc':
-        return sorted.sort((a, b) => (a.squareFeet || 0) - (b.squareFeet || 0));
-      case 'size_desc':
-        return sorted.sort((a, b) => (b.squareFeet || 0) - (a.squareFeet || 0));
-      default:
-        return sorted;
-    }
-  }, [filteredRoomTypes, sortBy]);
-
-  const roomsWithAvailability = React.useMemo(() => {
-    return sortedRoomTypes.map(roomType => ({
-      ...roomType,
-      availableCount: roomType.roomsCount || 0,
-    }));
-  }, [sortedRoomTypes]);
-
-  const hasActiveFilters = selectedAmenities.length > 0 || searchParams?.get('priceRange');
-
-  const FilterSidebar = () => (
-    <div className="space-y-6">
-      <div>
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold tracking-[-0.03em] text-[color:oklch(0.24_0.02_58)]">Refine this stay</h3>
-            <p className="mt-1 text-sm text-[color:oklch(0.43_0.03_58)]">Filter by nightly rate and the comforts guests tend to care about first.</p>
-          </div>
-          {hasActiveFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              <X className="h-4 w-4 mr-1" />
-              Clear
-            </Button>
-          )}
-        </div>
-
-        {/* Price Range */}
-        <div className="mb-6">
-          <Label className="mb-3 block font-medium text-[color:oklch(0.3_0.03_58)]">Nightly rate</Label>
-          <div className="px-2">
-            <Slider
-              value={priceRange}
-              onValueChange={handlePriceRangeChange}
-              max={Math.max(1000, ...roomTypes.map(rt => rt.baseRate))}
-              min={0}
-              step={10}
-              className="mb-4"
-            />
-            <div className="flex items-center justify-between text-sm text-muted-foreground mb-2">
-              <span>${priceRange[0]}</span>
-              <span>${priceRange[1]}</span>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full"
-              onClick={applyPriceRange}
-            >
-              Apply Price Range
-            </Button>
-          </div>
-        </div>
-
-        {/* Amenities */}
-        <div>
-          <Label className="mb-3 block font-medium text-[color:oklch(0.3_0.03_58)]">Stay details</Label>
-          <div className="space-y-2">
-            {AMENITY_OPTIONS.map((amenity) => (
-              <div key={amenity.value} className="flex items-center space-x-2">
-                <Checkbox
-                  id={amenity.value}
-                  checked={selectedAmenities.includes(amenity.value)}
-                  onCheckedChange={() => toggleAmenity(amenity.value)}
-                />
-                <label
-                  htmlFor={amenity.value}
-                  className="cursor-pointer text-sm font-medium leading-none text-[color:oklch(0.36_0.03_58)] peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  {amenity.label}
-                </label>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <main>
-      <section className="border-b border-[var(--lodging-rule)] bg-[var(--lodging-paper-2)]">
-        <div className="lodging-container py-16">
-          <Link href="/" className="lodging-link mb-8 inline-flex">Back home</Link>
-          <div className="lodging-grid-break">
-            <div className="min-w-0">
-              <p className="lodging-eyebrow mb-4">Rooms & availability</p>
-              <h1 className="lodging-display">Spaces for your stay.</h1>
-              <p className="mt-6 max-w-xl leading-8 text-[var(--lodging-ink-muted)]">
-                Compare room types with live availability, direct-booking rates, and the detail expected from a boutique hotel.
-              </p>
-            </div>
-            <SearchWidget />
-          </div>
-        </div>
-      </section>
-
-      <section className="lodging-container py-14">
-        {checkIn && checkOut ? (
-          <div className="mb-10 border-b border-[var(--lodging-rule)] pb-6">
-            <p className="lodging-eyebrow mb-2 text-[var(--lodging-accent-deep)]">Live availability</p>
-            <p className="text-[var(--lodging-ink-muted)]">
-              {format(parseISO(checkIn), 'MMM dd, yyyy')} — {format(parseISO(checkOut), 'MMM dd, yyyy')} · {nights} night{nights !== 1 ? 's' : ''}
-              {adults ? ` · ${parseInt(adults) + parseInt(children || '0')} guest${parseInt(adults) + parseInt(children || '0') !== 1 ? 's' : ''}` : ''}
-            </p>
-          </div>
-        ) : null}
-
-        <div data-qa-layout="room-results-grid" className="grid min-w-0 gap-10 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <aside className="hidden lg:block">
-            <div className="sticky top-28 border-r border-[var(--lodging-rule)] pr-8">
-              <FilterSidebar />
-            </div>
-          </aside>
-
-          <div data-qa-layout="room-results-content" className="min-w-0">
-            <div className="mb-8 flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm text-[var(--lodging-ink-muted)]">
-                {loading ? 'Loading rooms…' : `Showing ${roomsWithAvailability.length} room type${roomsWithAvailability.length !== 1 ? 's' : ''}`}
-              </div>
-              <div data-qa-layout="room-results-toolbar" className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-                <Sheet>
-                  <SheetTrigger asChild>
-                    <button className="lodging-button-ghost min-h-0 py-3 lg:hidden">
-                      <SlidersHorizontal className="mr-2 h-4 w-4" /> Filters
-                    </button>
-                  </SheetTrigger>
-                  <SheetContent side="left" className="bg-[var(--lodging-paper)]">
-                    <SheetHeader>
-                      <SheetTitle>Refine this stay</SheetTitle>
-                      <SheetDescription>Filter rooms by nightly rate and stay details.</SheetDescription>
-                    </SheetHeader>
-                    <div className="mt-8">
-                      <FilterSidebar />
-                    </div>
-                  </SheetContent>
-                </Sheet>
-                <Select value={sortBy} onValueChange={handleSortChange}>
-                  <SelectTrigger data-qa-layout="room-results-sort" className="w-full min-w-0 rounded-none border-[var(--lodging-rule)] bg-[var(--lodging-paper)] sm:w-[220px]">
-                    <SelectValue placeholder="Sort by" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SORT_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {hasActiveFilters ? (
-              <div className="mb-8 flex flex-wrap items-center gap-3 border-y border-[var(--lodging-rule)] py-4">
-                {selectedAmenities.map((amenity) => (
-                  <button key={amenity} onClick={() => toggleAmenity(amenity)} className="text-xs text-[var(--lodging-ink-muted)]">
-                    {AMENITY_OPTIONS.find(a => a.value === amenity)?.label} ×
-                  </button>
-                ))}
-                <button onClick={clearFilters} className="lodging-link">Clear Filters</button>
-              </div>
-            ) : null}
-
-            {loading ? (
-              <div className="grid gap-10 md:grid-cols-2">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="space-y-5">
-                    <Skeleton className="aspect-[4/5] w-full rounded-none" />
-                    <Skeleton className="h-9 w-2/3 rounded-none" />
-                    <Skeleton className="h-5 w-full rounded-none" />
-                  </div>
-                ))}
-              </div>
-            ) : error ? (
-              <div className="border border-[var(--lodging-rule)] py-16 text-center">
-                <p className="mb-4 text-lg text-[var(--lodging-danger)]">{error}</p>
-                <button onClick={() => window.location.reload()} className="lodging-button">Try Again</button>
-              </div>
-            ) : roomsWithAvailability.length === 0 ? (
-              <div className="border border-[var(--lodging-rule)] py-16 text-center">
-                <h2 className="lodging-title mb-3">No availability for selected dates.</h2>
-                <p className="mx-auto mb-8 max-w-xl text-[var(--lodging-ink-muted)]">Try widening your filters, shifting the dates, or contacting the concierge for direct support.</p>
-                <div className="flex justify-center gap-4">
-                  {hasActiveFilters ? <button onClick={clearFilters} className="lodging-button-ghost">Clear Dates</button> : null}
-                  <Link href="/contact" className="lodging-button">Contact Concierge</Link>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-0">
-                {roomsWithAvailability.map((roomType) => (
-                  <RoomCard
-                    key={roomType.id}
-                    roomType={roomType}
-                    availableCount={roomType.availableCount}
-                    nights={nights}
-                    totalPrice={roomType.baseRate * nights}
-                    searchParams={searchParams?.toString()}
-                    layout="list"
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-    </main>
-  );
+    }catch{if(active){setError('We could not load the room collection. Your search choices are still here.');setLoading(false);setPricing(false);}}}
+    void fetchRooms();return()=>{active=false;};
+  },[from,to,adults,children,queryError,dated,nights,retry]);
+  const shown=useMemo(()=>{let rows=rooms.filter(room=>room.maxOccupancy>=Number(adults)+Number(children)&&(!dated||(room.availableCount||0)>0)&&amenities.every(item=>room.amenities?.includes(item)));
+    if(price){const [min,max]=price.split('-').map(Number);if(Number.isFinite(min)&&Number.isFinite(max))rows=rows.filter(room=>room.baseRate>=min&&room.baseRate<=max);}
+    const direction=sort.endsWith('desc')?-1:1;return rows.sort((a,b)=>{if(sort.startsWith('occupancy'))return direction*(a.maxOccupancy-b.maxOccupancy);if(sort.startsWith('size'))return direction*((a.squareFeet||0)-(b.squareFeet||0));if(dated){const aq=quotes[a.id],bq=quotes[b.id];if(!aq||!bq)return aq?-1:bq?1:0;if(aq.currencyCode!==bq.currencyCode)return aq.currencyCode.localeCompare(bq.currencyCode);return direction*(aq.totalAmountMinor-bq.totalAmountMinor);}return direction*(a.baseRate-b.baseRate);});
+  },[rooms,adults,children,dated,amenities,price,sort,quotes]);
+  const selected=rooms.filter(room=>comparison.includes(room.id));const options=[...new Set(rooms.flatMap(room=>room.amenities||[]))].sort();
+  return <main><header className="lodging-container hotel-page-head"><p className="lodging-eyebrow">Rooms & suites</p><h1 className="lodging-display">Find your place in the house.</h1><p>Compare the details that matter. Choose dates to see availability and a full stay price, including taxes and fees.</p></header><div className="lodging-container pt-8" id="choose-dates"><SearchWidget query={query} /></div><section className="lodging-container hotel-section" id="results">
+    <div data-qa-layout="room-results-grid" className="grid min-w-0 gap-8 lg:grid-cols-[210px_minmax(0,1fr)]"><aside><details open className="border-y border-[var(--lodging-rule)] py-4"><summary className="cursor-pointer min-h-11 font-medium">Refine your stay</summary><fieldset className="mt-5"><legend className="lodging-eyebrow mb-4">Room comforts</legend>{options.map(item=><label key={item} className="flex gap-3 items-center min-h-11 text-sm"><input type="checkbox" checked={amenities.includes(item)} onChange={()=>update({amenities:(amenities.includes(item)?amenities.filter(a=>a!==item):[...amenities,item]).join(',')})}/>{AMENITY_LABELS[item]||item.replaceAll('_',' ')}</label>)}</fieldset><form className="mt-6 space-y-3" onSubmit={event=>{event.preventDefault();const data=new FormData(event.currentTarget);update({priceRange:`${data.get('min')||0}-${data.get('max')||100000}`});}}><p className="text-sm">Base nightly rate filter</p><p className="text-xs text-[var(--lodging-ink-muted)]">Reference rate only; the dated total may differ.</p><div className="grid grid-cols-2 gap-2" key={price}><label className="hotel-field">Minimum<input name="min" type="number" min="0" defaultValue={price.split('-')[0]||''}/></label><label className="hotel-field">Maximum<input name="max" type="number" min="0" defaultValue={price.split('-')[1]||''}/></label></div><button className="lodging-button-ghost w-full">Apply budget</button></form></details></aside>
+    <div data-qa-layout="room-results-content" className="min-w-0"><div data-qa-layout="room-results-toolbar" className="flex flex-wrap items-center justify-between gap-4 mb-6"><p role="status" className="text-sm">{loading?'Checking rooms…':`${shown.length} room ${shown.length===1?'type':'types'}${dated?` · ${nights} nights`:''}`}</p><Select value={sort} onValueChange={value=>update({sortBy:value})}><SelectTrigger aria-label="Sort available rooms" data-qa-layout="room-results-sort" className="w-full sm:w-60 rounded-none"><SelectValue /></SelectTrigger><SelectContent>{[['price_asc',dated?'Stay total: low to high':'Base rate: low to high'],['price_desc',dated?'Stay total: high to low':'Base rate: high to low'],['occupancy_asc','Guests: fewer to more'],['occupancy_desc','Guests: more to fewer'],['size_asc','Size: smaller first'],['size_desc','Size: larger first']].map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+    {(amenities.length>0||price)&&<div className="flex flex-wrap gap-4 text-sm mb-6">{amenities.map(item=><button key={item} className="min-h-11 underline" onClick={()=>update({amenities:amenities.filter(a=>a!==item).join(',')})}>Remove {AMENITY_LABELS[item]||item}</button>)}<button className="lodging-link" onClick={()=>update({amenities:null,priceRange:null})}>Clear filters</button></div>}
+    {comparison.length>0&&<div className="hotel-notice"><a href="#compare" className="lodging-link">Compare {selected.length} selected room{selected.length===1?'':'s'} ↓</a><button className="lodging-link ml-5" onClick={()=>update({compare:null})}>Clear comparison</button></div>}
+    {queryError?<div role="alert" className="hotel-notice"><p>{queryError}</p><a href="#choose-dates" className="lodging-link">Edit your search above</a></div>:error?<div role="alert" className="hotel-notice"><p>{error}</p><button className="lodging-button" onClick={()=>setRetry(value=>value+1)}>Try again</button></div>:loading?<div role="status" className="hotel-notice">Loading room details…</div>:!shown.length?<div className="hotel-notice"><h2 className="lodging-title">No rooms match this stay.</h2><p>Try other dates, fewer guests in one room, or clear your filters. For multiple rooms, contact the property.</p><button className="lodging-link mr-6" onClick={()=>update({amenities:null,priceRange:null})}>Clear filters</button><Link className="lodging-link" href="/contact">Ask the property ↗</Link></div>:shown.map(room=><div key={room.id}><RoomCard roomType={room} availableCount={dated?room.availableCount:undefined} searchParams={query} layout="list" quote={quotes[room.id]?{...quotes[room.id],numberOfNights:quotes[room.id].nights}:undefined} pricing={dated&&pricing&&!quotes[room.id]}/><label className="flex items-center gap-3 min-h-12 text-sm"><input type="checkbox" checked={comparison.includes(room.id)} disabled={!comparison.includes(room.id)&&comparison.length>=3} onChange={()=>update({compare:(comparison.includes(room.id)?comparison.filter(id=>id!==room.id):[...comparison,room.id]).join(',')})}/>Compare {room.name}</label></div>)}
+    {selected.length>0&&<section id="compare" className="mt-12"><h2 className="lodging-title">A closer comparison.</h2><p className="text-sm mt-3">Select up to three rooms. Quotes below apply to the named rate; review other plans on the room page.</p><div className="hotel-compare" tabIndex={0} role="region" aria-label="Room comparison, scroll horizontally on small screens"><table><thead><tr><th scope="col">Your stay</th>{selected.map(room=><th scope="col" key={room.id}>{room.name}</th>)}</tr></thead><tbody>{['Full stay total','Bed','Guests','Size','Amenities','Cancellation','Explore'].map(label=><tr key={label}><th scope="row">{label}</th>{selected.map(room=><td key={room.id}>{label==='Full stay total'?quotes[room.id]?<>{money(quotes[room.id].totalAmountMinor,quotes[room.id].currencyCode)}<br />{quotes[room.id].ratePlanName}<br />Taxes & fees included</>:dated?'Review rates for a current total':'Choose dates':label==='Bed'?BED_CONFIG_LABELS[room.bedConfiguration||'']||room.bedConfiguration||'Ask the property':label==='Guests'?`Up to ${room.maxOccupancy}`:label==='Size'?room.squareFeet?`${room.squareFeet} sq ft`:'Not published':label==='Amenities'?(room.amenities||[]).map(a=>AMENITY_LABELS[a]||a).join(', ')||'Not published':label==='Cancellation'?cancellationTerms(quotes[room.id]?.cancellationPolicy):<Link className="lodging-link" href={`/rooms/${room.id}?${query}`}>View {room.name} ↗</Link>}</td>)}</tr>)}</tbody></table></div></section>}
+    </div></div></section></main>;
 }
-
-function RoomsPageFallback() {
-  return (
-    <div className="flex min-h-[50vh] items-center justify-center">
-      <Loader2 className="h-8 w-8 animate-spin text-[var(--lodging-accent-deep)]" />
-    </div>
-  );
-}
-
-export default function RoomsPage() {
-  return (
-    <Suspense fallback={<RoomsPageFallback />}>
-      <RoomsContent />
-    </Suspense>
-  );
-}
+export default function RoomsPage(){return <Suspense fallback={<p className="lodging-container hotel-section" role="status">Loading room search…</p>}><RoomsContent /></Suspense>}

@@ -1,11 +1,13 @@
 export const GET_ANALYTICS_DATA = String.raw`
   query GetOperationalReport($start: DateTime!, $end: DateTime!) {
     hotelAnalyticsOperations(propertyKey: "the-alder-house", start: $start, end: $end) {
+      demand
       summary {
         start end businessDate currencyCode availableRoomNights occupiedRoomNights occupancyRate
         roomRevenueMinor taxMinor feeMinor totalRevenueMinor adrMinor revparMinor
         arrivals departures newReservations cancellations noShows paymentsMinor refundsMinor
         openFolioBalanceMinor openFolioCount
+        closedSnapshotDays unclosedHistoricalDays forecastDays
       }
       days {
         date availableRoomNights occupiedRoomNights occupancyRate

@@ -150,11 +150,25 @@ export function FrontDeskPage() {
     fetchFrontDeskData();
   }, [fetchFrontDeskData]);
 
+  const attemptKeys = React.useRef(new Map<string, string>());
+  const attemptKey = (intent: string) => {
+    if (!attemptKeys.current.has(intent)) attemptKeys.current.set(intent, crypto.randomUUID());
+    return attemptKeys.current.get(intent)!;
+  };
+
   const handleStatusChange = React.useCallback(async (bookingId: string, status: FrontDeskStatus) => {
     try {
-      const response = await updateFrontDeskBookingStatus(bookingId, status);
+      const response = await updateFrontDeskBookingStatus(bookingId, status, attemptKey(`status:${bookingId}:${status}`));
       await fetchFrontDeskData();
-      const savedStatus = response.status;
+      if (!response.ok) {
+        toast({
+          title: 'Unable to update reservation',
+          description: response.message,
+          variant: 'destructive',
+        });
+        return;
+      }
+      const savedStatus = response.data.status;
       toast({
         title: 'Reservation Updated',
         description: savedStatus === 'cancellation_pending' ? 'No-show policy was applied; the provider refund is pending.' : `Status set to ${savedStatus.replaceAll('_', ' ')}.`,
@@ -172,8 +186,12 @@ export function FrontDeskPage() {
   const handleCancel = React.useCallback(async (bookingId: string) => {
     if (!window.confirm('Cancel this reservation and apply the booked refund policy?')) return;
     try {
-      await cancelFrontDeskBooking(bookingId);
+      const response = await cancelFrontDeskBooking(bookingId, attemptKey(`cancel:${bookingId}`));
       await fetchFrontDeskData();
+      if (!response.ok) {
+        toast({ title: 'Cancellation refused', description: response.message, variant: 'destructive' });
+        return;
+      }
       toast({ title: 'Cancellation recorded', description: 'Policy, refund, folio, and delivery work were persisted.' });
     } catch (error) {
       await fetchFrontDeskData();
@@ -197,14 +215,20 @@ export function FrontDeskPage() {
         value.setUTCFullYear(year, month - 1, day);
         return value.toISOString();
       };
-      await resolveFrontDeskModification({
+      const response = await resolveFrontDeskModification({
         bookingId,
         decision,
         checkInDate: preserveTime(booking?.checkInDate, checkInDate),
         checkOutDate: preserveTime(booking?.checkOutDate, checkOutDate),
         staffNote: staffNote || null,
+        idempotencyKey: attemptKey(JSON.stringify({ bookingId, decision, checkInDate, checkOutDate, staffNote })),
       });
       await fetchFrontDeskData();
+      if (!response.ok) {
+        toast({ title: 'Unable to resolve request', description: response.message, variant: 'destructive' });
+        return;
+      }
+      attemptKeys.current.delete(JSON.stringify({ bookingId, decision, checkInDate, checkOutDate, staffNote }));
       toast({
         title: decision === 'approved' ? 'Change request approved' : 'Change request declined',
         description: decision === 'approved'
@@ -223,8 +247,13 @@ export function FrontDeskPage() {
 
   const handleRoomAssignment = React.useCallback(async (bookingId: string, roomId: string) => {
     try {
-      await assignFrontDeskRoom(bookingId, roomId);
+      const response = await assignFrontDeskRoom(bookingId, roomId, attemptKey(`assign:${bookingId}:${roomId}`));
       await fetchFrontDeskData();
+      if (!response.ok) {
+        toast({ title: 'Unable to assign room', description: response.message, variant: 'destructive' });
+        return;
+      }
+      attemptKeys.current.delete(`assign:${bookingId}:${roomId}`);
       toast({
         title: 'Room Assigned',
         description: 'The reservation now has a ready room assigned.',

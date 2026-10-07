@@ -57,9 +57,9 @@ export const SectionItem: React.FC<SectionItemProps> = ({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="cursor-help">
-                  <AlertCircle className="mr-1.5 h-3.5 w-3.5 text-red-500" />
-                </div>
+                <button type="button" className="cursor-help" aria-label={`Show error for ${item}`}>
+                  <AlertCircle className="mr-1.5 h-3.5 w-3.5 text-red-500" aria-hidden="true" />
+                </button>
               </TooltipTrigger>
               <TooltipContent
                 side="bottom"
@@ -69,9 +69,8 @@ export const SectionItem: React.FC<SectionItemProps> = ({
                 <div className="font-medium text-sm mb-2 text-red-600 dark:text-red-400">
                   Failed to create {item}
                 </div>
-                <div className="text-sm text-left mb-3">
-                  This item already exists or conflicts with existing data in
-                  your installation.
+                <div className="mb-3 text-left text-sm">
+                  The setup did not complete. The atomic seed operation did not leave partial Hotel data.
                 </div>
                 <div className="font-mono text-xs text-left whitespace-pre-wrap break-words max-h-[150px] overflow-y-auto text-muted-foreground border-t pt-3 mt-1">
                   <span className="font-semibold block mb-1">

@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import { InHouseStayControls } from './InHouseStayControls';
+import RelocationPanel from '@/features/platform/relocations/components/RelocationPanel';
 import {
   BadgeCheck,
   ClipboardList,
@@ -386,6 +388,10 @@ export function FrontDesk({
             <ReservationRow
               key={reservation.id}
               reservation={reservation}
+              availableRooms={availableRooms}
+              selectedRoomId={selectedRoomByReservation[reservation.id] || ''}
+              onSelectedRoomChange={(roomId) => setSelectedRoomByReservation((prev) => ({ ...prev, [reservation.id]: roomId }))}
+              onAssignRoom={() => handleAssignRoom(reservation.id)}
               onAddCharges={() => router.push(`/dashboard/platform/folios?bookingId=${reservation.id}`)}
               onCheckOut={() => handleStatusChange(reservation.id, 'checked_out')}
             />
@@ -466,6 +472,8 @@ function ReservationRow({
         <div className="text-sm text-muted-foreground">
           Balance Due: {formatCurrency(reservation.balanceDue)}
         </div>
+        <RelocationPanel bookingId={reservation.id} />
+        {reservation.status === 'checked_in' && <InHouseStayControls bookingId={reservation.id} checkInDate={reservation.checkInDate} checkOutDate={reservation.checkOutDate} />}
         {reservation.hasPendingModificationRequest && (
           <div className="space-y-3 rounded-md border border-purple-200 bg-purple-50 px-3 py-3 text-sm text-purple-700">
             <p className="font-medium">Guest change request pending staff review.</p>
@@ -534,14 +542,17 @@ function ReservationRow({
             )}
           </>
         )}
-        {onAssignRoom && !reservation.roomNumber && (
+        {onAssignRoom && (!reservation.roomNumber || reservation.status === 'checked_in') && (
           compatibleRooms.length ? (
             <div className="flex flex-wrap gap-2">
               <Select value={selectedRoomId} onValueChange={onSelectedRoomChange}>
-                <SelectTrigger className="h-9 w-[180px]"><SelectValue placeholder="Ready room" /></SelectTrigger>
+                <SelectTrigger
+                  className="h-9 w-[180px]"
+                  aria-label={`Ready room for ${reservation.guestName}`}
+                ><SelectValue placeholder="Ready room" /></SelectTrigger>
                 <SelectContent>{compatibleRooms.map((room) => <SelectItem key={room.id} value={room.id}>{room.roomNumber}{room.roomType?.name ? ` • ${room.roomType.name}` : ''}</SelectItem>)}</SelectContent>
               </Select>
-              <Button size="sm" variant="outline" onClick={onAssignRoom} disabled={!selectedRoomId}><ClipboardList className="mr-2 h-4 w-4" />Assign Room</Button>
+              <Button size="sm" variant="outline" onClick={onAssignRoom} disabled={!selectedRoomId}><ClipboardList className="mr-2 h-4 w-4" />{reservation.status === 'checked_in' ? 'Move Room' : 'Assign Room'}</Button>
             </div>
           ) : <span className="text-xs text-amber-700">No ready room of the booked type.</span>
         )}

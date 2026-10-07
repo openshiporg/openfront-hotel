@@ -1,3 +1,5 @@
+import { recordVerifiedSecurityAuthorization } from '../security/authorization';
+import { recordVerifiedDispute } from '../finance/hotelDisputes';
 import { handleWebhook } from '../utils/paymentProviderAdapter';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import {
@@ -7,15 +9,10 @@ import {
 } from '../lib/paymentSecurity';
 import {
   finalizeBookingPayment,
+  assertReplayMatches,
   hashPaymentPayload,
   recordPaymentEvent,
-} from '../lib/bookingPaymentSettlement';
-
-function sessionProviderId(session: any) {
-  return String(
-    session?.data?.paymentIntentId || session?.data?.orderId || session?.data?.id || ''
-  );
-}
+} from '../payments/settlement';
 
 export async function processBookingPaymentWebhook({
   providerCode,
@@ -32,7 +29,7 @@ export async function processBookingPaymentWebhook({
 
   await ensureDefaultPaymentProviders(context);
   const provider = await context.prisma.paymentProvider.findUnique({ where: { code: providerCode } });
-  if (!provider?.isInstalled) throw new Error('Payment provider not found or not installed.');
+  if (!provider) throw new Error('Payment provider record not found.');
 
   // The adapter is statically allowlisted; persisted provider state and
   // encrypted credentials are required before provider I/O.
@@ -52,6 +49,15 @@ export async function processBookingPaymentWebhook({
     eventType: identity.eventType,
     payloadHash: hashPaymentPayload(rawBody),
   };
+  // Only verified evidence can acknowledge replay. Resolve it before looking for
+  // an unpaid session, because successful sessions are necessarily already paid.
+  const existingEvent = await context.prisma.paymentEvent.findUnique({ where: { replayKey: replay.replayKey } });
+  if (existingEvent) {
+    assertReplayMatches(existingEvent, replay);
+    return { success: true, duplicate: true, type: identity.eventType };
+  }
+  if (verified.securityAuthorization) return recordVerifiedSecurityAuthorization(context, provider, verified.securityAuthorization, replay);
+  if (verified.dispute) return recordVerifiedDispute(context, provider, verified.dispute, replay);
   const disposition = classifyPaymentWebhookType(identity.eventType);
   const settlement = verified.settlement || {};
   const bookingId = String(settlement.bookingId || '').trim();
@@ -69,22 +75,20 @@ export async function processBookingPaymentWebhook({
   if (!bookingId) {
     throw new Error('Verified webhook is missing its booking identity.');
   }
-  const sessions = await context.sudo().query.BookingPaymentSession.findMany({
-    where: {
-      booking: { id: { equals: bookingId } },
-      paymentProvider: { code: { equals: providerCode } },
-    },
-    orderBy: [{ createdAt: 'desc' }],
-    take: 10,
-    query: 'id amount data payment { id }',
-  });
   const providerPaymentId = String(settlement.providerPaymentId || '');
-  const session = sessions.find(
-    (candidate: any) =>
-      !candidate.payment &&
-      (!sessionProviderId(candidate) || sessionProviderId(candidate) === providerPaymentId)
-  );
-  if (!session) throw new Error('Verified webhook does not map to an open payment session.');
+  const providerCaptureId = String(settlement.providerCaptureId || providerPaymentId);
+  if (!providerPaymentId) throw new Error('Verified webhook is missing its provider order/payment identity.');
+  // Exact durable order/intent lookup, including already-settled sessions. A
+  // bounded result detects ambiguity instead of silently scanning only 10 recent sessions.
+  const sessions = await context.prisma.bookingPaymentSession.findMany({
+    where: { bookingId, paymentProviderId: provider.id, OR: [
+      { data: { path: ['paymentIntentId'], equals: providerPaymentId } },
+      { data: { path: ['orderId'], equals: providerPaymentId } },
+      { data: { path: ['id'], equals: providerPaymentId } },
+    ] }, include: { payment: true }, take: 2,
+  });
+  if (sessions.length !== 1) throw new Error('Verified webhook must map to exactly one payment session.');
+  const session = sessions[0];
 
   if (disposition === 'failed') {
     const failed = await recordPaymentEvent({
@@ -105,7 +109,7 @@ export async function processBookingPaymentWebhook({
     paymentSessionId: session.id,
     providerCode,
     providerPaymentId,
-    providerCaptureId: providerPaymentId,
+    providerCaptureId,
     amount: Number(settlement.amount),
     currencyCode: String(settlement.currencyCode || ''),
     providerData: verified.resource || {},

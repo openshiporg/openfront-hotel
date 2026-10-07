@@ -8,7 +8,7 @@ import {
   timestamp,
 } from '@keystone-6/core/fields'
 
-import { isSignedIn, permissions } from '../access'
+import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
 
@@ -69,12 +69,14 @@ export const ChannelSyncEvent = list({
       ui: { itemView: { fieldMode: 'read' } },
     }),
     message: text({
+      access: { read: permissions.canManageIntegrations },
       label: 'Message',
       ui: {
         displayMode: 'textarea',
       },
     }),
     payload: json({
+      access: { read: permissions.canManageIntegrations },
       label: 'Payload',
       ui: {
         description: 'Payload captured during sync for troubleshooting',
@@ -85,6 +87,7 @@ export const ChannelSyncEvent = list({
       defaultValue: {},
     }),
     errorMessage: text({
+      access: { read: permissions.canManageIntegrations },
       label: 'Error Message',
       ui: {
         displayMode: 'textarea',

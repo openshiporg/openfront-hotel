@@ -152,12 +152,12 @@ export const HOTEL_TEMPLATES: Record<'full' | 'minimal' | 'custom', HotelTemplat
 
 export const SECTION_DEFINITIONS: SectionDefinition[] = [
   { id: 1, type: 'hotelSettings', label: 'Hotel Identity', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.hotelSettings },
-  { id: 2, type: 'roomTypes', label: 'Room Types', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.roomTypes },
-  { id: 3, type: 'rooms', label: 'Rooms', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.rooms },
-  { id: 4, type: 'ratePlans', label: 'Rate Plans', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.ratePlans },
+  { id: 2, type: 'roomTypes', label: 'Room Types & Amenities', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.roomTypes },
+  { id: 3, type: 'rooms', label: 'Physical Rooms', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.rooms },
+  { id: 4, type: 'ratePlans', label: 'Rate Plans & Policies', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.ratePlans },
   { id: 5, type: 'seasonalRates', label: 'Seasonal Rates', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.seasonalRates },
   { id: 6, type: 'guests', label: 'Guests', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.guests },
-  { id: 7, type: 'bookings', label: 'Sample Reservations', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.bookings },
+  { id: 7, type: 'bookings', label: 'Direct-booking & PMS Reservations', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.bookings },
   { id: 8, type: 'bookingPayments', label: 'Booking Payments', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.bookingPayments },
   { id: 9, type: 'housekeepingTasks', label: 'Housekeeping Tasks', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.housekeepingTasks },
   { id: 10, type: 'maintenanceRequests', label: 'Maintenance Requests', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.maintenanceRequests },
@@ -165,5 +165,5 @@ export const SECTION_DEFINITIONS: SectionDefinition[] = [
   { id: 12, type: 'channelReservations', label: 'Channel Reservations', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.channelReservations },
   { id: 13, type: 'channelSyncEvents', label: 'Channel Sync Events', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.channelSyncEvents },
   { id: 14, type: 'loyaltyTransactions', label: 'Loyalty Transactions', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.loyaltyTransactions },
-  { id: 15, type: 'inventory', label: 'Availability Snapshots', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.inventory },
+  { id: 15, type: 'inventory', label: 'Room Inventory Controls', getItemsFn: (template) => HOTEL_TEMPLATES[template].displayNames.inventory },
 ];

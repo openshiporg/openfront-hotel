@@ -1,5 +1,5 @@
 import { permissions } from '../access';
-import { calculateFolioBalance } from '../lib/folioLedger';
+import { calculateFolioBalance } from '../folios/ledger';
 import {
   findHotelLifecycleReplay,
   lockHotelLifecycle,
@@ -41,7 +41,7 @@ export default async function closeReconciledFolio(
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { folio: { include: { entries: { select: { direction: true, amountMinor: true } } } } },
+      include: { folio: { include: { entries: { select: { direction: true, amountMinor: true, currencyCode: true } } } } },
     });
     if (!booking?.folio) throw new Error('Booking folio not found.');
     if (booking.billingFolioId) throw new Error('Group master folios require group settlement.');

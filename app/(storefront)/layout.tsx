@@ -1,6 +1,8 @@
+import '@/features/storefront/styles/redesign.css';
+import { StayProvider } from '@/features/storefront/components/StayProvider';
 import type { Metadata, Viewport } from 'next';
 import type { CSSProperties } from 'react';
-import { Cormorant_Garamond, DM_Sans } from 'next/font/google';
+import { DM_Sans } from 'next/font/google';
 import { Header } from '@/components/storefront/Header';
 import { Footer } from '@/components/storefront/Footer';
 import { HotelSettingsProvider } from '@/features/storefront/components/HotelSettingsProvider';
@@ -9,12 +11,6 @@ import { resolveStorefrontAccentPreset, storefrontAccentCssVariables } from '@/f
 
 const lodgingBody = DM_Sans({
   variable: '--font-lodging-body',
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-});
-
-const lodgingDisplay = Cormorant_Garamond({
-  variable: '--font-lodging-display',
   subsets: ['latin'],
   weight: ['400', '500', '600'],
 });
@@ -60,16 +56,16 @@ export default async function StorefrontLayout({
 
   return (
     <HotelSettingsProvider identity={identity}>
-      <div
-        className={`${lodgingBody.variable} ${lodgingDisplay.variable} lodging-page flex min-h-screen flex-col`}
+      <StayProvider><div
+        className={`${lodgingBody.variable} hotel-storefront lodging-page flex min-h-screen flex-col`}
         data-storefront-accent={identity.accentPreset}
         data-storefront-settings-state={identity.state}
-        style={storefrontAccentCssVariables(identity.accentPreset) as CSSProperties}
+        style={{ ...storefrontAccentCssVariables(identity.accentPreset), '--font-lodging-display': 'Georgia, "Times New Roman"' } as CSSProperties}
       >
         <Header />
-        <div className="flex-1">{children}</div>
+        <div id="storefront-content" tabIndex={-1} className="flex-1">{children}</div>
         <Footer />
-      </div>
+      </div></StayProvider>
     </HotelSettingsProvider>
   );
 }

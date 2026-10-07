@@ -6,22 +6,24 @@ import {
   hashGuestAccessToken,
   ensureBookingHasGuestAccess,
 } from '../lib/guestBookingAccess';
-import { ensureReservationSnapshots } from '../lib/reservationSnapshots';
-import { ensureBookingFolio, ensurePaymentFolioPosting } from '../lib/bookingFolio';
+import { allocateMinorUnits, ensureReservationSnapshots } from '../folios/reservationSnapshots';
+import { ensureBookingFolio, ensurePaymentFolioPosting } from '../folios/bookingFolio';
+import { guestCommunicationPreferencesForCreate } from '../lib/guestProfiles';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import { buildInventoryKey } from './updateRoomInventoryControls';
 import {
   DEFAULT_STOREFRONT_ACCENT_PRESET,
   parseStorefrontAccentPreset,
 } from '../../storefront/lib/storefront-theme';
+import { assertHotelOnboardingData } from '../../platform/onboarding/lib/hotelOnboardingSchema';
+import { HOTEL_SETUP_COMPLETION_KEY, inspectHotelSetup, prepareHotelSeed } from '../../platform/onboarding/lib/hotelSeedSafety';
+import { hashLifecycleRequest } from '../lib/hotelLifecycle';
+import { lockHotelBusinessDate, propertyArrivalInstant } from '../lib/hotelBusinessTime';
+import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { encryptChannelCredentials } from '../lib/channelCredentials';
 
 export type HotelOnboardingTemplate = 'full' | 'minimal' | 'custom';
-const SEED_VERSION = 'hotel-seed-v2';
-const CUSTOM_SECTIONS = new Set([
-  'hotelSettings', 'roomTypes', 'rooms', 'ratePlans', 'seasonalRates', 'guests', 'bookings',
-  'bookingPayments', 'housekeepingTasks', 'maintenanceRequests', 'channels', 'channelReservations',
-  'channelSyncEvents', 'loyaltyTransactions', 'inventory', 'dailyMetrics',
-]);
+const SEED_VERSION = 'hotel-seed-v4';
 
 type SeedResult = 'created' | 'updated' | 'skipped';
 
@@ -44,7 +46,7 @@ const MINIMAL_KEYS: Record<string, Set<string>> = {
 };
 
 export function assertCanRunHotelOnboarding(session: any) {
-  if (!session?.itemId || !session?.data?.role?.canManageOnboarding) {
+  if (!session?.itemId || session.data?.isActive !== true || !session?.data?.role?.canManageOnboarding) {
     throw new Error('You do not have permission to run hotel onboarding.');
   }
 }
@@ -54,24 +56,9 @@ export function normalizeHotelOnboardingTemplate(value: string): HotelOnboarding
   throw new Error('Unsupported onboarding template.');
 }
 
-function normalizeCustomSeed(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Custom onboarding data must be an object.');
-  const source = value as Record<string, unknown>;
-  const unknown = Object.keys(source).filter(key => !CUSTOM_SECTIONS.has(key));
-  if (unknown.length) throw new Error('Custom onboarding data contains unsupported sections.');
-  const encoded = JSON.stringify(source);
-  if (encoded.length > 250_000) throw new Error('Custom onboarding data is too large.');
-  for (const [key, rows] of Object.entries(source)) {
-    if (key === 'hotelSettings') continue;
-    if (!Array.isArray(rows) || rows.length > 500) throw new Error(`Custom onboarding section ${key} must be a bounded array.`);
-    if (key === 'dailyMetrics' && rows.length) throw new Error('dailyMetrics is legacy-only; operational reports derive facts from bookings, folios, and payments.');
-  }
-  return source as any;
-}
-
-function canonicalSeedForTemplate(template: HotelOnboardingTemplate, customData?: unknown) {
-  const source: any = template === 'custom' ? normalizeCustomSeed(customData) : seedData;
-  if (template === 'full' || template === 'custom') return source;
+export function canonicalSeedForTemplate(template: HotelOnboardingTemplate, customData?: unknown) {
+  const source: any = template === 'custom' ? customData : seedData;
+  if (template === 'full' || template === 'custom') return assertHotelOnboardingData(source);
   const result: any = { hotelSettings: source.hotelSettings };
   for (const [section, rows] of Object.entries(source)) {
     if (!Array.isArray(rows)) continue;
@@ -92,7 +79,7 @@ function canonicalSeedForTemplate(template: HotelOnboardingTemplate, customData?
         )
       : rows;
   }
-  return result;
+  return assertHotelOnboardingData(result);
 }
 
 function confirmationNumber() {
@@ -146,14 +133,27 @@ async function runHotelOnboarding(
 ) {
   assertCanRunHotelOnboarding(context.session);
   const normalizedTemplate = normalizeHotelOnboardingTemplate(template);
-  const seed = canonicalSeedForTemplate(normalizedTemplate, data);
+  const inputSeed = canonicalSeedForTemplate(normalizedTemplate, data);
+  // Bind retries to the original request, before applying a relative calendar.
+  const setupHash = hashLifecycleRequest({ template: normalizedTemplate, data: inputSeed });
 
-  return context.transaction(async (transactionContext: any) => {
+  return runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma as any;
     await prisma.$executeRawUnsafe(
       'SELECT pg_advisory_xact_lock(hashtext($1))',
       'the-alder-house-onboarding'
     );
+    await lockHotelBusinessDate(prisma);
+
+    const setup = await inspectHotelSetup(prisma, setupHash);
+    if (setup.replayed) {
+      await prisma.user.update({ where: { id: context.session.itemId }, data: { onboardingStatus: 'completed' } });
+      return { success: true, message: 'Hotel setup was already completed. Existing operating data was preserved.', createdCount: 0, updatedCount: 0, skippedCount: 1 };
+    }
+    const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
+    if (!clock) throw new Error('Property business date is not configured. Complete the reviewed installation before hotel setup.');
+    const seed = prepareHotelSeed(inputSeed, clock.currentBusinessDate, normalizedTemplate !== 'custom');
+    await prisma.user.update({ where: { id: context.session.itemId }, data: { onboardingStatus: 'in_progress' } });
 
     const results: SeedResult[] = [];
     const settings = {
@@ -241,6 +241,7 @@ async function runHotelOnboarding(
       await bindSeedRecord(prisma, seedKey, 'rooms', record.id, room);
     }
 
+    const ratePlanIds: Record<string, string> = {};
     for (const [index, rate] of (seed.ratePlans || []).entries()) {
       const seedKey = seedRowKey('ratePlans', rate, index);
       const binding = await prisma.hotelSeedRecord.findUnique({ where: { seedKey } });
@@ -252,6 +253,7 @@ async function runHotelOnboarding(
       if (!existing) { record = await prisma.ratePlan.create({ data: rateData }); results.push('created'); }
       else if (!seedValuesMatch(existing, rateData)) { record = await prisma.ratePlan.update({ where: { id: existing.id }, data: rateData }); results.push('updated'); }
       else results.push('skipped');
+      ratePlanIds[rate.name] = record.id;
       await bindSeedRecord(prisma, seedKey, 'ratePlans', record.id, rate);
     }
 
@@ -277,7 +279,13 @@ async function runHotelOnboarding(
         || await prisma.guest.findUnique({ where: { email: guest.email } });
       let record = existing;
       const safeData = Object.fromEntries(Object.entries(guest).filter(([key]) => !['key', 'totalStays', 'totalSpent', 'lastStayAt', 'loyaltyPoints', 'loyaltyTier'].includes(key)));
-      if (!existing) { record = await prisma.guest.create({ data: safeData }); results.push('created'); }
+      if (!existing) {
+        record = await prisma.guest.create({ data: {
+          ...safeData,
+          communicationPreferences: guestCommunicationPreferencesForCreate(safeData.communicationPreferences),
+        } });
+        results.push('created');
+      }
       else {
         if (!seedValuesMatch(existing, safeData)) { record = await prisma.guest.update({ where: { id: existing.id }, data: safeData }); results.push('updated'); }
         else results.push('skipped');
@@ -296,6 +304,10 @@ async function runHotelOnboarding(
       let record = existing;
       if (!record) {
         const token = createGuestAccessToken();
+        const ratePlan = seed.ratePlans.find((rate: any) => rate.name === booking.ratePlan);
+        const nights = Math.round((new Date(booking.checkOutDate).getTime() - new Date(booking.checkInDate).getTime()) / 86_400_000);
+        const roomSubtotalMinor = Math.round(booking.roomRate * 100);
+        const nightlyAmounts = allocateMinorUnits(roomSubtotalMinor, nights);
         record = await prisma.booking.create({
           data: {
             confirmationNumber: confirmationNumber(),
@@ -319,6 +331,19 @@ async function runHotelOnboarding(
             totalAmount: booking.totalAmount,
             depositAmount: booking.depositAmount,
             balanceDue: booking.balanceDue,
+            ratePlanId: ratePlanIds[booking.ratePlan],
+            pricingVersion: SEED_VERSION,
+            pricingRevision: 1,
+            pricingSnapshot: {
+              snapshotKeyPrefix: 'v1', ratePlanId: ratePlanIds[booking.ratePlan], ratePlanName: ratePlan.name,
+              cancellationPolicy: ratePlan.cancellationPolicy, mealPlan: ratePlan.mealPlan,
+              arrivalInstant: propertyArrivalInstant(new Date(booking.checkInDate), seed.hotelSettings.checkInTime || '15:00', seed.hotelSettings.timeZone || 'UTC').toISOString(),
+              propertyTimeZone: seed.hotelSettings.timeZone || 'UTC',
+              taxRateBasisPoints: seed.hotelSettings.taxRateBasisPoints,
+              nightlyRates: nightlyAmounts.map((amountMinor, index) => ({ date: new Date(new Date(booking.checkInDate).getTime() + index * 86_400_000).toISOString(), amountMinor })),
+              roomSubtotalMinor, taxMinor: Math.round(booking.taxAmount * 100), feesMinor: Math.round(booking.feesAmount * 100),
+              totalMinor: Math.round(booking.totalAmount * 100), currencyCode: booking.currencyCode || 'USD',
+            },
             status: booking.status,
             paymentStatus: booking.paymentStatus,
             source: booking.source,
@@ -327,6 +352,9 @@ async function runHotelOnboarding(
             guestProfileId: guestIds[booking.guestEmail],
             guestAccessTokenHash: hashGuestAccessToken(token),
             guestAccessTokenIssuedAt: new Date(),
+            holdExpiresAt: booking.status === 'pending' ? new Date(Date.now() + 2 * 60 * 60_000) : null,
+            checkedInAt: booking.status === 'checked_in' ? new Date(booking.checkInDate) : null,
+            confirmedAt: ['confirmed', 'checked_in', 'checked_out'].includes(booking.status) ? new Date() : null,
           },
         });
         await prisma.roomAssignment.create({
@@ -336,7 +364,7 @@ async function runHotelOnboarding(
             roomTypeId: roomTypeIds[booking.roomType],
             guestName: booking.guestName,
             ratePerNightMinor: Math.round(Number(booking.roomRate || 0) * 100 / Math.max(1, Math.round((new Date(booking.checkOutDate).getTime() - new Date(booking.checkInDate).getTime()) / 86_400_000))),
-            ratePerNight: booking.roomRate,
+            ratePerNight: Math.round(roomSubtotalMinor / nights) / 100,
             specialRequests: booking.specialRequests,
           },
         });
@@ -347,10 +375,9 @@ async function runHotelOnboarding(
       results.push(existing ? 'skipped' : 'created');
     }
 
-    // Backfill every pre-gate reservation in the same transaction. A booking
-    // without a room-type assignment is an invalid snapshot source and rolls
-    // the entire onboarding application back instead of leaving partial data.
-    const allBookings = await prisma.booking.findMany({ select: { id: true, folio: { select: { status: true } } } });
+    // Setup owns only records created in this transaction, never an implicit
+    // historical repair of unrelated live bookings or payments.
+    const allBookings = await prisma.booking.findMany({ where: { id: { in: Object.values(bookingIds) } }, select: { id: true, status: true, folio: { select: { status: true } } } });
     for (const booking of allBookings) {
       await ensureBookingHasGuestAccess(transactionContext, booking.id);
       const snapshotResult = await ensureReservationSnapshots(
@@ -359,7 +386,9 @@ async function runHotelOnboarding(
       );
       results.push(...Array(snapshotResult.created).fill('created' as const));
       results.push(...Array(snapshotResult.existing).fill('skipped' as const));
-      const folioResult = await ensureBookingFolio(transactionContext, booking.id, { postSnapshotEntries: booking.folio?.status !== 'closed' && booking.folio?.status !== 'voided' });
+      const folioResult = await ensureBookingFolio(transactionContext, booking.id, {
+        postSnapshotEntries: booking.status === 'checked_in', serviceDate: clock.currentBusinessDate,
+      });
       results.push(...Array(folioResult.created).fill('created' as const));
       results.push(...Array(folioResult.existing).fill('skipped' as const));
     }
@@ -399,11 +428,10 @@ async function runHotelOnboarding(
 
     // Repair any historical settled payment that predates automatic folio
     // posting. The stable payment-derived posting key makes this replay-safe.
-    const settledPayments = await prisma.$queryRawUnsafe(
-      `SELECT "id" FROM "BookingPayment"
-       WHERE "booking" IS NOT NULL AND "status" IN ('completed', 'refunded')
-       ORDER BY "id" ASC`
-    ) as Array<{ id: string }>;
+    const settledPayments = await prisma.bookingPayment.findMany({
+      where: { bookingId: { in: Object.values(bookingIds) }, status: { in: ['completed', 'refunded'] } },
+      select: { id: true }, orderBy: { id: 'asc' },
+    });
     for (const payment of settledPayments) {
       const existingEntry = await prisma.folioEntry.findUnique({
         where: { postingKey: `folio:payment:${payment.id}` },
@@ -447,7 +475,7 @@ async function runHotelOnboarding(
       const channelData = {
         channelType: channel.channelType, isActive: live, commission: channel.commission,
         syncInventory: channel.syncInventory, syncRates: false, syncStatus: live ? channel.syncStatus : 'paused',
-        syncErrors: channel.syncErrors, mappingRules: channel.mappingRules, credentials: channel.credentials,
+        syncErrors: channel.syncErrors, mappingRules: channel.mappingRules, credentials: encryptChannelCredentials(channel.credentials || {}),
       };
       let record = existing;
       if (!record) { record = await prisma.channel.create({ data: { name: channel.name, ...channelData } }); results.push('created'); }
@@ -524,6 +552,9 @@ async function runHotelOnboarding(
       await bindSeedRecord(prisma, seedKey, 'inventory', record.id, inventory);
     }
 
+    await prisma.hotelSeedRecord.create({ data: {
+      seedKey: HOTEL_SETUP_COMPLETION_KEY, section: 'setup', entityId: '1', contentHash: setupHash, seedVersion: SEED_VERSION,
+    } });
     await prisma.user.update({
       where: { id: context.session.itemId },
       data: { onboardingStatus: 'completed' },

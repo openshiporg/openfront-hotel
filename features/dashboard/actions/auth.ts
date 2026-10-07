@@ -6,6 +6,12 @@ import { redirect } from 'next/navigation';
 import { removeAuthToken } from '@/features/dashboard/lib/cookies';
 import { revalidatePath } from 'next/cache';
 import { getGraphQLEndpoint } from '@/features/dashboard/lib/getBaseUrl';
+import { safeDashboardReturnPath } from '@/features/dashboard/lib/safeDashboardReturnPath';
+import { safeGraphQLError } from '@/features/dashboard/lib/safeGraphQLError';
+import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
+import { hotelResetActionSecret } from '@/features/keystone/lib/hotelResetActionSecret';
+
+const boundedGraphqlFetch = createBoundedGraphqlFetch(8_000);
 
 // Define types for GraphQL responses
 interface RedeemTokenResponse {
@@ -18,7 +24,8 @@ interface RedeemTokenResponse {
 export async function signIn(prevState: { message: string | null, formData: { email: string, password: string } }, formData: FormData) {
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
-  const from = formData.get('from') as string || '/dashboard';
+  const from = safeDashboardReturnPath(formData.get('from'));
+  let challengeRequired = false;
 
   const query = `
     mutation($email: String!, $password: String!) {
@@ -44,7 +51,7 @@ export async function signIn(prevState: { message: string | null, formData: { em
     if (!response.success) {
       return {
         message: `Authentication failed: ${response.error}`,
-        formData: { email, password }
+        formData: { email, password: '' }
       };
     }
 
@@ -52,7 +59,7 @@ export async function signIn(prevState: { message: string | null, formData: { em
     if (response.data?.authenticate?.message) {
       return {
         message: response.data.authenticate.message,
-        formData: { email, password }
+        formData: { email, password: '' }
       };
     }
 
@@ -60,7 +67,7 @@ export async function signIn(prevState: { message: string | null, formData: { em
     if (!response.data?.authenticate?.sessionToken) {
       return {
         message: 'An unexpected error occurred',
-        formData: { email, password }
+        formData: { email, password: '' }
       };
     }
 
@@ -71,19 +78,24 @@ export async function signIn(prevState: { message: string | null, formData: { em
       sameSite: 'lax',
       path: '/',
       httpOnly: true,
-      maxAge: 60 * 60 * 24 * 30, // 30 days
+      maxAge: 60 * 60 * 12,
     });
+    const mfa = await keystoneClient<any>('query { hotelMfaStatus }');
+    if (!mfa.success || !mfa.data?.hotelMfaStatus) { cookieStore.delete('keystonejs-session'); throw new Error('Unable to verify authentication status. Sign in again.'); }
+    const status = JSON.parse(mfa.data.hotelMfaStatus);
+    challengeRequired = status.challengeRequired === true;
+    if (!challengeRequired && !status.authenticated) { cookieStore.delete('keystonejs-session'); throw new Error('Authentication is not permitted.'); }
   } catch (error) {
     return {
-      message: error instanceof Error ? error.message : 'Failed to authenticate',
-      formData: { email, password }
+      message: safeGraphQLError(error).message,
+      formData: { email, password: '' }
     };
   }
 
   // Validate and sanitize the from URL to prevent open redirect vulnerabilities
 
   // Redirect must be outside of try/catch
-  redirect(from);
+  redirect(challengeRequired ? `/dashboard/signin/mfa?from=${encodeURIComponent(from)}` : from);
 }
 
 export async function signUp(prevState: { message: string | null, formData: { email: string, password: string } }, formData: FormData) {
@@ -108,18 +120,18 @@ export async function signUp(prevState: { message: string | null, formData: { em
     if (!response.success) {
       return {
         message: `Failed to create user: ${response.error}`,
-        formData: { email, password }
+        formData: { email, password: '' }
       };
     }
 
     // Sign them in after creation
-    return signIn({ message: null, formData: { email, password } }, formData);
+    return signIn({ message: null, formData: { email, password: '' } }, formData);
   } catch (error) {
     return {
-      message: error instanceof Error ? error.message : 'An error occurred',
+      message: safeGraphQLError(error).message,
       formData: {
         email: formData.get('email') as string,
-        password: formData.get('password') as string
+        password: ''
       }
     };
   }
@@ -143,15 +155,15 @@ export async function signOut() {
     revalidatePath("/", "layout");
 
     if (!response.success) {
-      console.error(`Failed to sign out: ${response.error}`);
+      console.error('Failed to sign out');
       // Still redirect even if server logout fails, since we cleared the cookie
     }
-  } catch (error) {
+  } catch {
     // Still remove the cookie even if there's an error
     await removeAuthToken();
     // Clear cache even on error
     revalidatePath("/", "layout");
-    console.error("Logout error:", error instanceof Error ? error.message : 'An error occurred');
+    console.error('Logout failed after local session cleanup');
   }
   
   // Always redirect after logout attempt
@@ -184,18 +196,18 @@ export async function createInitialUser(prevState: { message: string | null, for
     if (!response.success) {
       return {
         message: `Failed to create initial user: ${response.error}`,
-        formData: { name, email, password }
+        formData: { name, email, password: '' }
       };
     }
 
     return {
       data: response.data,
-      formData: { name, email, password }
+      formData: { name, email, password: '' }
     };
   } catch (error) {
     return {
-      message: error instanceof Error ? error.message : 'Failed to create initial user',
-      formData: { name, email, password }
+      message: safeGraphQLError(error).message,
+      formData: { name, email, password: '' }
     };
   }
 }
@@ -226,25 +238,25 @@ export async function resetPassword(prevState: { message: string | null, success
       if (!response.success) {
         return {
           message: `Password reset failed: ${response.error}`,
-          formData: { email, password }
+          formData: { email, password: '' }
         };
       }
 
       if (response.data?.redeemUserPasswordResetToken?.code) {
         return {
           message: response.data.redeemUserPasswordResetToken.message,
-          formData: { email, password }
+          formData: { email, password: '' }
         };
       }
 
       return {
         success: 'Password has been reset. You can now sign in.',
-        formData: { email, password }
+        formData: { email, password: '' }
       };
     } catch (error) {
       return {
-        message: error instanceof Error ? error.message : 'Reset operation failed',
-        formData: { email, password }
+        message: safeGraphQLError(error).message,
+        formData: { email, password: '' }
       };
     }
   } else {
@@ -255,9 +267,9 @@ export async function resetPassword(prevState: { message: string | null, success
     const startedAt = Date.now();
     try {
       const endpoint = await getGraphQLEndpoint();
-      await fetch(endpoint, {
+      await boundedGraphqlFetch(endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-hotel-reset-action': process.env.RESET_ACTION_SECRET || '' },
+        headers: { 'content-type': 'application/json', 'x-hotel-reset-action': hotelResetActionSecret() },
         body: JSON.stringify({
           query: 'mutation($email:String!){sendUserPasswordResetLink(email:$email)}',
           variables: { email: String(email || '').trim().toLowerCase() },
@@ -286,6 +298,7 @@ export async function getAuthenticatedUser() {
         canManageOnboarding
         canManageAudit
         canManageIntegrations
+        canManageGuestPrivacy canApproveHotelExceptions
       }
       authenticatedItem {
         ... on User {

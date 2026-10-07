@@ -1,0 +1,16 @@
+'use client';
+import * as React from 'react';
+import Link from 'next/link';
+import { graphqlClient } from '@/lib/graphql-client';
+import { operationAttempt } from '@/lib/operationAttempt';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+export function SecurityAuthorizationOperations({ bookingId }: { bookingId: string }) {
+  const [data, setData] = React.useState<any>(null); const [amount, setAmount] = React.useState(''); const [approvalId, setApprovalId] = React.useState(''); const [message, setMessage] = React.useState(''); const [busy, setBusy] = React.useState(false);
+  const load = React.useCallback(async () => { const result = await graphqlClient.request<any>('query($bookingId:ID!){hotelSecurityAuthorization(bookingId:$bookingId)}', { bookingId }); setData(result.hotelSecurityAuthorization); }, [bookingId]);
+  React.useEffect(() => { void load().catch(() => setMessage('Security authorization could not be loaded.')); }, [load]);
+  async function run(action: string) { setBusy(true); setMessage(''); try { const payload = { action, bookingId, amountMinor: action === 'capture' ? Number(amount) : 0, approvalId }; const attempt = await operationAttempt('security-operator', payload); await graphqlClient.request('mutation($input:JSON!){manageHotelSecurityAuthorization(input:$input)}', { input: { ...payload, idempotencyKey: attempt.key } }); await load(); attempt.complete(); setMessage('Provider evidence reconciled. Authorization alone is not received money.'); } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Security operation failed.'); } finally { setBusy(false); } }
+  if (!data?.authorization) return null;
+  return <Card><CardHeader><CardTitle>Security authorization</CardTitle></CardHeader><CardContent className="space-y-3"><p>{data.authorization.status.replaceAll('_', ' ')} · ${(data.authorization.amountMinor / 100).toFixed(2)}</p><p className="break-all text-sm">Approval target: {data.authorization.id}</p>{data.authorization.expiresAt && <p>Provider deadline: {new Date(data.authorization.expiresAt).toLocaleString()}</p>}<p>Capture requires an independent security-capture approval for the exact amount and cannot exceed actual posted folio charges. <Link href="/dashboard/platform/approvals" target="_blank" className="underline">Open approvals</Link></p><Input aria-label="Security capture amount in minor units" type="number" min="1" value={amount} onChange={event => setAmount(event.target.value)} placeholder="Capture minor units"/><Input aria-label="Security capture approval ID" value={approvalId} onChange={event => setApprovalId(event.target.value)} placeholder="Approval ID"/><div className="flex flex-wrap gap-2"><Button disabled={busy} variant="outline" onClick={() => void run('sync')}>Reconcile</Button><Button disabled={busy || !data.operator} variant="outline" onClick={() => void run('release')}>Release card hold</Button><Button disabled={busy || !data.operator || !approvalId || !amount} onClick={() => void run('capture')}>Capture approved charges</Button></div>{message && <p role="status">{message}</p>}</CardContent></Card>;
+}

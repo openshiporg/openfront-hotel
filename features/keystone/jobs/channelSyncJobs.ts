@@ -1,78 +1,78 @@
-import { getContext } from '@keystone-6/core/context'
 import type { KeystoneConfig } from '@keystone-6/core/types'
-import * as PrismaModule from '@prisma/client'
-import { pullReservationsFromChannel, pushInventoryToChannel, retryFailedChannelSyncs } from '../lib/channelSync'
-import { acquireWorkerLease } from '../lib/workerLease'
+import { getHotelWorkerContext } from './runtimeContext'
+import { pullReservationsFromChannel, pushInventoryToChannel, retryFailedChannelSyncs } from '../channels/commands'
+import { acquireWorkerLease, createNonOverlappingTick, createWorkerLeaseOwnerId } from '../lib/workerLease'
+import { safeOperationalErrorMessage } from '../lib/safeOperationalError'
 
 const INVENTORY_SYNC_INTERVAL_MS = 15 * 60 * 1000
 const RESERVATION_SYNC_INTERVAL_MS = 5 * 60 * 1000
 const RETRY_INTERVAL_MS = 2 * 60 * 1000
+const WORKER_LEASE_TTL_MS = 120_000
 
 export function startChannelSyncJobs(config: KeystoneConfig) {
-  if (process.env.NODE_ENV === 'test') {
-    return
-  }
-
+  if (process.env.NODE_ENV === 'test') return
   if ((globalThis as any).__channelSyncJobsState) return
 
-  const context = getContext(config, PrismaModule)
-  const ownerId = process.env.CHANNEL_SYNC_WORKER_ID || `hotel-channel-${process.pid}`
+  const context = getHotelWorkerContext(config)
   let stopping = false
-  const leased = async (leaseKey: string, ttlMs: number, job: () => Promise<void>) => {
-    if (stopping || !(await acquireWorkerLease(context.prisma, { leaseKey, ownerId, ttlMs }))) return
-    await job()
-  }
-
-  const syncInventory = async () => {
-    const channels = await context.sudo().query.Channel.findMany({
-      where: { isActive: { equals: true } },
-      query: 'id name',
-    })
-
-    for (const channel of channels) {
-      try {
-        await pushInventoryToChannel(context, channel.id)
-      } catch (error) {
-        console.error('Inventory sync failed for channel:', channel.id, error)
-      }
-    }
-  }
-
-  const syncReservations = async () => {
-    const channels = await context.sudo().query.Channel.findMany({
-      where: { isActive: { equals: true } },
-      query: 'id name',
-    })
-
-    for (const channel of channels) {
-      try {
-        await pullReservationsFromChannel(context, channel.id)
-      } catch (error) {
-        console.error('Reservation pull failed for channel:', channel.id, error)
-      }
-    }
-  }
-
-  const retryFailed = async () => {
+  const leased = async (leaseKey: string, job: (renewLease: () => Promise<boolean>) => Promise<void>) => {
+    if (stopping) return
+    const ownerId = createWorkerLeaseOwnerId(`hotel-channel-${leaseKey}`)
+    const renewLease = async () => !stopping && await acquireWorkerLease(context.prisma, { leaseKey, ownerId, ttlMs: WORKER_LEASE_TTL_MS })
     try {
-      await retryFailedChannelSyncs(context)
+      if (!(await renewLease())) return
+      await job(renewLease)
     } catch (error) {
-      console.error('Channel sync retry failed:', error)
+      console.error(safeOperationalErrorMessage('worker', error))
     }
   }
 
-  const inventory = () => leased('channel-inventory', INVENTORY_SYNC_INTERVAL_MS * 2, syncInventory)
-  const reservations = () => leased('channel-reservations', RESERVATION_SYNC_INTERVAL_MS * 2, syncReservations)
-  const retries = () => leased('channel-retries', RETRY_INTERVAL_MS * 2, retryFailed)
+  const syncInventory = createNonOverlappingTick(() => leased('channel-inventory', async renewLease => {
+    const channels = await context.sudo().query.Channel.findMany({
+      where: { isActive: { equals: true } },
+      query: 'id name',
+    })
+    for (const channel of channels) {
+      if (!(await renewLease())) return
+      try {
+        await pushInventoryToChannel(context, channel.id, undefined, fetch, renewLease)
+      } catch (error) {
+        console.error(safeOperationalErrorMessage('channel', error), channel.id)
+      }
+    }
+  }))
+
+  const syncReservations = createNonOverlappingTick(() => leased('channel-reservations', async renewLease => {
+    const channels = await context.sudo().query.Channel.findMany({
+      where: { isActive: { equals: true } },
+      query: 'id name',
+    })
+    for (const channel of channels) {
+      if (!(await renewLease())) return
+      try {
+        await pullReservationsFromChannel(context, channel.id, fetch, renewLease)
+      } catch (error) {
+        console.error(safeOperationalErrorMessage('channel', error), channel.id)
+      }
+    }
+  }))
+
+  const retryFailed = createNonOverlappingTick(() => leased('channel-retries', async renewLease => {
+    await retryFailedChannelSyncs(context, renewLease)
+  }))
+
   const intervals = [
-    setInterval(() => void inventory(), INVENTORY_SYNC_INTERVAL_MS),
-    setInterval(() => void reservations(), RESERVATION_SYNC_INTERVAL_MS),
-    setInterval(() => void retries(), RETRY_INTERVAL_MS),
+    setInterval(() => void syncInventory(), INVENTORY_SYNC_INTERVAL_MS),
+    setInterval(() => void syncReservations(), RESERVATION_SYNC_INTERVAL_MS),
+    setInterval(() => void retryFailed(), RETRY_INTERVAL_MS),
   ]
   intervals.forEach(interval => interval.unref())
-  const shutdown = () => { stopping = true; intervals.forEach(clearInterval) }
-  process.once('SIGTERM', shutdown)
-  process.once('SIGINT', shutdown)
+  const shutdown = async () => {
+    stopping = true;
+    intervals.forEach(clearInterval);
+    await Promise.all([syncInventory.drain(), syncReservations.drain(), retryFailed.drain()]);
+  }
   ;(globalThis as any).__channelSyncJobsState = { intervals, shutdown }
-  void inventory(); void reservations(); void retries()
+  void syncInventory(); void syncReservations(); void retryFailed()
+  return shutdown
 }

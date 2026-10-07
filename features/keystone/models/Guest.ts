@@ -11,7 +11,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { encryptSensitiveText } from '../lib/sensitiveData'
+import { assertGuestProfileEditable, resolveGuestIdentityInput } from '../guest-governance/commands'
 
 export const Guest = list({
   access: {
@@ -78,7 +78,7 @@ export const Guest = list({
     }),
 
     // Loyalty program
-    loyaltyNumber: text({
+    loyaltyNumber: text({ access: { create: () => false, update: () => false },
       isIndexed: 'unique',
       db: { isNullable: true },
       label: 'Loyalty Number',
@@ -86,7 +86,7 @@ export const Guest = list({
         description: 'Guest loyalty program number',
       },
     }),
-    loyaltyTier: select({
+    loyaltyTier: select({ access: { create: () => false, update: () => false },
       type: 'string',
       options: [
         { label: 'Bronze', value: 'bronze' },
@@ -101,7 +101,7 @@ export const Guest = list({
         description: 'Current loyalty program tier',
       },
     }),
-    loyaltyPoints: text({
+    loyaltyPoints: text({ access: { create: () => false, update: () => false },
       label: 'Loyalty Points',
       ui: {
         description: 'Current accumulated loyalty points',
@@ -110,6 +110,7 @@ export const Guest = list({
 
     // Communication preferences
     communicationPreferences: json({
+      access: { create: () => false, update: () => false },
       label: 'Communication Preferences',
       ui: {
         description: 'How the guest prefers to be contacted',
@@ -118,7 +119,7 @@ export const Guest = list({
         itemView: { fieldMode: 'edit' },
       },
       defaultValue: {
-        emailMarketing: true,
+        emailMarketing: false,
         smsNotifications: false,
         phoneNotifications: false,
         preferredLanguage: 'en',
@@ -143,7 +144,7 @@ export const Guest = list({
     idNumber: text({
       label: 'ID Number',
       access: { read: denyAll, create: permissions.canManageGuests, update: permissions.canManageGuests },
-      hooks: { resolveInput: ({ resolvedData }) => encryptSensitiveText(resolvedData) },
+      hooks: { resolveInput: ({ resolvedData }) => resolveGuestIdentityInput(resolvedData) },
       ui: {
         description: 'Encrypted identification document number; never returned by generic GraphQL.',
       },
@@ -208,6 +209,7 @@ export const Guest = list({
 
     // Relationships
     bookings: relationship({
+      access: { create: () => false, update: () => false },
       ref: 'Booking.guestProfile',
       many: true,
       ui: {
@@ -260,13 +262,16 @@ export const Guest = list({
     ...trackingFields,
   },
   hooks: {
-    resolveInput: async ({ resolvedData }) => ({
-      ...resolvedData,
-      ...(typeof resolvedData.email === 'string' ? { email: resolvedData.email.trim().toLowerCase() } : {}),
-      ...(typeof resolvedData.firstName === 'string' ? { firstName: resolvedData.firstName.trim() } : {}),
-      ...(typeof resolvedData.lastName === 'string' ? { lastName: resolvedData.lastName.trim() } : {}),
-      ...(typeof resolvedData.phone === 'string' ? { phone: resolvedData.phone.trim() } : {}),
-    }),
+    resolveInput: async ({ resolvedData, operation, item, context }) => {
+      if (operation === 'update' && item?.id) await assertGuestProfileEditable(context.prisma, String(item.id));
+      return {
+        ...resolvedData,
+        ...(typeof resolvedData.email === 'string' ? { email: resolvedData.email.trim().toLowerCase() } : {}),
+        ...(typeof resolvedData.firstName === 'string' ? { firstName: resolvedData.firstName.trim() } : {}),
+        ...(typeof resolvedData.lastName === 'string' ? { lastName: resolvedData.lastName.trim() } : {}),
+        ...(typeof resolvedData.phone === 'string' ? { phone: resolvedData.phone.trim() } : {}),
+      };
+    },
     afterOperation: async ({ operation, item, originalItem, context }) => {
       if (operation !== 'update' || !item?.id) return;
       const identityChanged =

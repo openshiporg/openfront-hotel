@@ -1,3 +1,5 @@
+import { loadRateEconomics } from '../rates/economics';
+import { requireHotelApproval } from '../guest-governance/commands';
 import { permissions } from '../access';
 import {
   findHotelLifecycleReplay,
@@ -5,17 +7,20 @@ import {
   recordHotelLifecycleEvent,
 } from '../lib/hotelLifecycle';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 
 const RATE_STATUSES = new Set(['active', 'inactive', 'draft']);
 
 export default async function updateRatePlanPublication(
   root: unknown,
   {
+    approvalId,
     ratePlanId,
     status,
     isPublic,
     idempotencyKey,
   }: {
+    approvalId?: string | null;
     ratePlanId: string;
     status?: string | null;
     isPublic?: boolean | null;
@@ -43,6 +48,7 @@ export default async function updateRatePlanPublication(
   await runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma;
     await lockHotelLifecycle(prisma, eventKey);
+    await lockHotelBusinessDate(prisma);
     if (await findHotelLifecycleReplay(prisma, eventKey, identity)) return;
     const plan = await prisma.ratePlan.findUnique({ where: { id: ratePlanId } });
     if (!plan?.roomTypeId) throw new Error('Rate plan or required room type not found.');
@@ -57,6 +63,8 @@ export default async function updateRatePlanPublication(
     if (nextStatus === 'active' && nextIsPublic && plan.isPromotional && !String(plan.promoCode || '').trim()) {
       throw new Error('A public promotional rate cannot be activated without a promo code.');
     }
+    const settings = await prisma.hotelSettings.findUnique({ where: { id: 1 } });
+    if (settings?.ratePublicationRequiresApproval !== false) await requireHotelApproval(prisma, { approvalId, action: "rate_publish", aggregateId: ratePlanId, amountMinor: 0, actorId: context.session.itemId, operationKey: eventKey, parameters: { status: nextStatus, isPublic: nextIsPublic, economicsHash: (await loadRateEconomics(prisma, ratePlanId)).economicsHash } });
     const updated = await prisma.ratePlan.update({
       where: { id: ratePlanId },
       data: { status: nextStatus, isPublic: nextIsPublic },

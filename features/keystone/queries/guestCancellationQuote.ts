@@ -1,5 +1,5 @@
 import { calculateCancellationTerms } from '../lib/cancellationPolicy';
-import { refundablePaymentMinor } from '../lib/bookingRefund';
+import { refundablePaymentMinor } from '../refunds/bookingRefund';
 import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
 
 export default async function guestCancellationQuote(
@@ -35,7 +35,7 @@ export default async function guestCancellationQuote(
   const firstNightMinor = Number(firstRoomNight?.totalPrice || 0) || Math.ceil(bookingTotalMinor / stayNights);
   const terms = calculateCancellationTerms({
     policy,
-    checkInDate: booking.checkInDate,
+    checkInDate: (booking.pricingSnapshot as any)?.arrivalInstant || booking.checkInDate,
     capturedMinor,
     firstNightMinor,
     bookingTotalMinor,

@@ -1,6 +1,6 @@
 import { permissions } from '../access';
-import { ensureReservationSnapshots as ensureSnapshots } from '../lib/reservationSnapshots';
-import { ensureBookingFolio } from '../lib/bookingFolio';
+import { ensureReservationSnapshots as ensureSnapshots } from '../folios/reservationSnapshots';
+import { ensureBookingFolio } from '../folios/bookingFolio';
 
 export default async function ensureReservationSnapshots(
   root: unknown,

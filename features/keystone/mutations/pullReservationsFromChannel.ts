@@ -1,5 +1,5 @@
 import { permissions } from '../access'
-import { pullReservationsFromChannel } from '../lib/channelSync'
+import { pullReservationsFromChannel } from '../channels/commands'
 
 type PullReservationsInput = {
   channelId: string

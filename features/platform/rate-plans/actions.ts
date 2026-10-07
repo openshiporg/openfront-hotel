@@ -9,6 +9,7 @@ import {
   boundedId,
   boundedInteger,
   boundedIsoDate,
+  boundedText,
   requireActionData,
 } from '@/features/platform/lib/actionResult';
 
@@ -36,8 +37,8 @@ const UPDATE_INVENTORY = String.raw`
   }
 `;
 const UPDATE_RATE = String.raw`
-  mutation($ratePlanId:ID!,$status:String,$isPublic:Boolean,$key:String!){
-    updateRatePlanPublication(ratePlanId:$ratePlanId,status:$status,isPublic:$isPublic,idempotencyKey:$key){id status isPublic}
+  mutation($ratePlanId:ID!,$status:String,$isPublic:Boolean,$key:String!,$approvalId:ID){
+    updateRatePlanPublication(ratePlanId:$ratePlanId,status:$status,isPublic:$isPublic,idempotencyKey:$key,approvalId:$approvalId){id status isPublic}
   }
 `;
 
@@ -63,14 +64,15 @@ export async function updateRoomInventoryAction(input: {
 }
 
 export async function updateRatePlanPublicationAction(input: {
-  ratePlanId: string; status?: string; isPublic?: boolean;
+  idempotencyKey: string; approvalId?: string; ratePlanId: string; status?: string; isPublic?: boolean;
 }) {
   if (input.status === undefined && input.isPublic === undefined) throw new Error('A rate-plan change is required.');
   const response = await keystoneClient<any>(UPDATE_RATE, {
     ratePlanId: boundedId(input.ratePlanId, 'Rate plan ID'),
     status: input.status === undefined ? null : boundedEnum(input.status, 'Rate-plan status', ['draft', 'active', 'inactive'] as const),
     isPublic: input.isPublic === undefined ? null : Boolean(input.isPublic),
-    key: randomUUID(),
+    key: boundedText(input.idempotencyKey, 'Attempt key', 100, true),
+    approvalId: input.approvalId?.trim() ? boundedId(input.approvalId, 'Approval ID') : null,
   });
   return requireActionData(response).updateRatePlanPublication;
 }

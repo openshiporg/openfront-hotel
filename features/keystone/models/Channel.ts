@@ -1,3 +1,4 @@
+import { encryptChannelCredentials, readChannelCredentials } from '../lib/channelCredentials';
 import { list } from '@keystone-6/core'
 import { denyAll } from '@keystone-6/core/access'
 import {
@@ -71,9 +72,9 @@ export const Channel = list({
       },
     }),
 
-    // Experimental P2 bridge configuration. API reads are denied; this release
-    // does not claim application-layer encryption for this JSON field.
+    // Experimental bridge credentials are encrypted at rest and never publicly projected.
     credentials: json({
+      hooks: { resolveInput: ({ resolvedData }) => resolvedData.credentials === undefined ? undefined : encryptChannelCredentials(resolvedData.credentials) },
       access: {
         read: denyAll,
         create: canManageChannels,
@@ -81,7 +82,7 @@ export const Channel = list({
       },
       label: 'Credentials',
       ui: {
-        description: 'Experimental bridge configuration; raw API reads are denied. Protect the database and secret-manager source.',
+        description: 'Encrypted bridge configuration; raw API reads are denied.',
         views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'hidden' },
@@ -144,6 +145,7 @@ export const Channel = list({
 
     // Sync errors
     syncErrors: json({
+      access: { read: permissions.canManageIntegrations },
       label: 'Sync Errors',
       ui: {
         description: 'Array of recent sync errors',
@@ -182,7 +184,8 @@ export const Channel = list({
   hooks: {
     validateInput: ({ resolvedData, item, addValidationError }) => {
       const active = resolvedData.isActive ?? item?.isActive ?? false;
-      const credentials = (resolvedData.credentials ?? item?.credentials ?? {}) as Record<string, unknown>;
+      const stored = resolvedData.credentials ?? item?.credentials;
+      const credentials = stored ? readChannelCredentials({ credentials: stored }) : {};
       if (active && String(credentials.mode || '').toLowerCase() !== 'live') {
         addValidationError('A channel can be activated only with an explicitly certified live custom-bridge configuration.');
       }

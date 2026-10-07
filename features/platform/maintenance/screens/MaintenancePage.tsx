@@ -12,6 +12,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
 import { applyWorkspaceView, workspaceResultLabel } from '@/features/platform/lib/workspace';
 import { getMaintenanceWorkspace, updateMaintenanceStatusAction } from '../actions';
+import MaintenanceCommercialPanel from '../MaintenanceCommercialPanel';
 
 const maintenancePriorityOrder: Record<string, number> = { emergency: 4, high: 3, medium: 2, low: 1 };
 
@@ -103,8 +104,12 @@ export function MaintenancePage() {
   const updateStatus = async (requestId: string, status: string, notes: string) => {
     setUpdatingId(`${requestId}:${status}`);
     try {
-      await updateMaintenanceStatusAction(requestId, status, notes);
+      const response = await updateMaintenanceStatusAction(requestId, status, notes);
       await fetchRequests();
+      if (!response.ok) {
+        toast({ title: 'Unable to update request', description: response.message, variant: 'destructive' });
+        return;
+      }
       toast({
         title: 'Maintenance updated',
         description: `Request marked ${status.replace('_', ' ')}.`,
@@ -238,6 +243,7 @@ export function MaintenancePage() {
                   {request.notes && (
                     <p className="max-w-3xl whitespace-pre-line text-sm text-muted-foreground">{request.notes}</p>
                   )}
+                  <MaintenanceCommercialPanel requestId={request.id} />
                 </div>
 
                 <div className="flex flex-wrap gap-2 lg:justify-end">

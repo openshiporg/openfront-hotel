@@ -7,11 +7,8 @@ import type { SessionStrategy } from '@keystone-6/core/types';
 import { extendGraphqlSchema } from "./mutations";
 import { sendPasswordResetEmail } from "./lib/mail";
 import { permissions } from "./access";
-import { startChannelSyncJobs } from "./jobs/channelSyncJobs";
-import { startHotelOutboxJobs } from './jobs/hotelOutboxJobs';
-import { startHotelRefundJobs } from './jobs/hotelRefundJobs';
-import { startHotelHoldJobs } from './jobs/hotelHoldJobs';
 import { validateProductionConfig } from './lib/productionConfig';
+import { createHotelMfaSessionStrategy } from './lib/hotelMfa';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const capabilities = validateProductionConfig();
@@ -33,7 +30,7 @@ const permissionKeys = [
   'canAccessDashboard', 'canManageRooms', 'canManageBookings', 'canManageHousekeeping',
   'canManageGuests', 'canManagePayments', 'canSeeOtherPeople', 'canEditOtherPeople',
   'canManagePeople', 'canManageRoles', 'canManageOnboarding', 'canManageAudit',
-  'canManageIntegrations',
+  'canManageIntegrations', 'canManageGuestPrivacy', 'canApproveHotelExceptions',
 ] as const;
 
 function revocableStatelessSessions(): SessionStrategy<any> {
@@ -56,22 +53,12 @@ function revocableStatelessSessions(): SessionStrategy<any> {
         email: user.email,
         isActive: true,
         authVersion: user.authVersion,
+        mfaEnabled: Boolean(user.mfaEnabled),
         role: Object.fromEntries(['id', 'name', ...permissionKeys].map(key => [key, user.role[key]])),
       },
     };
   };
-  return {
-    get: async ({ context }) => {
-      const session = await base.get({ context });
-      return loadCurrent(context, session);
-    },
-    start: async ({ context, data }) => {
-      const current = await loadCurrent(context, data, true);
-      if (!current) throw new Error('Authentication is not permitted for this account.');
-      return base.start({ context, data: current });
-    },
-    end: args => base.end(args),
-  };
+  return createHotelMfaSessionStrategy(base, loadCurrent);
 }
 
 const bucketName = process.env.S3_BUCKET_NAME || 'local-disabled';
@@ -103,6 +90,7 @@ const { withAuth } = createAuth({
           canManageOnboarding: true,
           canManageAudit: true,
           canManageIntegrations: true,
+          canManageGuestPrivacy: true, canApproveHotelExceptions: true,
         },
       },
     },
@@ -137,6 +125,7 @@ const { withAuth } = createAuth({
       canManageOnboarding
       canManageAudit
       canManageIntegrations
+      canManageGuestPrivacy canApproveHotelExceptions
     }
   `,
 });
@@ -176,18 +165,5 @@ const baseConfig = config({
 });
 
 const configWithAuth = withAuth(baseConfig);
-
-// Keystone configuration is evaluated while generating schemas and again while
-// Next compiles route handlers. Workers must start only in a running server;
-// build-time execution would connect to production data and make image builds
-// depend on database availability.
-const isRuntimeServer = process.env.NEXT_PHASE !== 'phase-production-build'
-  && process.argv.some(argument => argument === 'dev' || argument === 'start');
-if (isRuntimeServer) {
-  startChannelSyncJobs(configWithAuth);
-  startHotelOutboxJobs(configWithAuth);
-  startHotelRefundJobs(configWithAuth);
-  startHotelHoldJobs(configWithAuth);
-}
 
 export default configWithAuth;

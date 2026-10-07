@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { permissions } from '../access';
 import { isOnlinePaymentProviderCode } from '../lib/paymentSecurity';
-import { paymentIntegrationConfigured } from '../lib/integrationConfig';
+import { paymentIntegrationConfigured, paymentProviderCredentialsConfigured } from '../lib/integrationConfig';
+import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { hashLifecycleRequest, HOTEL_PROPERTY_KEY } from '../lib/hotelLifecycle';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 
 function bounded(value: unknown, label: string, max = 500) {
@@ -37,16 +40,58 @@ export default async function configureHotelPaymentProvider(
           webhookId: bounded(input.webhookId, 'PayPal webhook ID'),
           sandbox: input.sandbox !== false,
         };
+    if (!paymentProviderCredentialsConfigured({ code, isInstalled: true, credentials: data.credentials })) {
+      throw new Error(`Payment provider ${code} credentials are incomplete or invalid.`);
+    }
     data.isInstalled = true;
   }
 
-  await context.query.PaymentProvider.updateOne({ where: { id: existing.id }, data, query: 'id' });
-  const provider = await context.prisma.paymentProvider.findUniqueOrThrow({ where: { id: existing.id } });
-  return {
-    id: provider.id,
-    name: provider.name,
-    code: provider.code,
-    isInstalled: provider.isInstalled,
-    configured: paymentIntegrationConfigured(provider),
-  };
+  return runSerializableTransaction(context, async transactionContext => {
+    await transactionContext.prisma.$executeRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      `hotel-payment-provider-config:${existing.id}`,
+    );
+    const current = await transactionContext.prisma.paymentProvider.findUnique({ where: { id: existing.id } });
+    if (!current || current.code !== code) throw new Error('Payment provider identity changed during configuration.');
+    const result = await transactionContext.sudo().query.PaymentProvider.updateOne({
+      where: { id: current.id },
+      data,
+      query: 'id name code isInstalled',
+    });
+    const persisted = await transactionContext.prisma.paymentProvider.findUniqueOrThrow({ where: { id: current.id } });
+    const auditId = randomUUID();
+    await transactionContext.prisma.hotelAuditEvent.create({
+      data: {
+        eventKey: `payment-provider:${current.id}:${auditId}`,
+        requestHash: hashLifecycleRequest({ code, enabled, auditId }),
+        propertyKey: HOTEL_PROPERTY_KEY,
+        aggregateType: 'payment_provider',
+        aggregateId: current.id,
+        action: enabled ? 'configured' : 'disabled',
+        actorId: context.session.itemId,
+        beforeSnapshot: {
+          code: current.code,
+          isInstalled: current.isInstalled,
+          credentialsComplete: paymentProviderCredentialsConfigured(current),
+        },
+        afterSnapshot: {
+          code: persisted.code,
+          isInstalled: persisted.isInstalled,
+          credentialsComplete: paymentProviderCredentialsConfigured(persisted),
+        },
+        metadataSnapshot: {
+          credentialValuesOmitted: true,
+          credentialsRotated: enabled,
+          credentialsRetainedOnDisable: !enabled,
+        },
+      },
+    });
+    return {
+      id: result.id,
+      name: result.name,
+      code: result.code,
+      isInstalled: result.isInstalled,
+      configured: paymentIntegrationConfigured(persisted),
+    };
+  });
 }

@@ -95,10 +95,10 @@ export function Sidebar({ adminMeta, user, onOpenDialog }: SidebarProps) {
     href: `/dashboard/${list.path}`,
   }))
 
-  const canSee = (item: { permission?: string; permissions?: string[] }) => {
+  const canSee = (item: { permission?: string; permissions?: string[]; anyPermissions?: string[] }) => {
     const required = item.permissions || (item.permission ? [item.permission] : []);
     const role = user?.role as Record<string, unknown> | undefined;
-    return required.every(permission => Boolean(role?.[permission]));
+    return required.every(permission => Boolean(role?.[permission])) && (!item.anyPermissions || item.anyPermissions.some(permission => Boolean(role?.[permission])));
   };
   const standaloneItems = platformStandaloneItems.filter(canSee).map((item) => ({
     ...item,
@@ -108,17 +108,17 @@ export function Sidebar({ adminMeta, user, onOpenDialog }: SidebarProps) {
   const groupedItems = platformNavGroups.map((group) => ({
     title: group.title,
     icon: group.icon,
-    items: getPlatformNavItemsWithBasePath(basePath)
+    items: getPlatformNavItemsWithBasePath(basePath, user)
       .filter((item) => item.group === group.id && canSee(item))
       .map((item) => ({
         title: item.title,
         href: item.href,
         icon: item.icon,
       })),
-    isActive: getPlatformNavItemsWithBasePath(basePath)
+    isActive: getPlatformNavItemsWithBasePath(basePath, user)
       .filter((item) => item.group === group.id && canSee(item))
       .some((item) => isLinkActive(item.href)),
-  }))
+  })).filter((group) => group.items.length > 0)
 
   if (!mounted) {
     return (

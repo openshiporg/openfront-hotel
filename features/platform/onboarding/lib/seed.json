@@ -9,6 +9,10 @@
     "frontDeskCopy": "Front desk · 24 hours",
     "checkInTime": "3:00 PM",
     "checkOutTime": "11:00 AM",
+    "timeZone": "America/New_York",
+    "currencyCode": "USD",
+    "taxRateBasisPoints": 1000,
+    "serviceFeeMinor": 0,
     "storefrontAccentPreset": "brass",
     "heroImagePath": "/images/hotel/the-alder-house-lobby-hero.webp",
     "heroImageAltText": "Warm wood reception and lounge at The Alder House",
@@ -89,10 +93,10 @@
     { "roomNumber": "101", "roomType": "Classic Queen", "floor": 1, "status": "vacant", "notes": "Quiet courtyard side." },
     { "roomNumber": "102", "roomType": "Classic Queen", "floor": 1, "status": "occupied", "notes": "Near housekeeping closet." },
     { "roomNumber": "103", "roomType": "Classic Queen", "floor": 1, "status": "cleaning", "notes": "Turnover in progress." },
-    { "roomNumber": "201", "roomType": "Deluxe King", "floor": 2, "status": "occupied", "notes": "Preferred high-floor upgrade room." },
+    { "roomNumber": "201", "roomType": "Deluxe King", "floor": 2, "status": "vacant", "notes": "Preferred high-floor upgrade room." },
     { "roomNumber": "202", "roomType": "Deluxe King", "floor": 2, "status": "vacant", "notes": "Popular direct booking room." },
     { "roomNumber": "203", "roomType": "Deluxe King", "floor": 2, "status": "maintenance", "notes": "AC inspection scheduled." },
-    { "roomNumber": "301", "roomType": "Family Suite", "floor": 3, "status": "occupied", "notes": "Extended stay family suite." },
+    { "roomNumber": "301", "roomType": "Family Suite", "floor": 3, "status": "vacant", "notes": "Extended stay family suite." },
     { "roomNumber": "302", "roomType": "Family Suite", "floor": 3, "status": "vacant", "notes": "Ready for weekend arrivals." }
   ],
   "ratePlans": [
@@ -202,11 +206,11 @@
       "loyaltyNumber": "OFH-1001",
       "loyaltyTier": "gold",
       "communicationPreferences": {
-        "emailMarketing": true,
+        "emailMarketing": false,
         "smsNotifications": true,
         "phoneNotifications": false,
         "preferredLanguage": "en",
-        "newsletterSubscribed": true
+        "newsletterSubscribed": false
       },
       "company": "Northline Design",
       "specialNotes": "Prefers quiet floors and late checkout when available.",
@@ -262,11 +266,11 @@
       "loyaltyNumber": "OFH-1003",
       "loyaltyTier": "bronze",
       "communicationPreferences": {
-        "emailMarketing": true,
+        "emailMarketing": false,
         "smsNotifications": false,
         "phoneNotifications": false,
         "preferredLanguage": "es",
-        "newsletterSubscribed": true
+        "newsletterSubscribed": false
       },
       "company": "",
       "specialNotes": "Travels with children during school breaks.",
@@ -278,6 +282,7 @@
   "bookings": [
     {
       "key": "ava-deluxe-weekend",
+      "ratePlan": "Deluxe Flexible",
       "label": "Ava Carter · Deluxe King · Mar 18–20",
       "guestEmail": "ava.carter@example.com",
       "guestName": "Ava Carter",
@@ -301,6 +306,7 @@
     },
     {
       "key": "liam-classic-business",
+      "ratePlan": "Classic Flexible",
       "label": "Liam Brooks · Classic Queen · Mar 12–13",
       "guestEmail": "liam.brooks@example.com",
       "guestName": "Liam Brooks",
@@ -324,6 +330,7 @@
     },
     {
       "key": "sofia-family-break",
+      "ratePlan": "Family Escape",
       "label": "Sofia Martinez · Family Suite · Apr 3–6",
       "guestEmail": "sofia.martinez@example.com",
       "guestName": "Sofia Martinez",
@@ -338,8 +345,8 @@
       "taxAmount": 122,
       "feesAmount": 36,
       "totalAmount": 1175,
-      "depositAmount": 250,
-      "balanceDue": 925,
+      "depositAmount": 0,
+      "balanceDue": 1175,
       "status": "pending",
       "paymentStatus": "unpaid",
       "source": "website",

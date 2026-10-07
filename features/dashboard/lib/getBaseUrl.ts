@@ -1,4 +1,4 @@
-import { headers } from "next/headers";
+import { resolveInternalBaseUrl } from '@/features/keystone/lib/internal-origin';
 
 /**
  * Get the base URL for the application dynamically
@@ -11,27 +11,8 @@ export async function getBaseUrl(): Promise<string> {
     return window.location.origin;
   }
 
-  // Server-side: try to get from headers
-  if (typeof process !== 'undefined') {
-    try {
-      // Import headers from next/headers (only works in app directory)
-      const headersList = await headers();
-      
-      // Try x-forwarded-host first (common in production deployments)
-      const host = headersList.get('x-forwarded-host') || headersList.get('host');
-      const protocol = headersList.get('x-forwarded-proto') || 'https';
-      
-      if (host) {
-        return `${protocol}://${host}`;
-      }
-    } catch (e) {
-      // headers() might not be available in all contexts (e.g., API routes)
-      // Fall through to default
-    }
-  }
-
-  // Production fallback - return empty string and let relative URLs work
-  return '';
+  // Server-side GraphQL self-calls always use the loopback listener, never Host or forwarding headers.
+  return resolveInternalBaseUrl();
 }
 
 /**

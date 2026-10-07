@@ -11,14 +11,16 @@ import { Loader2 } from 'lucide-react';
 
 interface StripeCheckoutFormProps {
   amount: number;
+  currencyCode?: string;
   bookingId: string;
   paymentSessionId: string;
-  onSuccess: (paymentIntentId: string) => void;
+  onSuccess: (paymentIntentId: string) => void | Promise<void>;
   onError: (error: string) => void;
 }
 
 export function StripeCheckoutForm({
   amount,
+  currencyCode = 'USD',
   bookingId,
   paymentSessionId,
   onSuccess,
@@ -26,15 +28,17 @@ export function StripeCheckoutForm({
 }: StripeCheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
+  const submission = React.useRef(false);
   const [isProcessing, setIsProcessing] = React.useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!stripe || !elements) {
+    if (!stripe || !elements || submission.current) {
       return;
     }
 
+    submission.current = true;
     setIsProcessing(true);
 
     try {
@@ -49,14 +53,14 @@ export function StripeCheckoutForm({
       if (error) {
         onError(error.message || 'Payment failed');
         setIsProcessing(false);
-      } else if (paymentIntent && paymentIntent.status === 'succeeded') {
-        onSuccess(paymentIntent.id);
+      } else if (paymentIntent) {
+        await onSuccess(paymentIntent.id);
         setIsProcessing(false);
       }
-    } catch (err: any) {
-      onError(err.message || 'Payment failed');
-      setIsProcessing(false);
-    }
+      else { onError('Payment status is unavailable. Check your reservation before retrying.'); }
+    } catch {
+      onError('Payment status could not be checked. Open your reservation before retrying.');
+    } finally { submission.current = false; setIsProcessing(false); }
   };
 
   return (
@@ -75,7 +79,7 @@ export function StripeCheckoutForm({
             Processing Payment...
           </>
         ) : (
-          `Pay $${amount.toFixed(2)}`
+          `Pay ${new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(amount)}`
         )}
       </Button>
     </form>

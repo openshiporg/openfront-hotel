@@ -1,7 +1,11 @@
+import { permissions } from '../access';
+import { getHotelAvailability, hotelStayDates } from '../inventory/roomAvailability';
+import { lockHotelBusinessDate, propertyArrivalInstant } from '../lib/hotelBusinessTime';
+import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { createHash, randomUUID } from 'node:crypto';
 
-import { rejectDisabledGroupOperation } from '../lib/boundedLaunch';
-import { lockRoomInventory } from '../lib/inventoryLock';
+import { assertHotelGroupsEnabled } from '../lib/boundedLaunch';
+import { lockRoomInventory } from '../inventory/roomNightLocks';
 import {
   findHotelLifecycleReplay,
   lockHotelLifecycle,
@@ -25,6 +29,7 @@ export default async function createHotelGroupBlock(
     contactEmail: string;
     billingType: string;
     roomTypeId: string;
+    ratePlanId?: string | null;
     roomsHeld: number;
     rateMinor: number;
     currencyCode: string;
@@ -32,8 +37,7 @@ export default async function createHotelGroupBlock(
   },
   context: any
 ) {
-  rejectDisabledGroupOperation();
-  if (!context.session?.data?.role?.canManageBookings) {
+  if (!permissions.canManageBookings({ session: context.session })) {
     throw new Error('Not authorized to manage group blocks.');
   }
   const idempotencyKey = requiredText(args.idempotencyKey, 'Idempotency key');
@@ -59,10 +63,12 @@ export default async function createHotelGroupBlock(
   if (!Number.isSafeInteger(args.rateMinor) || args.rateMinor < 0) {
     throw new Error('Group rate must be a nonnegative minor-unit integer.');
   }
-  if (!['guest_pays', 'master_folio', 'split'].includes(args.billingType)) {
+  if (!['guest_pays', 'master_folio'].includes(args.billingType)) {
     throw new Error('Unsupported group billing type.');
   }
 
+  hotelStayDates(arrivalDate, departureDate);
+  if (arrivalDate.getUTCHours() || arrivalDate.getUTCMinutes() || arrivalDate.getUTCSeconds() || arrivalDate.getUTCMilliseconds() || departureDate.getUTCHours() || departureDate.getUTCMinutes() || departureDate.getUTCSeconds() || departureDate.getUTCMilliseconds()) throw new Error('Group stay dates must be property calendar dates at midnight UTC.');
   const eventKey = `group-block:create:${idempotencyKey}`;
   const groupId = `grp_${createHash('sha256').update(eventKey).digest('hex').slice(0, 24)}`;
   const identity = {
@@ -72,8 +78,9 @@ export default async function createHotelGroupBlock(
     action: 'created',
   };
 
-  return context.transaction(async (transactionContext: any) => {
+  return runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma;
+    const settings = await assertHotelGroupsEnabled(prisma);
     await lockHotelLifecycle(prisma, eventKey);
     const replay = await findHotelLifecycleReplay(prisma, eventKey, identity);
     if (replay) {
@@ -85,6 +92,9 @@ export default async function createHotelGroupBlock(
       });
     }
 
+    await lockHotelBusinessDate(prisma);
+    const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
+    if (!clock || arrivalDate < clock.currentBusinessDate || (releaseDate && releaseDate <= new Date())) throw new Error('Group arrival cannot precede the open business date and pickup cutoff must be in the future.');
     await lockRoomInventory(prisma, args.roomTypeId, arrivalDate, departureDate);
     const roomType = await prisma.roomType.findUnique({
       where: { id: args.roomTypeId },
@@ -92,63 +102,11 @@ export default async function createHotelGroupBlock(
     });
     if (!roomType) throw new Error('Room type not found.');
 
-    const [overlappingGroups, overlappingBookings, inventories] = await Promise.all([
-      prisma.groupBlockAllocation.findMany({
-        where: {
-          roomTypeId: args.roomTypeId,
-          groupBlock: {
-            status: { in: ['tentative', 'definite'] },
-            arrivalDate: { lt: departureDate },
-            departureDate: { gt: arrivalDate },
-          },
-        },
-        include: { groupBlock: true },
-      }),
-      prisma.booking.findMany({
-        where: {
-          status: { in: ['pending', 'confirmed', 'checked_in'] },
-          checkInDate: { lt: departureDate },
-          checkOutDate: { gt: arrivalDate },
-          roomAssignments: { some: { roomTypeId: args.roomTypeId } },
-        },
-        select: { checkInDate: true, checkOutDate: true },
-      }),
-      prisma.roomInventory.findMany({
-        where: {
-          roomTypeId: args.roomTypeId,
-          date: { gte: arrivalDate, lt: departureDate },
-        },
-      }),
-    ]);
-    const inventoryByDay = new Map(
-      inventories.map((inventory: any) => [inventory.date.toISOString().slice(0, 10), inventory])
-    );
-    const physicalTotal = roomType.rooms.length;
-    const physicalBlocked = roomType.rooms.filter((room: any) =>
-      ['maintenance', 'out_of_order'].includes(room.status)
-    ).length;
-    for (const day = new Date(arrivalDate); day < departureDate; day.setUTCDate(day.getUTCDate() + 1)) {
-      const nextDay = new Date(day);
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const existingHeld = overlappingGroups
-        .filter((allocation: any) =>
-          allocation.groupBlock.arrivalDate < nextDay && allocation.groupBlock.departureDate > day
-        )
-        .reduce(
-          (sum: number, allocation: any) =>
-            sum + Math.max(0, allocation.roomsHeld - allocation.roomsPickedUp),
-          0
-        );
-      const booked = overlappingBookings.filter((booking: any) =>
-        booking.checkInDate < nextDay && booking.checkOutDate > day
-      ).length;
-      const inventory = inventoryByDay.get(day.toISOString().slice(0, 10)) as any;
-      const total = inventory?.totalRooms ?? physicalTotal;
-      const blocked = inventory?.blockedRooms ?? physicalBlocked;
-      if (existingHeld + booked + blocked + args.roomsHeld > total) {
-        throw new Error(`Group block exceeds sellable capacity on ${day.toISOString().slice(0, 10)}.`);
-      }
-    }
+    const [availability] = await getHotelAvailability(transactionContext, { roomTypeId: args.roomTypeId, checkInDate: arrivalDate, checkOutDate: departureDate });
+    if (!availability || availability.availableCount < args.roomsHeld) throw new Error('Group block exceeds available capacity on one or more nights.');
+    const ratePlan = args.ratePlanId ? await prisma.ratePlan.findUnique({ where: { id: args.ratePlanId } }) : await prisma.ratePlan.findFirst({ where: { roomTypeId: args.roomTypeId, status: 'active' }, orderBy: { id: 'asc' } });
+    if (!ratePlan || ratePlan.roomTypeId !== args.roomTypeId || ratePlan.status !== 'active') throw new Error('Select an active rate plan of the allocated room type for the group contract.');
+    const contract = { depositPercent: Number(settings.depositPercent ?? 100), securityDepositMinor: Number(settings.securityDepositMinor ?? 0), ratePlanId: ratePlan.id, ratePlanName: ratePlan.name, cancellationPolicy: ratePlan.cancellationPolicy, mealPlan: ratePlan.mealPlan, taxRateBasisPoints: Number(settings.taxRateBasisPoints || 0), feesMinor: Number(settings.serviceFeeMinor || 0), currencyCode, rateMinor: args.rateMinor, roomTypeId: roomType.id, roomTypeName: roomType.name, maxOccupancy: roomType.maxOccupancy, arrivalInstant: propertyArrivalInstant(arrivalDate, settings.checkInTime || '15:00', settings.timeZone || 'UTC').toISOString(), propertyTimeZone: settings.timeZone || 'UTC' };
 
     const block = await prisma.groupBlock.create({
       data: {
@@ -199,6 +157,7 @@ export default async function createHotelGroupBlock(
         blockCode: block.blockCode,
         status: block.status,
         allocationKey: block.allocations[0]?.allocationKey,
+        contract,
         masterFolio: args.billingType === 'master_folio' ? `GFOL-${block.blockCode}` : null,
       },
     });

@@ -1,6 +1,7 @@
+import { amendInHouseStay } from '../bookings/inHouseStay';
 import { permissions } from '../access';
-import { amendUnpaidBooking } from '../lib/bookingAmendment';
-import { calculateHotelPrice } from '../lib/hotelPricing';
+import { amendUnpaidBooking } from '../bookings/amendment';
+import { calculateHotelPrice } from '../rates/pricing';
 
 export default async function amendStaffBooking(
   _root: unknown,
@@ -11,6 +12,9 @@ export default async function amendStaffBooking(
     roomTypeId,
     ratePlanId,
     promoCode,
+    targetRoomId,
+    earlyDepartureApprovalId,
+    earlyDepartureReason,
     idempotencyKey,
   }: {
     bookingId: string;
@@ -19,6 +23,9 @@ export default async function amendStaffBooking(
     roomTypeId?: string | null;
     ratePlanId?: string | null;
     promoCode?: string | null;
+    targetRoomId?: string | null;
+    earlyDepartureApprovalId?: string | null;
+    earlyDepartureReason?: string | null;
     idempotencyKey: string;
   },
   context: any,
@@ -30,8 +37,8 @@ export default async function amendStaffBooking(
     where: { id: bookingId },
     include: { roomAssignments: true, payments: true },
   });
-  if (!booking || !['pending', 'confirmed'].includes(booking.status)) {
-    throw new Error('Only open, pre-arrival reservations can be amended.');
+  if (!booking || !['pending', 'confirmed', 'checked_in'].includes(booking.status)) {
+    throw new Error('Only open reservations can be amended.');
   }
   const selectedRoomTypeId = String(roomTypeId || booking.roomAssignments[0]?.roomTypeId || '');
   const selectedRatePlanId = String(ratePlanId || booking.ratePlanId || '');
@@ -44,6 +51,7 @@ export default async function amendStaffBooking(
   });
   if (!selectedRatePlan) throw new Error('Selected rate plan was not found.');
   const effectivePromoCode = promoCode || (selectedRatePlan.isPromotional ? selectedRatePlan.promoCode : null);
+  if (booking.status === 'checked_in') return amendInHouseStay(context, { bookingId, checkInDate, checkOutDate, roomTypeId: selectedRoomTypeId, ratePlanId: selectedRatePlanId, targetRoomId, promoCode: effectivePromoCode, earlyDepartureApprovalId, earlyDepartureReason, idempotencyKey });
   const quote = await calculateHotelPrice(context, {
     roomTypeId: selectedRoomTypeId,
     ratePlanId: selectedRatePlanId,
@@ -69,6 +77,7 @@ export default async function amendStaffBooking(
     source: 'staff-modification',
     actorId: context.session.itemId,
     commercialPricing: {
+      arrivalInstant: quote.arrivalInstant, propertyTimeZone: quote.propertyTimeZone, cancellationPolicy: quote.ratePlan.cancellationPolicy,
       ratePlanId: quote.ratePlan.id,
       pricingVersion: quote.pricingVersion,
       roomSubtotalMinor: quote.roomSubtotalMinor,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { keystoneContext } from '@/features/keystone/context'
-import { handleChannelWebhook } from '@/features/keystone/lib/channelSync'
+import { handleChannelWebhook } from '@/features/keystone/channels/commands'
 
 export async function POST(
   request: NextRequest,
@@ -13,7 +13,11 @@ export async function POST(
   }
 
   try {
-    const rawBody = await request.text()
+    const reader = request.body?.getReader();
+    if (!reader) throw new Error('Missing webhook body');
+    const chunks: Uint8Array[] = []; let size = 0;
+    while (true) { const { done, value } = await reader.read(); if (done) break; size += value.byteLength; if (size > 1_048_576) { await reader.cancel(); return NextResponse.json({ error: 'Webhook body too large' }, { status: 413 }); } chunks.push(value); }
+    const rawBody = Buffer.concat(chunks).toString('utf8')
     const headers = Object.fromEntries(request.headers.entries())
 
     const result = await handleChannelWebhook(
@@ -25,7 +29,7 @@ export async function POST(
 
     return NextResponse.json(result, { status: 200 })
   } catch (error: any) {
-    console.error('Channel webhook error:', error)
+    console.error('Channel webhook rejected')
     return NextResponse.json(
       { error: 'Channel webhook rejected' },
       { status: 400, headers: { 'Cache-Control': 'no-store' } }

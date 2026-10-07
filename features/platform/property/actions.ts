@@ -18,7 +18,8 @@ const PROPERTY_SETTINGS = String.raw`
   query PropertySettings {
     hotelSettings {
       propertyName tagline contactEmail contactPhone addressLine1 addressLine2 frontDeskCopy
-      checkInTime checkOutTime currencyCode taxRateBasisPoints serviceFeeMinor pricingVersion
+      securityDepositMinor depositPercent loyaltyEnabled loyaltyEarnMinorPerPoint loyaltyRedeemMinorPerPoint loyaltyMinimumRedemptionPoints prearrivalEmailEnabled prearrivalDays groupsEnabled refundApprovalThresholdMinor writeOffApprovalThresholdMinor cashVarianceApprovalThresholdMinor ratePublicationRequiresApproval
+      timeZone checkInTime checkOutTime currencyCode taxRateBasisPoints serviceFeeMinor pricingVersion
       storefrontAccentPreset
       heroImagePath heroImageAltText heroImageCaption amenityImagePath amenityImageAltText
       amenityImageCaption locationImagePath locationImageAltText locationImageCaption
@@ -41,6 +42,19 @@ export async function getPropertySettingsWorkspace() {
 
 export async function updatePropertySettingsAction(input: Record<string, unknown>) {
   const data = {
+    securityDepositMinor: boundedInteger(input.securityDepositMinor, "Security authorization amount", { min: 0, max: 2147483647 }),
+    depositPercent: boundedInteger(input.depositPercent, "Booking deposit percentage", { min: 1, max: 100 }),
+    loyaltyEnabled: input.loyaltyEnabled === "true",
+    loyaltyEarnMinorPerPoint: boundedInteger(input.loyaltyEarnMinorPerPoint, "Loyalty configuration", { min: 1, max: 1000000 }),
+    loyaltyRedeemMinorPerPoint: boundedInteger(input.loyaltyRedeemMinorPerPoint, "Loyalty configuration", { min: 1, max: 1000000 }),
+    loyaltyMinimumRedemptionPoints: boundedInteger(input.loyaltyMinimumRedemptionPoints, "Loyalty configuration", { min: 1, max: 1000000 }),
+    prearrivalEmailEnabled: input.prearrivalEmailEnabled === "true",
+    prearrivalDays: boundedInteger(input.prearrivalDays, "Pre-arrival lead time", { min: 1, max: 14 }),
+    groupsEnabled: input.groupsEnabled === "true",
+    refundApprovalThresholdMinor: boundedInteger(input.refundApprovalThresholdMinor, "Refund approval threshold", { min: 0, max: 2147483647 }),
+    writeOffApprovalThresholdMinor: boundedInteger(input.writeOffApprovalThresholdMinor, "Write-off approval threshold", { min: 0, max: 2147483647 }),
+    cashVarianceApprovalThresholdMinor: boundedInteger(input.cashVarianceApprovalThresholdMinor, "Cash variance threshold", { min: 0, max: 2147483647 }),
+    ratePublicationRequiresApproval: input.ratePublicationRequiresApproval !== "false",
     propertyName: boundedText(input.propertyName, 'Property name', 200, true),
     tagline: boundedText(input.tagline, 'Tagline', 300),
     contactEmail: boundedText(input.contactEmail, 'Contact email', 320, true).toLowerCase(),
@@ -48,6 +62,7 @@ export async function updatePropertySettingsAction(input: Record<string, unknown
     addressLine1: boundedText(input.addressLine1, 'Address line 1', 250, true),
     addressLine2: boundedText(input.addressLine2, 'Address line 2', 250),
     frontDeskCopy: boundedText(input.frontDeskCopy, 'Front desk copy', 250),
+    timeZone: boundedText(input.timeZone, 'Property time zone', 100, true),
     checkInTime: boundedText(input.checkInTime, 'Check-in time', 20, true),
     checkOutTime: boundedText(input.checkOutTime, 'Check-out time', 20, true),
     currencyCode: boundedEnum(String(input.currencyCode || '').toUpperCase(), 'Currency', ['USD'] as const),

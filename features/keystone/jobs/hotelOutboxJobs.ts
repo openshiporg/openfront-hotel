@@ -1,17 +1,19 @@
-import { getContext } from '@keystone-6/core/context';
+import { queueHotelPrearrivalCommunications, prearrivalStillEligible } from '../communications/scheduling';
 import type { KeystoneConfig } from '@keystone-6/core/types';
-import * as PrismaModule from '@prisma/client';
+import { getHotelWorkerContext } from './runtimeContext';
 
 import {
   createHttpOutboxHandler,
   dispatchHotelOutboxBatch,
-} from '../lib/hotelOutbox';
+} from '../communications/outbox';
 import { getOutboxDispatchConfig } from '../lib/integrationConfig';
+import { recordWorkerProgress } from '../lib/workerProgress';
+import { safeOperationalErrorMessage } from '../lib/safeOperationalError';
 import {
   HOTEL_COMMUNICATION_TOPICS,
   isHotelCommunicationTopic,
   type HotelCommunicationPayload,
-} from '../lib/hotelCommunications';
+} from '../communications/commands';
 import {
   hotelMailInfrastructureConfigured,
   sendHotelCommunicationEmail,
@@ -39,11 +41,12 @@ export function startHotelOutboxJobs(config: KeystoneConfig) {
   }
 
   ;(globalThis as any).__hotelOutboxJobsState = { starting: true };
-  const context = getContext(config, PrismaModule);
+  const context = getHotelWorkerContext(config);
   const workerId = process.env.HOTEL_OUTBOX_WORKER_ID || `hotel-${process.pid}`;
   const intervalMs = Number(process.env.HOTEL_OUTBOX_INTERVAL_MS || DEFAULT_INTERVAL_MS);
   const topics = httpHandler ? undefined : HOTEL_COMMUNICATION_TOPICS;
   const handler = async (event: any) => {
+    if (event.topic === 'hotel.communication.booking_prearrival' && !(await prearrivalStillEligible(context.prisma, event.payloadSnapshot))) return { suppressed: true, reason: 'Reservation changed, arrival passed or scheduled emails disabled.' };
     if (isHotelCommunicationTopic(event.topic) && smtpInfrastructureConfigured) {
       const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { contactEmail: true } });
       if (!settings?.contactEmail) throw new Error('Property communication settings are unconfigured.');
@@ -58,28 +61,40 @@ export function startHotelOutboxJobs(config: KeystoneConfig) {
 
   const dispatch = async () => {
     try {
+      const scheduled = await queueHotelPrearrivalCommunications(context);
+      if (scheduled.failures) console.error('Scheduled communication records failed:', scheduled.failures);
       await dispatchHotelOutboxBatch(
         context.prisma,
-        { propertyKey: 'the-alder-house', workerId, limit: 25, topics },
+        {
+          propertyKey: 'the-alder-house', workerId,
+          limit: smtpInfrastructureConfigured ? 1 : 25,
+          topics,
+          ambiguousTopics: smtpInfrastructureConfigured ? HOTEL_COMMUNICATION_TOPICS : [],
+        },
         handler,
       );
+      if (!scheduled.failures) await recordWorkerProgress(context.prisma, 'outbox');
     } catch (error) {
-      console.error('Hotel outbox dispatch cycle failed:', error instanceof Error ? error.message : error);
+      console.error(safeOperationalErrorMessage('worker', error));
     }
   };
 
   let stopping = false;
-  let running = false;
-  const guardedDispatch = async () => {
-    if (stopping || running) return;
-    running = true;
-    try { await dispatch(); } finally { running = false; }
+  let inFlight: Promise<void> | null = null;
+  const guardedDispatch = () => {
+    if (stopping || inFlight) return;
+    const current = dispatch().finally(() => { if (inFlight === current) inFlight = null; });
+    inFlight = current;
+    return current;
   };
   const interval = setInterval(() => void guardedDispatch(), Number.isFinite(intervalMs) ? Math.max(1_000, intervalMs) : DEFAULT_INTERVAL_MS);
   interval.unref();
-  const shutdown = () => { stopping = true; clearInterval(interval); };
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
+  const shutdown = async () => {
+    stopping = true;
+    clearInterval(interval);
+    await inFlight;
+  };
   ;(globalThis as any).__hotelOutboxJobsState = { interval, shutdown };
   void guardedDispatch();
+  return shutdown;
 }

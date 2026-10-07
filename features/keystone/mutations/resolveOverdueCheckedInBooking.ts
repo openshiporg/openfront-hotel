@@ -1,6 +1,9 @@
+import { requireHotelApproval } from '../guest-governance/commands';
+import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { assertNoOutstandingStayKeys } from '../operations/stayRegister';
 import { permissions } from '../access';
-import { ensureBookingFolio } from '../lib/bookingFolio';
-import { calculateFolioBalance } from '../lib/folioLedger';
+import { ensureBookingFolio } from '../folios/bookingFolio';
+import { calculateFolioBalance } from '../folios/ledger';
 import {
   findHotelLifecycleReplay,
   lockHotelLifecycle,
@@ -20,7 +23,7 @@ function normalize(value: string, label: string, max: number) {
  */
 export default async function resolveOverdueCheckedInBooking(
   _root: unknown,
-  { bookingId, idempotencyKey, reason }: { bookingId: string; idempotencyKey: string; reason: string },
+  { bookingId, idempotencyKey, reason, approvalId }: { approvalId?: string | null; bookingId: string; idempotencyKey: string; reason: string },
   context: any,
 ) {
   if (
@@ -39,7 +42,7 @@ export default async function resolveOverdueCheckedInBooking(
     action: 'overdue_stay_resolved',
   };
 
-  return context.transaction(async (transactionContext: any) => {
+  return runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma;
     await lockHotelLifecycle(prisma, eventKey);
     await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-booking:${bookingId}`);
@@ -77,16 +80,19 @@ export default async function resolveOverdueCheckedInBooking(
       }
     }
 
+    await assertNoOutstandingStayKeys(prisma, bookingId);
     const ensured = await ensureBookingFolio(transactionContext, bookingId, { postSnapshotEntries: true });
     const entries = await prisma.folioEntry.findMany({
       where: { folioId: ensured.folioId },
-      select: { direction: true, amountMinor: true },
+      select: { direction: true, amountMinor: true, currencyCode: true },
     });
     const beforeBalance = calculateFolioBalance(entries as any);
     if (beforeBalance.balanceMinor < 0) throw new Error('Credit folios require refund reconciliation before overdue resolution.');
     const now = new Date();
     const postingKey = `${eventKey}:write-off`;
     if (beforeBalance.balanceMinor > 0) {
+      const settings = await prisma.hotelSettings.findUnique({ where: { id: 1 } });
+      if (beforeBalance.balanceMinor >= Number(settings?.writeOffApprovalThresholdMinor ?? 0)) await requireHotelApproval(prisma, { approvalId, action: "write_off", aggregateId: bookingId, amountMinor: beforeBalance.balanceMinor, actorId: context.session.itemId, operationKey: eventKey });
       await prisma.folioEntry.create({
         data: {
           folioId: ensured.folioId,
@@ -120,7 +126,9 @@ export default async function resolveOverdueCheckedInBooking(
 
     for (const assignment of booking.roomAssignments) {
       if (!assignment.room) continue;
-      await prisma.room.update({ where: { id: assignment.room.id }, data: { status: 'cleaning' } });
+      const repair = await prisma.maintenanceRequest.findFirst({ where: { roomId: assignment.room.id, status: { in: ['reported', 'assigned', 'in_progress', 'waiting_parts'] } } });
+      const nextStatus = assignment.room.status === 'out_of_order' ? 'out_of_order' : repair || assignment.room.status === 'maintenance' ? 'maintenance' : 'cleaning';
+      await prisma.room.update({ where: { id: assignment.room.id }, data: { status: nextStatus } });
       const openTask = await prisma.housekeepingTask.findFirst({
         where: {
           roomId: assignment.room.id,
@@ -188,5 +196,5 @@ export default async function resolveOverdueCheckedInBooking(
       writtenOffMinor: beforeBalance.balanceMinor,
       replayed: false,
     };
-  }, { maxWait: 5_000, timeout: 30_000, isolationLevel: 'Serializable' });
+  });
 }

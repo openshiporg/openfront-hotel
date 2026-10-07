@@ -56,6 +56,7 @@
         "@types/nodemailer": "^6.4.17",
         "@vercel/mcp-adapter": "^0.11.2",
         "ai": "^6.0.49",
+        "bcryptjs": "2.4.3",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "cmdk": "^1.1.1",

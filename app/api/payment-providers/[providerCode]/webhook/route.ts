@@ -30,10 +30,10 @@ export async function POST(
       context: keystoneContext,
     });
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
-  } catch (error) {
+  } catch {
     console.warn('Payment webhook rejected', {
       providerCode,
-      reason: error instanceof Error ? error.message : 'Unknown error',
+      reason: 'Verification or durable processing failed.',
     });
     return Response.json(
       { success: false, error: 'Webhook rejected.' },

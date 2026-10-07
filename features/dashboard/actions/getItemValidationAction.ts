@@ -5,6 +5,7 @@
 'use server'
 
 import { keystoneClient } from '../lib/keystoneClient'
+import { safeGraphQLError, safeGraphQLLog } from '../lib/safeGraphQLError'
 
 export async function getItemValidationAction(listKey: string, itemId: string) {
   try {
@@ -32,8 +33,8 @@ export async function getItemValidationAction(listKey: string, itemId: string) {
     const response = await keystoneClient(query, { id: itemId, listKey })
 
     if (!response.success) {
-      console.error('Failed to fetch item validation:', response.error)
-      return response
+      console.error('Failed to fetch item validation:', safeGraphQLLog(response.error))
+      return { success: false, error: safeGraphQLError(response.error).message }
     }
 
     const fields = response.data?.keystone?.adminMeta?.list?.fields || []
@@ -64,10 +65,10 @@ export async function getItemValidationAction(listKey: string, itemId: string) {
       data: validationMap
     }
   } catch (error) {
-    console.error('Error in getItemValidationAction:', error)
+    console.error('Error in getItemValidationAction:', safeGraphQLLog(error))
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: safeGraphQLError(error).message
     }
   }
 }

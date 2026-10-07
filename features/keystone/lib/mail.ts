@@ -1,5 +1,6 @@
 import { createTransport, getTestMessageUrl } from "nodemailer";
-import type { HotelCommunicationPayload } from './hotelCommunications';
+import type { HotelCommunicationPayload } from '../communications/commands';
+import { HotelOutboxDeliveryError } from '../communications/outbox';
 
 // SMTP values are infrastructure wiring. Durable property state decides whether
 // Hotel communications are eligible for delivery.
@@ -28,6 +29,9 @@ function getTransport() {
     host,
     port: Number(process.env.SMTP_PORT || 587),
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 30_000,
   });
 }
 
@@ -124,7 +128,7 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
 
   const confirmationNumber = payload.confirmationNumber;
   if (!confirmationNumber) throw new Error('Booking communication confirmation number is required.');
-  const title = payload.kind === 'booking_confirmation'
+  const title = payload.kind === 'booking_prearrival' ? 'Your upcoming stay' : payload.kind === 'booking_confirmation'
     ? 'Reservation confirmed'
     : payload.kind === 'booking_updated'
       ? 'Reservation updated'
@@ -146,7 +150,7 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
   const lookupUrl = `${getBaseUrlForEmails()}/bookings/lookup?confirmation=${encodeURIComponent(confirmationNumber)}&email=${encodeURIComponent(recipient)}`;
   return {
     subject: `${emailHeader(title)} · ${emailHeader(payload.confirmationNumber)} · ${emailHeader(payload.propertyName)}`,
-    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`,
+    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === 'booking_prearrival' ? `We look forward to welcoming you to ${property}. Review your arrival details below.` : payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`,
   };
 }
 
@@ -156,13 +160,26 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
  * evidence instead of reporting a false success.
  */
 export async function sendHotelCommunicationEmail(payload: HotelCommunicationPayload) {
-  const message = hotelCommunicationEmail(payload);
-  const info = await getTransport().sendMail({
-    to: payload.to,
-    from: mailFrom(),
-    replyTo: payload.replyTo || undefined,
-    subject: message.subject,
-    html: message.html,
-  });
-  return { messageId: info.messageId, accepted: info.accepted, rejected: info.rejected };
+  let sendStarted = false;
+  try {
+    const message = hotelCommunicationEmail(payload);
+    const transport = getTransport();
+    const from = mailFrom();
+    sendStarted = true;
+    const info = await transport.sendMail({
+      to: payload.to,
+      from,
+      replyTo: payload.replyTo || undefined,
+      subject: message.subject,
+      html: message.html,
+    });
+    const accepted = (info.accepted || []).map((recipient: any) => String(typeof recipient === 'string' ? recipient : recipient.address).toLowerCase());
+    if (!accepted.includes(payload.to.toLowerCase()) || (info.rejected || []).length) {
+      throw new HotelOutboxDeliveryError(false);
+    }
+    return { messageId: info.messageId, transportStatus: 'accepted_by_smtp', inboxDeliveryVerified: false };
+  } catch (error) {
+    if (error instanceof HotelOutboxDeliveryError) throw error;
+    throw new HotelOutboxDeliveryError(sendStarted);
+  }
 }

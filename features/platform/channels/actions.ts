@@ -72,3 +72,8 @@ export async function runChannelSyncAction(channelId: string, requestedMode: 'pu
   });
   return requireActionData(response).pushInventoryToChannel;
 }
+
+export async function saveChannelDraftAction(input: Record<string, unknown>) {
+  const response = await keystoneClient<any>(`mutation($input:JSON!){saveHotelChannelDraft(input:$input)}`, { input });
+  return requireActionData(response).saveHotelChannelDraft;
+}

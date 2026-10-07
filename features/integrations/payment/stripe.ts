@@ -4,7 +4,7 @@ type StripeCredentials = { secretKey?: string; publishableKey?: string; webhookS
 
 const getStripeClient = (credentials: StripeCredentials) => {
   if (!credentials.secretKey) throw new Error('Stripe secret key is not configured.');
-  return new Stripe(credentials.secretKey, { apiVersion: '2025-11-17.clover' });
+  return new Stripe(credentials.secretKey, { apiVersion: '2025-11-17.clover', timeout: 20_000, maxNetworkRetries: 1 });
 };
 
 function normalizeAmount(amount: number) {
@@ -74,7 +74,7 @@ export async function refundPaymentFunction({ paymentId, amount, metadata = {}, 
     amount: amount ? normalizeAmount(Math.abs(amount)) : undefined,
     metadata,
   }, { idempotencyKey });
-  return { status: refund.status, amount: refund.amount, data: refund };
+  return { status: refund.status, amount: refund.amount, currencyCode: refund.currency.toUpperCase(), data: refund };
 }
 
 export async function getPaymentStatusFunction({ paymentId, providerCredentials }: any) {
@@ -102,10 +102,46 @@ export async function handleWebhookFunction({ rawBody, headers, providerCredenti
   const resource = event.data.object as any;
   return {
     isValid: true,
+    securityAuthorization: (event.data.object as any).object === 'payment_intent' && (event.data.object as any).metadata?.purpose === 'hotel_security' ? normalizedSecurityAuthorization(event.data.object) : null,
     event,
     eventId: event.id,
     type: event.type,
     resource,
     settlement: settlementFromResource(resource),
+    dispute: resource.object === 'dispute' && event.type.startsWith('charge.dispute.') ? { id: resource.id, providerPaymentId: typeof resource.payment_intent === 'string' ? resource.payment_intent : resource.payment_intent?.id, amountMinor: resource.amount, currencyCode: String(resource.currency || '').toUpperCase(), status: resource.status, reason: resource.reason, evidenceDueBy: resource.evidence_details?.due_by || null, eventCreated: event.created, balanceTransactions: resource.balance_transactions || [] } : null,
   };
+}
+
+export async function getRefundStatusFunction({ refundId, providerCredentials }: any) {
+  const refund = await getStripeClient(providerCredentials).refunds.retrieve(refundId);
+  return { status: refund.status, amount: refund.amount, currencyCode: refund.currency.toUpperCase(), data: refund };
+}
+
+export async function cancelPaymentFunction({ paymentId, idempotencyKey, providerCredentials }: any) {
+  const stripe = getStripeClient(providerCredentials);
+  const current = await stripe.paymentIntents.retrieve(paymentId);
+  if (current.status === 'succeeded' || current.status === 'canceled') return { status: current.status, settlement: settlementFromResource(current), data: current };
+  const cancelled = await stripe.paymentIntents.cancel(paymentId, {}, { idempotencyKey });
+  return { status: cancelled.status, settlement: settlementFromResource(cancelled), data: cancelled };
+}
+
+export function normalizedSecurityAuthorization(intent: any) {
+  const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : null;
+  return { id: intent.id, authorizationId: intent.metadata?.securityAuthorizationId, bookingId: intent.metadata?.bookingId,
+    amountMinor: intent.amount, amountReceivedMinor: intent.amount_received, amountCapturableMinor: intent.amount_capturable,
+    currencyCode: String(intent.currency || '').toUpperCase(), status: intent.status,
+    expiresAt: charge?.payment_method_details?.card?.capture_before ? new Date(charge.payment_method_details.card.capture_before * 1000).toISOString() : null };
+}
+/** Manual capture keeps authorized money separate from completed hotel payments. */
+export async function securityAuthorizationFunction({ action, paymentId, amountMinor, authorizationId, bookingId, idempotencyKey, providerCredentials }: any) {
+  const stripe = getStripeClient(providerCredentials);
+  let intent: Stripe.PaymentIntent;
+  if (action === 'initiate') intent = await stripe.paymentIntents.create({ amount: normalizeAmount(amountMinor), currency: 'usd', capture_method: 'manual', payment_method_types: ['card'],
+    metadata: { bookingId, securityAuthorizationId: authorizationId, purpose: 'hotel_security' } }, { idempotencyKey });
+  else {
+    intent = await stripe.paymentIntents.retrieve(paymentId, { expand: ['latest_charge'] });
+    if (action === 'capture' && intent.status === 'requires_capture') intent = await stripe.paymentIntents.capture(paymentId, { amount_to_capture: normalizeAmount(amountMinor), final_capture: true }, { idempotencyKey });
+    else if (action === 'release' && !['succeeded', 'canceled'].includes(intent.status)) intent = await stripe.paymentIntents.cancel(paymentId, {}, { idempotencyKey });
+  }
+  return { ...normalizedSecurityAuthorization(intent), clientSecret: intent.client_secret };
 }

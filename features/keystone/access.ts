@@ -20,6 +20,8 @@ export type Session = {
       canManageRoles: boolean
       canManageOnboarding: boolean
       canManageAudit: boolean
+      canManageGuestPrivacy: boolean
+      canApproveHotelExceptions: boolean
       canManageIntegrations: boolean
     }
   }
@@ -34,6 +36,8 @@ export function isSignedIn({ session }: AccessArgs) {
 }
 
 export const permissions = {
+  canManageGuestPrivacy: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageGuestPrivacy ?? false),
+  canApproveHotelExceptions: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canApproveHotelExceptions ?? false),
   canAccessDashboard: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canAccessDashboard ?? false),
   canManageRooms: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageRooms ?? false),
   canManageBookings: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageBookings ?? false),

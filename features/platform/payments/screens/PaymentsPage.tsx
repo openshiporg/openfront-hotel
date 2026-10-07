@@ -1,4 +1,5 @@
 'use client';
+import { operationAttempt } from '@/lib/operationAttempt';
 
 import React from 'react';
 import Link from 'next/link';
@@ -35,6 +36,7 @@ export function PaymentsPage() {
   const [refundQuote, setRefundQuote] = React.useState<RefundQuote | null>(null);
   const [refundAmount, setRefundAmount] = React.useState('');
   const [refundReason, setRefundReason] = React.useState('');
+  const [refundApprovalId, setRefundApprovalId] = React.useState('');
   const [refundError, setRefundError] = React.useState<string | null>(null);
   const [quoteLoading, setQuoteLoading] = React.useState(false);
   const [refunding, setRefunding] = React.useState(false);
@@ -59,7 +61,7 @@ export function PaymentsPage() {
   React.useEffect(() => { void fetchPayments(); }, [fetchPayments]);
 
   const openRefundDialog = async (payment: any) => {
-    setRefundPayment(payment); setRefundQuote(null); setRefundAmount(''); setRefundReason(''); setRefundError(null); setQuoteLoading(true);
+    setRefundPayment(payment); setRefundQuote(null); setRefundAmount(''); setRefundReason(''); setRefundApprovalId(''); setRefundError(null); setQuoteLoading(true);
     try {
       const quote = await getRefundQuoteAction(payment.id) as RefundQuote;
       setRefundQuote(quote);
@@ -84,7 +86,9 @@ export function PaymentsPage() {
     if (!refundReason.trim()) { setRefundError('A refund reason is required.'); return; }
     setRefunding(true); setRefundError(null);
     try {
-      const response = await requestPaymentRefundAction({ paymentId: refundPayment.id, amountMinor, reason: refundReason.trim() });
+      const attempt = await operationAttempt('refund', { paymentId: refundPayment.id, amountMinor, reason: refundReason.trim(), approvalId: refundApprovalId.trim() });
+      const response = await requestPaymentRefundAction({ idempotencyKey: attempt.key, paymentId: refundPayment.id, amountMinor, reason: refundReason.trim(), approvalId: refundApprovalId.trim() });
+      attempt.complete();
       toast({ title: response.status === 'queued' ? 'Refund queued' : 'Refund recorded', description: 'Durable payment and folio evidence was created. Provider processing or settlement is not yet implied.' });
       setRefundPayment(null);
       await fetchPayments();
@@ -119,6 +123,7 @@ export function PaymentsPage() {
           <div className="rounded-md bg-muted p-3 text-sm"><p className="font-medium">{refundPayment?.paymentReference}</p><p className="text-muted-foreground">{refundPayment?.booking?.guestName || 'Unknown guest'} · {refundPayment?.booking?.confirmationNumber || 'No booking'}</p>{quoteLoading ? <p className="mt-2">Loading authoritative refund quote…</p> : refundQuote ? <p className="mt-2">Available: {refundQuote.refundableMinor} minor units ({refundQuote.currencyCode})</p> : null}</div>
           <div className="space-y-2"><Label htmlFor="refund-amount">Amount in minor units</Label><Input ref={refundAmountRef} id="refund-amount" type="number" inputMode="numeric" min="1" max={refundQuote?.refundableMinor} step="1" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} disabled={!refundQuote || quoteLoading || refunding} required /></div>
           <div className="space-y-2"><Label htmlFor="refund-reason">Required reason</Label><Input id="refund-reason" value={refundReason} onChange={(event) => setRefundReason(event.target.value)} maxLength={500} disabled={!refundQuote || quoteLoading || refunding} required /></div>
+          <div className="space-y-2"><Label htmlFor="refund-approval">Approval ID (when required by property policy)</Label><Input id="refund-approval" value={refundApprovalId} onChange={event => setRefundApprovalId(event.target.value)} disabled={refunding} /><p className="text-xs text-muted-foreground">Request a refund approval for payment {refundPayment?.id}, amount {refundAmount || "0"} minor units. <Link className="underline" href="/dashboard/platform/approvals" target="_blank">Open approvals</Link></p></div>
           {refundError ? <p className="text-sm text-destructive" role="alert">{refundError}</p> : null}
           <DialogFooter><Button type="button" variant="outline" onClick={closeRefundDialog} disabled={refunding}>Cancel</Button><Button type="submit" disabled={!refundQuote || refundQuote.refundableMinor <= 0 || quoteLoading || refunding}>{refunding ? 'Submitting…' : 'Request refund'}</Button></DialogFooter>
         </form>

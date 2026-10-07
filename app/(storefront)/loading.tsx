@@ -1,0 +1,1 @@
+export default function StorefrontLoading(){return <main className="lodging-container hotel-section" aria-busy="true"><p className="lodging-eyebrow">One moment</p><p role="status" className="lodging-title mt-4">Preparing the details of your stay…</p></main>}

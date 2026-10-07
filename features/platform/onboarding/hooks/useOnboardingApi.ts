@@ -1,6 +1,7 @@
 import { SECTION_DEFINITIONS } from '../config/templates';
 import { getItemsFromJsonData } from '../utils/dataUtils';
 import { TemplateType, OnboardingStep } from './useOnboardingState';
+import { validateHotelOnboardingData } from '../lib/hotelOnboardingSchema';
 
 const GRAPHQL_ENDPOINT = '/api/graphql';
 
@@ -16,6 +17,7 @@ interface OnboardingApiProps {
   setError: (error: string | null) => void;
   setIsLoading: (loading: boolean) => void;
   resetOnboardingState: () => void;
+  onCompleted?: () => void;
 }
 
 const RUN_ONBOARDING = String.raw`
@@ -41,13 +43,26 @@ export function useOnboardingApi({
   setError,
   setIsLoading,
   resetOnboardingState,
+  onCompleted,
 }: OnboardingApiProps) {
   const runOnboarding = async () => {
+    if (!currentJsonData) {
+      setError('Choose a template or apply valid custom JSON before continuing.');
+      return;
+    }
+    if (selectedTemplate === 'custom') {
+      const validation = validateHotelOnboardingData(currentJsonData);
+      if (!validation.success) {
+        setError(validation.errors.slice(0, 8).join('\n'));
+        return;
+      }
+    }
+
     setIsLoading(true);
     setError(null);
     resetOnboardingState();
     setStep('progress');
-    setProgress('Applying The Alder House setup atomically...');
+    setProgress('Validating and applying the linked Hotel setup atomically...');
 
     const sections = SECTION_DEFINITIONS.map((section) => ({
       type: section.type,
@@ -83,6 +98,7 @@ export function useOnboardingApi({
       }
       setProgress(payload.data.runHotelOnboarding.message);
       setStep('done');
+      onCompleted?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown onboarding error.';
       const first = sections.find((section) => section.items.length)?.items[0];

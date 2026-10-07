@@ -1,5 +1,7 @@
+import { assertGroupAllocationMatchesContract, assertGroupPickupAllowed, groupCommercialContract } from '../groups/commands';
+import { lockRoomInventory } from '../inventory/roomNightLocks';
 import { permissions } from '../access';
-import { rejectDisabledGroupOperation } from '../lib/boundedLaunch';
+import { assertHotelGroupsEnabled } from '../lib/boundedLaunch';
 import {
   findHotelLifecycleReplay,
   lockHotelLifecycle,
@@ -17,7 +19,6 @@ export default async function pickupHotelGroupBlock(
   },
   context: any,
 ) {
-  rejectDisabledGroupOperation();
   if (!permissions.canManageBookings({ session: context.session })) {
     throw new Error('Not authorized to pick up group rooms.');
   }
@@ -33,6 +34,7 @@ export default async function pickupHotelGroupBlock(
 
   return runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma;
+    await assertHotelGroupsEnabled(prisma);
     await lockHotelLifecycle(prisma, eventKey);
     await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-group:${groupBlockId}`);
     await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-booking:${bookingId}`);
@@ -49,15 +51,24 @@ export default async function pickupHotelGroupBlock(
           groupBlockAllocation: true,
           folio: { include: { entries: { take: 1 } } },
           roomAssignments: true,
+          payments: true,
+          lineItems: { where: { snapshotStatus: 'active' } },
         },
       }),
     ]);
     if (!block || !allocation || allocation.groupBlockId !== block.id || !booking) {
       throw new Error('Group block, allocation, or booking was not found.');
     }
-    if (!['tentative', 'definite'].includes(block.status)) throw new Error('This group block is no longer open for pickup.');
-    if (block.releaseDate && new Date() >= block.releaseDate) throw new Error('The group pickup cutoff has passed.');
-    if (allocation.roomsPickedUp >= allocation.roomsHeld) throw new Error('The group allocation is fully picked up.');
+    assertGroupPickupAllowed(block, allocation, 1);
+    if (!['pending', 'confirmed'].includes(booking.status) || (booking.status === 'pending' && (!booking.holdExpiresAt || new Date(booking.holdExpiresAt) <= new Date()))) throw new Error('Only an open, unexpired pre-arrival reservation may join a group.');
+    if (booking.roomAssignments.length !== 1) throw new Error('Each group pickup must represent exactly one room.');
+    await lockRoomInventory(prisma, allocation.roomTypeId, block.arrivalDate, block.departureDate);
+    const contract = await groupCommercialContract(prisma, groupBlockId);
+    assertGroupAllocationMatchesContract(allocation, contract);
+    const nights = Math.round((block.departureDate.getTime() - block.arrivalDate.getTime()) / 86400000);
+    const roomMinor = allocation.rateMinor * nights;
+    const contractTotal = roomMinor + Math.round(roomMinor * contract.taxRateBasisPoints / 10000) + contract.feesMinor;
+    if (!booking.lineItems.length || booking.totalAmountMinor !== contractTotal || booking.ratePlanId !== contract.ratePlanId || booking.currencyCode !== allocation.currencyCode || booking.lineItems.some((line: any) => line.cancellationPolicySnapshot !== contract.cancellationPolicy)) throw new Error('Existing reservation commercial terms do not match the group contract; create the guest through the rooming list instead.');
     if (booking.groupBlockId || booking.groupBlockAllocationId) throw new Error('Booking is already attached to a group block.');
     if (booking.checkInDate.getTime() !== block.arrivalDate.getTime() || booking.checkOutDate.getTime() !== block.departureDate.getTime()) {
       throw new Error('Booking dates must match the group block dates.');
@@ -68,7 +79,7 @@ export default async function pickupHotelGroupBlock(
     if (block.billingType === 'master_folio' && !block.masterFolio) {
       throw new Error('Master-folio group is missing its master folio.');
     }
-    if (block.billingType === 'master_folio' && booking.folio?.entries?.length) {
+    if (block.billingType === 'master_folio' && (booking.folio?.entries?.length || booking.payments?.length)) {
       throw new Error('A reservation with posted folio history cannot be rerouted to a master folio.');
     }
 

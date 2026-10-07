@@ -1,3 +1,4 @@
+import { readChannelCredentials } from './channelCredentials';
 import { decryptSensitiveText } from './sensitiveData';
 
 const PLACEHOLDER = /placeholder|changeme|your_|xxx|dummy|example/i;
@@ -23,19 +24,27 @@ export function paymentProviderCredentials(provider: PersistedPaymentProvider) {
   return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, decryptSensitiveText(value)]));
 }
 
-/** Persisted provider enablement and credential completeness are authoritative. */
-export function paymentIntegrationConfigured(provider: PersistedPaymentProvider) {
-  if (!provider?.isInstalled) return false;
-  const credentials = paymentProviderCredentials(provider);
-  if (provider.code === 'pp_stripe_stripe') {
-    return complete(credentials.secretKey, 8) && String(credentials.secretKey).startsWith('sk_') &&
-      complete(credentials.publishableKey, 8) && String(credentials.publishableKey).startsWith('pk_') &&
-      complete(credentials.webhookSecret, 8) && String(credentials.webhookSecret).startsWith('whsec_');
-  }
-  if (provider.code === 'pp_paypal_paypal') {
-    return complete(credentials.clientId) && complete(credentials.clientSecret) && complete(credentials.webhookId);
+/** Credential completeness is independent from admitting new checkout. */
+export function paymentProviderCredentialsConfigured(provider: PersistedPaymentProvider) {
+  try {
+    const credentials = paymentProviderCredentials(provider);
+    if (provider.code === 'pp_stripe_stripe') {
+      return complete(credentials.secretKey, 8) && String(credentials.secretKey).startsWith('sk_') &&
+        complete(credentials.publishableKey, 8) && String(credentials.publishableKey).startsWith('pk_') &&
+        complete(credentials.webhookSecret, 8) && String(credentials.webhookSecret).startsWith('whsec_');
+    }
+    if (provider.code === 'pp_paypal_paypal') {
+      return complete(credentials.clientId) && complete(credentials.clientSecret) && complete(credentials.webhookId);
+    }
+  } catch {
+    return false;
   }
   return false;
+}
+
+/** Persisted provider enablement and credential completeness govern new checkout. */
+export function paymentIntegrationConfigured(provider: PersistedPaymentProvider) {
+  return Boolean(provider?.isInstalled) && paymentProviderCredentialsConfigured(provider);
 }
 
 export type OutboxDispatchConfig = {
@@ -68,22 +77,36 @@ export type ChannelIntegrationMode = 'disabled' | 'demo' | 'live' | 'invalid';
 
 export function channelIntegrationMode(channel: { isActive?: boolean; credentials?: any }): ChannelIntegrationMode {
   if (!channel.isActive) return 'disabled';
-  const credentials = channel.credentials && typeof channel.credentials === 'object' ? channel.credentials : {};
+  let credentials: Record<string, any>;
+  try { credentials = readChannelCredentials(channel); } catch { return 'invalid'; }
   const configured = String(credentials.mode || '').toLowerCase();
   if (configured === 'disabled' || configured === 'demo' || configured === 'live') return configured;
   return 'invalid';
 }
 
+function canonicalChannelOrigin(value: unknown) {
+  let parsed: URL;
+  try { parsed = new URL(String(value || '')); } catch { throw new Error('Live channel origin admission is required.'); }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('Live channel origins must be canonical HTTPS origins without credentials or paths.');
+  }
+  return parsed.origin;
+}
+
 export function requireLiveChannelEndpoint(channel: any, operation: 'inventory' | 'reservations') {
   const mode = channelIntegrationMode(channel);
   if (mode !== 'live') throw new Error(`Channel outbound sync is ${mode}; live mode is required.`);
-  const credentials = channel.credentials || {};
+  const credentials = readChannelCredentials(channel);
   const endpoint = operation === 'inventory'
     ? credentials.inventoryEndpoint || credentials.syncEndpoint || (credentials.apiBaseUrl ? `${credentials.apiBaseUrl}/inventory/sync` : '')
     : credentials.reservationEndpoint || credentials.pullReservationsEndpoint || (credentials.apiBaseUrl ? `${credentials.apiBaseUrl}/reservations/pull` : '');
   let parsed: URL;
   try { parsed = new URL(String(endpoint || '')); } catch { throw new Error(`Live channel ${operation} endpoint is required and must be valid.`); }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error(`Live channel ${operation} endpoint must use HTTPS without URL credentials.`);
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error(`Live channel ${operation} endpoint must use HTTPS without URL credentials, query, or fragment.`);
+  const allowedOrigins = credentials.allowedOrigins;
+  if (!Array.isArray(allowedOrigins) || allowedOrigins.length < 1 || allowedOrigins.length > 20) throw new Error('Live channel requires an explicitly admitted HTTPS origin.');
+  const admittedOrigins = new Set(allowedOrigins.map(canonicalChannelOrigin));
+  if (!admittedOrigins.has(parsed.origin)) throw new Error(`Live channel ${operation} endpoint origin is not admitted.`);
   const authorization = credentials.accessToken
     ? `Bearer ${credentials.accessToken}`
     : credentials.apiKey

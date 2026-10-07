@@ -1,4 +1,5 @@
-import { differenceInCalendarDays, isValid, parseISO } from 'date-fns';
+import { differenceInCalendarDays, isValid } from 'date-fns';
+import { calendarDay, stayNights } from './stay-context';
 import type { DateRange } from 'react-day-picker';
 
 export interface PublicRatePlanRules {
@@ -21,16 +22,40 @@ export function quotePreflightMessage(
   plan: PublicRatePlanRules | null | undefined,
   promoCode: string,
 ): string | null {
-  if (!range?.from || !range.to) return 'Choose arrival and departure dates before continuing to booking.';
+  if (!range?.from || !range.to || !isValid(range.from) || !isValid(range.to)) return 'Choose arrival and departure dates before continuing to booking.';
   if (!plan) return 'Choose an available rate plan before continuing.';
 
   const nights = differenceInCalendarDays(range.to, range.from);
+  if (nights > 31) return 'Online reservations support up to 31 nights.';
   if (nights < 1) return 'Departure must be after arrival.';
   const minimum = Math.max(1, Number(plan.minimumStay || 1));
   if (nights < minimum) return `This rate requires at least ${minimum} night${minimum === 1 ? '' : 's'}.`;
   const maximum = Number(plan.maximumStay || 0);
   if (maximum > 0 && nights > maximum) return `This rate allows at most ${maximum} nights.`;
   if (plan.isPromotional && !promoCode.trim()) return 'Enter the promotional code required for this rate.';
+  return null;
+}
+
+export function roomSearchValidationMessage(
+  checkIn: string | null | undefined,
+  checkOut: string | null | undefined,
+  adults: string | null | undefined,
+  children: string | null | undefined,
+): string | null {
+  if (Boolean(checkIn) !== Boolean(checkOut)) return 'Choose both arrival and departure dates to check availability.';
+
+  if ((checkIn || checkOut) && (!calendarDay(checkIn || '') || !calendarDay(checkOut || ''))) return 'Use valid arrival and departure dates.';
+  if (checkIn && checkOut && stayNights(checkIn, checkOut) < 1) return 'Departure must be after arrival.';
+  if (checkIn && checkOut && stayNights(checkIn, checkOut) > 31) return 'Online reservations support up to 31 nights. Contact the property for a longer stay.';
+
+  if (adults !== null && adults !== undefined) {
+    const value = Number(adults);
+    if (!Number.isInteger(value) || value < 1 || value > 20) return 'Include at least one adult for the stay.';
+  }
+  if (children !== null && children !== undefined) {
+    const value = Number(children);
+    if (!Number.isInteger(value) || value < 0 || value > 20) return 'Children must be a whole number of zero or more.';
+  }
   return null;
 }
 
@@ -65,8 +90,7 @@ export function modificationDateToIso(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) throw new Error('Use YYYY-MM-DD for requested stay dates.');
-  const parsed = parseISO(trimmed);
-  if (!isValid(parsed) || parsed.toISOString().slice(0, 10) !== trimmed) {
+  if (!calendarDay(trimmed)) {
     throw new Error('Use a valid calendar date for requested stay dates.');
   }
   return `${trimmed}T00:00:00.000Z`;

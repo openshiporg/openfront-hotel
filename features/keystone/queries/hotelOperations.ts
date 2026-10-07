@@ -1,6 +1,8 @@
-import { refundablePaymentMinor } from '../lib/bookingRefund';
+import { getHotelOperationalReport } from '../reporting/reporting';
+import { refundablePaymentMinor } from '../refunds/bookingRefund';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import { paymentIntegrationConfigured } from '../lib/integrationConfig';
+import { safeOperationalErrorMessage } from '../lib/safeOperationalError';
 
 const HOTEL_PROPERTY_KEY = 'the-alder-house';
 
@@ -37,7 +39,7 @@ function syncErrorSummary(value: unknown) {
   const error = latest as Record<string, unknown>;
   return {
     count: value.length,
-    latestMessage: typeof error.message === 'string' ? error.message : null,
+    latestMessage: typeof error.message === 'string' ? safeOperationalErrorMessage('channel') : null,
     latestAt: typeof error.occurredAt === 'string' ? error.occurredAt : null,
   };
 }
@@ -132,6 +134,7 @@ export const hotelOperationsTypeDefs = String.raw`
 
   type HotelHousekeepingTaskProjection {
     id: ID!
+    updatedAt: DateTime!
     status: String!
     taskType: String!
     priority: String!
@@ -182,6 +185,8 @@ export const hotelOperationsTypeDefs = String.raw`
     reversedById: ID
   }
   type HotelFolioProjection {
+    settlementBookingId: ID
+    groupBlock: HotelFolioGroupRef
     id: ID!
     folioNumber: String!
     status: String!
@@ -197,6 +202,7 @@ export const hotelOperationsTypeDefs = String.raw`
     folios: [HotelFolioProjection!]!
     overdueExceptions: [HotelReservationProjection!]!
   }
+  type HotelFolioGroupRef { id: ID!, name: String! }
 
   type HotelChannelProjection {
     id: ID!
@@ -288,6 +294,9 @@ export const hotelOperationsTypeDefs = String.raw`
     refundsMinor: Int!
   }
   type HotelOperationalReportSummary {
+    closedSnapshotDays: Int!
+    unclosedHistoricalDays: Int!
+    forecastDays: Int!
     start: DateTime!
     end: DateTime!
     businessDate: DateTime!
@@ -314,6 +323,7 @@ export const hotelOperationsTypeDefs = String.raw`
   type HotelChannelReport { source: String!, bookings: Int!, revenueMinor: Int! }
   type HotelRoomTypeReport { id: ID!, name: String!, availableRoomNights: Int!, occupiedRoomNights: Int!, occupancyRate: Float!, roomRevenueMinor: Int!, adrMinor: Int! }
   type HotelAnalyticsOperations {
+    demand: String!
     summary: HotelOperationalReportSummary!
     days: [HotelOperationalReportDay!]!
     channels: [HotelChannelReport!]!
@@ -345,9 +355,12 @@ export const hotelOperationsTypeDefs = String.raw`
     canManageHousekeeping: Boolean!
     canManageGuests: Boolean!
     canManagePayments: Boolean!
+    canManageRoles: Boolean!
     canManageOnboarding: Boolean!
     canManageAudit: Boolean!
     canManageIntegrations: Boolean!
+    canManageGuestPrivacy: Boolean!
+    canApproveHotelExceptions: Boolean!
   }
 
   type HotelNightAuditRunProjection {
@@ -522,9 +535,12 @@ export const hotelOperationsResolvers = {
         canManageHousekeeping: Boolean(role.canManageHousekeeping),
         canManageGuests: Boolean(role.canManageGuests),
         canManagePayments: Boolean(role.canManagePayments),
+        canManageRoles: Boolean(role.canManageRoles),
         canManageOnboarding: Boolean(role.canManageOnboarding),
         canManageAudit: Boolean(role.canManageAudit),
         canManageIntegrations: Boolean(role.canManageIntegrations),
+        canManageGuestPrivacy: Boolean(role.canManageGuestPrivacy),
+        canApproveHotelExceptions: Boolean(role.canApproveHotelExceptions),
       };
     },
     hotelFrontDesk: (_root: unknown, args: any, context: any) =>
@@ -644,6 +660,8 @@ export const hotelOperationsResolvers = {
         take: 50,
         include: {
           booking: { include: reservationInclude },
+          groupBlock: { select: { id: true, name: true } },
+          billedBookings: { take: 1, orderBy: { id: 'asc' }, select: { id: true } },
           entries: {
             orderBy: [{ postedAt: 'asc' }, { id: 'asc' }],
             include: { reversedBy: { select: { id: true } } },
@@ -665,6 +683,8 @@ export const hotelOperationsResolvers = {
             .reduce((sum: number, entry: any) => sum + entry.amountMinor, 0);
           return {
             ...folio,
+            settlementBookingId: folio.booking?.id || folio.billedBookings?.[0]?.id || null,
+            groupBlock: folio.groupBlock || null,
             booking: mapReservation(folio.booking),
             entries: folio.entries.map((entry: any) => ({
               ...entry,
@@ -723,7 +743,12 @@ export const hotelOperationsResolvers = {
           channel: mapChannel(item.channel),
           reservation: mapReservation(item.reservation),
         })),
-        events: events.map((item: any) => ({ ...item, channel: mapChannel(item.channel) })),
+        events: events.map((item: any) => ({
+          ...item,
+          message: item.status === 'failed' ? safeOperationalErrorMessage('channel') : item.message,
+          errorMessage: item.errorMessage ? safeOperationalErrorMessage('channel') : null,
+          channel: mapChannel(item.channel),
+        })),
       };
     },
 
@@ -780,199 +805,7 @@ export const hotelOperationsResolvers = {
       if ([start, end].some(date => date.getUTCHours() || date.getUTCMinutes() || date.getUTCSeconds() || date.getUTCMilliseconds())) {
         throw new Error('Reporting ranges must use exclusive UTC midnight day boundaries.');
       }
-      const [settings, clock, roomTypes, inventories, bookings, payments, openFolios, policyFees] = await Promise.all([
-        context.prisma.hotelSettings.findUnique({ where: { id: 1 } }),
-        context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { currentBusinessDate: true } }),
-        context.prisma.roomType.findMany({ orderBy: { name: 'asc' }, include: { rooms: true } }),
-        context.prisma.roomInventory.findMany({
-          where: { date: { gte: start, lt: end } },
-          orderBy: [{ date: 'asc' }, { roomTypeId: 'asc' }],
-          take: 20_001,
-        }),
-        context.prisma.booking.findMany({
-          where: {
-            OR: [
-              { checkOutDate: { gt: start }, checkInDate: { lt: end } },
-              { createdAt: { gte: start, lt: end } },
-              { cancelledAt: { gte: start, lt: end } },
-            ],
-          },
-          orderBy: [{ checkInDate: 'asc' }, { id: 'asc' }],
-          take: 5_001,
-          include: {
-            roomAssignments: { take: 1, include: { roomType: true } },
-            lineItems: {
-              where: { snapshotStatus: 'active', date: { gte: start, lt: end } },
-              orderBy: [{ date: 'asc' }, { id: 'asc' }],
-            },
-          },
-        }),
-        context.prisma.bookingPayment.findMany({
-          where: {
-            status: { in: ['completed', 'refunded'] },
-            OR: [
-              { processedAt: { gte: start, lt: end } },
-              { refundedAt: { gte: start, lt: end } },
-              { createdAt: { gte: start, lt: end } },
-            ],
-          },
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          take: 5_001,
-        }),
-        context.prisma.folio.findMany({
-          where: { status: 'open' },
-          orderBy: { openedAt: 'asc' },
-          take: 2_001,
-          include: { entries: { select: { direction: true, amountMinor: true } } },
-        }),
-        context.prisma.folioEntry.findMany({
-          where: {
-            direction: 'debit',
-            postedAt: { gte: start, lt: end },
-            postingKey: { startsWith: 'booking:cancel:', endsWith: ':fee' },
-          },
-          orderBy: [{ postedAt: 'asc' }, { id: 'asc' }],
-          take: 5_001,
-          select: { amountMinor: true, serviceDate: true, postedAt: true },
-        }),
-      ]);
-      if (!settings) throw new Error('Hotel settings are not configured.');
-      if (!clock) throw new Error('Property business date is not configured.');
-      if (inventories.length > 20_000 || bookings.length > 5_000 || payments.length > 5_000 || openFolios.length > 2_000 || policyFees.length > 5_000) {
-        throw new Error('Reporting range exceeds the bounded launch dataset; request a shorter period.');
-      }
-
-      const dayKey = (value: Date | string) => {
-        const date = new Date(value);
-        return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString().slice(0, 10);
-      };
-      const dayDates: Date[] = [];
-      for (const cursor = new Date(start); cursor < end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-        dayDates.push(new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate())));
-      }
-      const operationalRoomCount = (type: any) => type.rooms.filter((room: any) => !['maintenance', 'out_of_order'].includes(room.status)).length;
-      const totalPhysicalRooms = roomTypes.reduce((sum: number, type: any) => sum + operationalRoomCount(type), 0);
-      const inventoryByDay = new Map<string, any[]>();
-      for (const inventory of inventories) {
-        const key = dayKey(inventory.date);
-        inventoryByDay.set(key, [...(inventoryByDay.get(key) || []), inventory]);
-      }
-      const activeStatuses = new Set(['confirmed', 'checked_in', 'checked_out']);
-      const activeBookings = bookings.filter((booking: any) => activeStatuses.has(booking.status));
-      const policyFeeByDay = new Map<string, number>();
-      for (const fee of policyFees) {
-        const key = dayKey(fee.serviceDate || fee.postedAt);
-        policyFeeByDay.set(key, (policyFeeByDay.get(key) || 0) + Number(fee.amountMinor || 0));
-      }
-      const paymentByDay = new Map<string, { paymentsMinor: number; refundsMinor: number }>();
-      for (const payment of payments) {
-        const timestamp = payment.paymentType === 'refund'
-          ? payment.refundedAt || payment.processedAt || payment.createdAt
-          : payment.processedAt || payment.createdAt;
-        const key = dayKey(timestamp);
-        const current = paymentByDay.get(key) || { paymentsMinor: 0, refundsMinor: 0 };
-        if (payment.paymentType === 'refund' || Number(payment.amountMinor || 0) < 0) current.refundsMinor += Math.abs(Number(payment.amountMinor || 0));
-        else current.paymentsMinor += Math.max(0, Number(payment.amountMinor || 0));
-        paymentByDay.set(key, current);
-      }
-
-      const days = dayDates.map(date => {
-        const key = dayKey(date);
-        const next = new Date(date); next.setUTCDate(next.getUTCDate() + 1);
-        const inventoryRows = inventoryByDay.get(key) || [];
-        const blocked = inventoryRows.reduce((sum: number, item: any) => sum + Math.max(0, Number(item.blockedRooms || 0)), 0);
-        const availableRoomNights = Math.max(0, totalPhysicalRooms - blocked);
-        const occupiedBookings = activeBookings.filter((booking: any) => booking.checkInDate < next && booking.checkOutDate > date);
-        const lines = occupiedBookings.flatMap((booking: any) => booking.lineItems.filter((line: any) => dayKey(line.date) === key));
-        const roomRevenueMinor = lines.filter((line: any) => line.type === 'room').reduce((sum: number, line: any) => sum + Number(line.totalPrice || 0), 0);
-        const taxMinor = lines.filter((line: any) => line.type === 'tax').reduce((sum: number, line: any) => sum + Number(line.totalPrice || 0), 0);
-        const feeMinor = lines.filter((line: any) => !['room', 'tax'].includes(line.type)).reduce((sum: number, line: any) => sum + Number(line.totalPrice || 0), 0) + (policyFeeByDay.get(key) || 0);
-        const occupiedRoomNights = occupiedBookings.length;
-        const paymentsForDay = paymentByDay.get(key) || { paymentsMinor: 0, refundsMinor: 0 };
-        return {
-          date,
-          availableRoomNights,
-          occupiedRoomNights,
-          occupancyRate: availableRoomNights ? occupiedRoomNights / availableRoomNights * 100 : 0,
-          roomRevenueMinor,
-          taxMinor,
-          feeMinor,
-          totalRevenueMinor: roomRevenueMinor + taxMinor + feeMinor,
-          adrMinor: occupiedRoomNights ? Math.round(roomRevenueMinor / occupiedRoomNights) : 0,
-          revparMinor: availableRoomNights ? Math.round(roomRevenueMinor / availableRoomNights) : 0,
-          arrivals: activeBookings.filter((booking: any) => dayKey(booking.checkInDate) === key).length,
-          departures: activeBookings.filter((booking: any) => dayKey(booking.checkOutDate) === key).length,
-          newReservations: bookings.filter((booking: any) => dayKey(booking.createdAt) === key).length,
-          cancellations: bookings.filter((booking: any) => booking.status !== 'no_show' && booking.cancelledAt && dayKey(booking.cancelledAt) === key).length,
-          noShows: bookings.filter((booking: any) => booking.status === 'no_show' && dayKey(booking.checkInDate) === key).length,
-          ...paymentsForDay,
-        };
-      });
-      const sum = (field: string) => days.reduce((total: number, day: any) => total + Number(day[field] || 0), 0);
-      const availableRoomNights = sum('availableRoomNights');
-      const occupiedRoomNights = sum('occupiedRoomNights');
-      const roomRevenueMinor = sum('roomRevenueMinor');
-      const openFolioBalanceMinor = openFolios.reduce((folioTotal: number, folio: any) => folioTotal + folio.entries.reduce(
-        (entryTotal: number, entry: any) => entryTotal + (entry.direction === 'debit' ? entry.amountMinor : -entry.amountMinor),
-        0,
-      ), 0);
-
-      const channelMap = new Map<string, { source: string; bookings: Set<string>; revenueMinor: number }>();
-      const roomTypeMap = new Map<string, { id: string; name: string; availableRoomNights: number; occupiedRoomNights: number; roomRevenueMinor: number }>(roomTypes.map((type: any) => [type.id, {
-        id: type.id,
-        name: type.name,
-        availableRoomNights: dayDates.reduce((total, date) => {
-          const inventory = (inventoryByDay.get(dayKey(date)) || []).find((item: any) => item.roomTypeId === type.id);
-          return total + Math.max(0, operationalRoomCount(type) - Number(inventory?.blockedRooms || 0));
-        }, 0),
-        occupiedRoomNights: 0,
-        roomRevenueMinor: 0,
-      }] as [string, { id: string; name: string; availableRoomNights: number; occupiedRoomNights: number; roomRevenueMinor: number }]));
-      for (const booking of activeBookings) {
-        const periodLines = booking.lineItems.filter((line: any) => new Date(line.date) >= start && new Date(line.date) < end);
-        const revenueMinor = periodLines.reduce((total: number, line: any) => total + Number(line.totalPrice || 0), 0);
-        if (periodLines.length) {
-          const source = String(booking.source || 'direct');
-          const channel = channelMap.get(source) || { source, bookings: new Set<string>(), revenueMinor: 0 };
-          channel.bookings.add(booking.id); channel.revenueMinor += revenueMinor; channelMap.set(source, channel);
-        }
-        const roomTypeId = booking.roomAssignments[0]?.roomTypeId;
-        const roomType = roomTypeId ? roomTypeMap.get(roomTypeId) : null;
-        if (roomType) {
-          roomType.occupiedRoomNights += periodLines.filter((line: any) => line.type === 'room').length;
-          roomType.roomRevenueMinor += periodLines.filter((line: any) => line.type === 'room').reduce((total: number, line: any) => total + Number(line.totalPrice || 0), 0);
-        }
-      }
-
-      return {
-        summary: {
-          start,
-          end,
-          businessDate: clock.currentBusinessDate,
-          currencyCode: settings.currencyCode || 'USD',
-          availableRoomNights,
-          occupiedRoomNights,
-          occupancyRate: availableRoomNights ? occupiedRoomNights / availableRoomNights * 100 : 0,
-          roomRevenueMinor,
-          taxMinor: sum('taxMinor'),
-          feeMinor: sum('feeMinor'),
-          totalRevenueMinor: sum('totalRevenueMinor'),
-          adrMinor: occupiedRoomNights ? Math.round(roomRevenueMinor / occupiedRoomNights) : 0,
-          revparMinor: availableRoomNights ? Math.round(roomRevenueMinor / availableRoomNights) : 0,
-          arrivals: sum('arrivals'), departures: sum('departures'), newReservations: sum('newReservations'),
-          cancellations: sum('cancellations'), noShows: sum('noShows'),
-          paymentsMinor: sum('paymentsMinor'), refundsMinor: sum('refundsMinor'),
-          openFolioBalanceMinor,
-          openFolioCount: openFolios.length,
-        },
-        days,
-        channels: [...channelMap.values()].map(item => ({ source: item.source, bookings: item.bookings.size, revenueMinor: item.revenueMinor })),
-        roomTypes: [...roomTypeMap.values()].map((item: any) => ({
-          ...item,
-          occupancyRate: item.availableRoomNights ? item.occupiedRoomNights / item.availableRoomNights * 100 : 0,
-          adrMinor: item.occupiedRoomNights ? Math.round(item.roomRevenueMinor / item.occupiedRoomNights) : 0,
-        })),
-      };
+      return context.transaction((tx: any) => getHotelOperationalReport(tx.prisma, start, end), { isolationLevel: 'RepeatableRead' });
     },
 
     hotelGuestOperations: async (_root: unknown, args: any, context: any) => {

@@ -11,6 +11,12 @@ type User {
   isActive: Boolean
   authVersion: Int
   disabledAt: DateTime
+  mfaEnabled: Boolean
+  mfaSecret: String
+  mfaPendingSecret: String
+  mfaPendingExpiresAt: DateTime
+  mfaLastCounter: Int
+  mfaRecoveryHashes: JSON
   onboardingStatus: String
   bookings(where: BookingWhereInput! = {}, orderBy: [BookingOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: BookingWhereUniqueInput): [Booking!]
   bookingsCount(where: BookingWhereInput! = {}): Int
@@ -44,6 +50,11 @@ input UserWhereInput {
   isActive: BooleanFilter
   authVersion: IntFilter
   disabledAt: DateTimeNullableFilter
+  mfaEnabled: BooleanFilter
+  mfaSecret: StringFilter
+  mfaPendingSecret: StringFilter
+  mfaPendingExpiresAt: DateTimeNullableFilter
+  mfaLastCounter: IntNullableFilter
   onboardingStatus: StringNullableFilter
   bookings: BookingManyRelationFilter
   createdAt: DateTimeFilter
@@ -125,6 +136,17 @@ input DateTimeNullableFilter {
   not: DateTimeNullableFilter
 }
 
+input IntNullableFilter {
+  equals: Int
+  in: [Int!]
+  notIn: [Int!]
+  lt: Int
+  lte: Int
+  gt: Int
+  gte: Int
+  not: IntNullableFilter
+}
+
 input StringNullableFilter {
   equals: String
   in: [String!]
@@ -169,6 +191,11 @@ input UserOrderByInput {
   isActive: OrderDirection
   authVersion: OrderDirection
   disabledAt: OrderDirection
+  mfaEnabled: OrderDirection
+  mfaSecret: OrderDirection
+  mfaPendingSecret: OrderDirection
+  mfaPendingExpiresAt: OrderDirection
+  mfaLastCounter: OrderDirection
   onboardingStatus: OrderDirection
   createdAt: OrderDirection
   updatedAt: OrderDirection
@@ -190,6 +217,12 @@ input UserUpdateInput {
   isActive: Boolean
   authVersion: Int
   disabledAt: DateTime
+  mfaEnabled: Boolean
+  mfaSecret: String
+  mfaPendingSecret: String
+  mfaPendingExpiresAt: DateTime
+  mfaLastCounter: Int
+  mfaRecoveryHashes: JSON
   onboardingStatus: String
   bookings: BookingRelateToManyForUpdateInput
   createdAt: DateTime
@@ -226,6 +259,12 @@ input UserCreateInput {
   isActive: Boolean
   authVersion: Int
   disabledAt: DateTime
+  mfaEnabled: Boolean
+  mfaSecret: String
+  mfaPendingSecret: String
+  mfaPendingExpiresAt: DateTime
+  mfaLastCounter: Int
+  mfaRecoveryHashes: JSON
   onboardingStatus: String
   bookings: BookingRelateToManyForCreateInput
   createdAt: DateTime
@@ -248,6 +287,8 @@ input BookingRelateToManyForCreateInput {
 type Role {
   id: ID!
   name: String
+  canManageGuestPrivacy: Boolean
+  canApproveHotelExceptions: Boolean
   canAccessDashboard: Boolean
   canManageRooms: Boolean
   canManageBookings: Boolean
@@ -277,6 +318,8 @@ input RoleWhereInput {
   NOT: [RoleWhereInput!]
   id: IDFilter
   name: StringFilter
+  canManageGuestPrivacy: BooleanFilter
+  canApproveHotelExceptions: BooleanFilter
   canAccessDashboard: BooleanFilter
   canManageRooms: BooleanFilter
   canManageBookings: BooleanFilter
@@ -304,6 +347,8 @@ input UserManyRelationFilter {
 input RoleOrderByInput {
   id: OrderDirection
   name: OrderDirection
+  canManageGuestPrivacy: OrderDirection
+  canApproveHotelExceptions: OrderDirection
   canAccessDashboard: OrderDirection
   canManageRooms: OrderDirection
   canManageBookings: OrderDirection
@@ -323,6 +368,8 @@ input RoleOrderByInput {
 
 input RoleUpdateInput {
   name: String
+  canManageGuestPrivacy: Boolean
+  canApproveHotelExceptions: Boolean
   canAccessDashboard: Boolean
   canManageRooms: Boolean
   canManageBookings: Boolean
@@ -355,6 +402,8 @@ input RoleUpdateArgs {
 
 input RoleCreateInput {
   name: String
+  canManageGuestPrivacy: Boolean
+  canApproveHotelExceptions: Boolean
   canAccessDashboard: Boolean
   canManageRooms: Boolean
   canManageBookings: Boolean
@@ -447,17 +496,6 @@ input FloatFilter {
   gt: Float
   gte: Float
   not: FloatFilter
-}
-
-input IntNullableFilter {
-  equals: Int
-  in: [Int!]
-  notIn: [Int!]
-  lt: Int
-  lte: Int
-  gt: Int
-  gte: Int
-  not: IntNullableFilter
 }
 
 input RoomImageManyRelationFilter {
@@ -3196,6 +3234,20 @@ type HotelSettings {
   frontDeskCopy: String
   checkInTime: String
   checkOutTime: String
+  refundApprovalThresholdMinor: Int
+  writeOffApprovalThresholdMinor: Int
+  cashVarianceApprovalThresholdMinor: Int
+  prearrivalEmailEnabled: Boolean
+  prearrivalDays: Int
+  loyaltyEnabled: Boolean
+  loyaltyEarnMinorPerPoint: Int
+  loyaltyRedeemMinorPerPoint: Int
+  loyaltyMinimumRedemptionPoints: Int
+  securityDepositMinor: Int
+  depositPercent: Int
+  groupsEnabled: Boolean
+  ratePublicationRequiresApproval: Boolean
+  timeZone: String
   currencyCode: String
   taxRateBasisPoints: Int
   serviceFeeMinor: Int
@@ -3232,6 +3284,20 @@ input HotelSettingsWhereInput {
   frontDeskCopy: StringFilter
   checkInTime: StringFilter
   checkOutTime: StringFilter
+  refundApprovalThresholdMinor: IntFilter
+  writeOffApprovalThresholdMinor: IntFilter
+  cashVarianceApprovalThresholdMinor: IntFilter
+  prearrivalEmailEnabled: BooleanFilter
+  prearrivalDays: IntFilter
+  loyaltyEnabled: BooleanFilter
+  loyaltyEarnMinorPerPoint: IntFilter
+  loyaltyRedeemMinorPerPoint: IntFilter
+  loyaltyMinimumRedemptionPoints: IntFilter
+  securityDepositMinor: IntFilter
+  depositPercent: IntFilter
+  groupsEnabled: BooleanFilter
+  ratePublicationRequiresApproval: BooleanFilter
+  timeZone: StringFilter
   currencyCode: StringFilter
   taxRateBasisPoints: IntFilter
   serviceFeeMinor: IntFilter
@@ -3261,6 +3327,20 @@ input HotelSettingsOrderByInput {
   frontDeskCopy: OrderDirection
   checkInTime: OrderDirection
   checkOutTime: OrderDirection
+  refundApprovalThresholdMinor: OrderDirection
+  writeOffApprovalThresholdMinor: OrderDirection
+  cashVarianceApprovalThresholdMinor: OrderDirection
+  prearrivalEmailEnabled: OrderDirection
+  prearrivalDays: OrderDirection
+  loyaltyEnabled: OrderDirection
+  loyaltyEarnMinorPerPoint: OrderDirection
+  loyaltyRedeemMinorPerPoint: OrderDirection
+  loyaltyMinimumRedemptionPoints: OrderDirection
+  securityDepositMinor: OrderDirection
+  depositPercent: OrderDirection
+  groupsEnabled: OrderDirection
+  ratePublicationRequiresApproval: OrderDirection
+  timeZone: OrderDirection
   currencyCode: OrderDirection
   taxRateBasisPoints: OrderDirection
   serviceFeeMinor: OrderDirection
@@ -3289,6 +3369,20 @@ input HotelSettingsUpdateInput {
   frontDeskCopy: String
   checkInTime: String
   checkOutTime: String
+  refundApprovalThresholdMinor: Int
+  writeOffApprovalThresholdMinor: Int
+  cashVarianceApprovalThresholdMinor: Int
+  prearrivalEmailEnabled: Boolean
+  prearrivalDays: Int
+  loyaltyEnabled: Boolean
+  loyaltyEarnMinorPerPoint: Int
+  loyaltyRedeemMinorPerPoint: Int
+  loyaltyMinimumRedemptionPoints: Int
+  securityDepositMinor: Int
+  depositPercent: Int
+  groupsEnabled: Boolean
+  ratePublicationRequiresApproval: Boolean
+  timeZone: String
   currencyCode: String
   taxRateBasisPoints: Int
   serviceFeeMinor: Int
@@ -3322,6 +3416,20 @@ input HotelSettingsCreateInput {
   frontDeskCopy: String
   checkInTime: String
   checkOutTime: String
+  refundApprovalThresholdMinor: Int
+  writeOffApprovalThresholdMinor: Int
+  cashVarianceApprovalThresholdMinor: Int
+  prearrivalEmailEnabled: Boolean
+  prearrivalDays: Int
+  loyaltyEnabled: Boolean
+  loyaltyEarnMinorPerPoint: Int
+  loyaltyRedeemMinorPerPoint: Int
+  loyaltyMinimumRedemptionPoints: Int
+  securityDepositMinor: Int
+  depositPercent: Int
+  groupsEnabled: Boolean
+  ratePublicationRequiresApproval: Boolean
+  timeZone: String
   currencyCode: String
   taxRateBasisPoints: Int
   serviceFeeMinor: Int
@@ -5105,22 +5213,42 @@ type Mutation {
   createInitialUser(data: CreateInitialUserInput!): UserAuthenticationWithPasswordSuccess!
   sendUserPasswordResetLink(email: String!): Boolean!
   redeemUserPasswordResetToken(email: String!, token: String!, password: String!): RedeemUserPasswordResetTokenResult
+  updateHotelGuestGovernance(guestId: ID!, command: String!, payload: String!, idempotencyKey: String!): String!
+  updateHotelApproval(payload: String!, idempotencyKey: String!): String!
+  verifyHotelMfa(code: String!, recovery: Boolean): String!
+  manageHotelMfa(action: String!, password: String!, code: String, recovery: Boolean): String!
+  updateHotelMaintenanceCommercial(requestId: ID!, command: String!, payload: String!, idempotencyKey: String!): String!
+  updateHotelDerivedRate(payload: String!, approvalId: ID, idempotencyKey: String!): String!
+  updateHotelRelocation(bookingId: ID!, status: String!, expectedRevision: Int!, propertyName: String, contact: String, confirmation: String, costMinor: Int, guestAgreement: String, followUp: String, costEvidence: String, idempotencyKey: String!): String!
+  detachHotelGroupBooking(bookingId: ID!, checkInDate: DateTime!, checkOutDate: DateTime!, roomTypeId: ID!, ratePlanId: ID!, reason: String!, idempotencyKey: String!): String!
+  manageHotelPayout(input: JSON!): JSON!
+  manageHotelSecurityAuthorization(input: JSON!): JSON!
+  redeemHotelLoyalty(bookingId: ID!, points: Int!, idempotencyKey: String!): String!
+  saveHotelChannelDraft(input: JSON!): JSON!
+  manageHotelReceivable(input: JSON!): JSON!
+  annotateHotelDispute(input: JSON!): JSON!
+  createHotelGroupRoomingList(groupBlockId: ID!, allocationId: ID!, rows: String!, idempotencyKey: String!): String!
+  closeHotelGroupMasterFolio(groupBlockId: ID!, idempotencyKey: String!): String!
+  manageHotelCashier(input: JSON!): JSON!
+  updateHotelStayService(serviceId: ID, bookingId: ID, roomId: ID, category: String, title: String, description: String, priority: String, dueAt: DateTime, status: String!, expectedStatus: String, assignedToId: ID, resolution: String, idempotencyKey: String!): String!
+  updateHotelRoomOutage(roomId: ID!, outageId: ID, startDate: DateTime, endDate: DateTime, reason: String!, action: String!, idempotencyKey: String!): String!
+  updateHotelStayRegister(bookingId: ID!, action: String!, name: String, occupantId: ID, keyReference: String, idempotencyKey: String!): String!
   configureHotelPaymentProvider(code: String!, enabled: Boolean!, credentials: HotelPaymentProviderCredentialsInput): HotelPaymentProviderConfigurationResult!
   redeemHotelPasswordResetToken(email: String!, token: String!, password: String!): HotelPasswordResetResult!
   updateHotelPropertySettings(data: HotelPropertySettingsInput!, idempotencyKey: String!): HotelSettings!
   runHotelOnboarding(template: String!, data: JSON): HotelOnboardingResult!
   runHotelNightAudit(propertyKey: String!, businessDate: DateTime!, idempotencyKey: String!): HotelNightAuditRunProjection!
-  replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!): HotelOutboxReplayResult!
+  replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!, acknowledgeUnknownDelivery: Boolean): HotelOutboxReplayResult!
   replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
-  resolveOverdueCheckedInBooking(bookingId: ID!, idempotencyKey: String!, reason: String!): OverdueStayResolutionResult!
+  resolveOverdueCheckedInBooking(bookingId: ID!, approvalId: ID, idempotencyKey: String!, reason: String!): OverdueStayResolutionResult!
   pickupHotelGroupBlock(groupBlockId: ID!, allocationId: ID!, bookingId: ID!, idempotencyKey: String!): Booking
   updateHotelGroupBlockStatus(groupBlockId: ID!, status: String!, idempotencyKey: String!): HotelGroupBlockProjection!
-  createHotelGroupBlock(name: String!, arrivalDate: DateTime!, departureDate: DateTime!, releaseDate: DateTime, contactName: String!, contactEmail: String!, billingType: String!, roomTypeId: ID!, roomsHeld: Int!, rateMinor: Int!, currencyCode: String!, idempotencyKey: String!): HotelGroupBlockProjection!
+  createHotelGroupBlock(ratePlanId: ID, name: String!, arrivalDate: DateTime!, departureDate: DateTime!, releaseDate: DateTime, contactName: String!, contactEmail: String!, billingType: String!, roomTypeId: ID!, roomsHeld: Int!, rateMinor: Int!, currencyCode: String!, idempotencyKey: String!): HotelGroupBlockProjection!
   verifyGuestBooking(confirmationNumber: String!, email: String!): GuestBooking
   ensureGuestBookingAccess(bookingId: ID!): Boolean!
   ensureReservationSnapshots(bookingId: ID!): ReservationSnapshotResult!
-  postFolioEntry(bookingId: ID!, postingKey: String!, entryType: String!, direction: String!, amountMinor: Int!, currencyCode: String!, description: String!, serviceDate: DateTime): FolioPostingResult!
-  reverseFolioEntry(entryId: ID!, postingKey: String!, reason: String!): FolioPostingResult!
+  postFolioEntry(bookingId: ID!, approvalId: ID, postingKey: String!, entryType: String!, direction: String!, amountMinor: Int!, currencyCode: String!, description: String!, serviceDate: DateTime): FolioPostingResult!
+  reverseFolioEntry(entryId: ID!, approvalId: ID, postingKey: String!, reason: String!): FolioPostingResult!
   recordBookingPayment(bookingId: ID!, postingKey: String!, amountMinor: Int!, currencyCode: String!, paymentMethod: String!, description: String!): FolioPostingResult!
   closeReconciledFolio(bookingId: ID!, idempotencyKey: String!): FolioClosureResult!
   cancelBooking(bookingId: ID!, refundReason: String, idempotencyKey: String!): GuestBookingActionResult
@@ -5130,12 +5258,13 @@ type Mutation {
   submitHotelContactMessage(name: String!, email: String!, phone: String, subject: String!, message: String!, idempotencyKey: String!): HotelContactMessageResult!
   createStorefrontBooking(data: StorefrontBookingCreateInput!): GuestBooking
   createStaffBooking(data: StaffBookingCreateInput!): Booking!
-  amendStaffBooking(bookingId: ID!, checkInDate: DateTime!, checkOutDate: DateTime!, roomTypeId: ID, ratePlanId: ID, promoCode: String, idempotencyKey: String!): Booking!
-  requestBookingPaymentRefund(paymentId: ID!, amountMinor: Int!, reason: String!, idempotencyKey: String!): BookingPaymentRefundRequestResult!
+  amendStaffBooking(bookingId: ID!, targetRoomId: ID, earlyDepartureApprovalId: ID, earlyDepartureReason: String, checkInDate: DateTime!, checkOutDate: DateTime!, roomTypeId: ID, ratePlanId: ID, promoCode: String, idempotencyKey: String!): Booking!
+  requestBookingPaymentRefund(paymentId: ID!, approvalId: ID, amountMinor: Int!, reason: String!, idempotencyKey: String!): BookingPaymentRefundRequestResult!
   updateBookingStatus(bookingId: ID!, status: String!, idempotencyKey: String!): Booking
   updateRoomOperationalStatus(roomId: ID!, status: String!, notes: String, idempotencyKey: String!): Room
-  updateHousekeepingTaskStatus(taskId: ID!, status: String!, assignedToId: ID, notes: String, idempotencyKey: String!): HousekeepingTask
-  updateRatePlanPublication(ratePlanId: ID!, status: String, isPublic: Boolean, idempotencyKey: String!): RatePlan
+  updateHotelHousekeepingStaffCapability(staffId: ID!, configuration: String!, expectedRevision: Int!, idempotencyKey: String!): String!
+  updateHousekeepingTaskStatus(taskId: ID!, expectedStatus: String, expectedUpdatedAt: DateTime, status: String!, assignedToId: ID, notes: String, idempotencyKey: String!): HousekeepingTask
+  updateRatePlanPublication(ratePlanId: ID!, approvalId: ID, status: String, isPublic: Boolean, idempotencyKey: String!): RatePlan
   reportRoomMaintenanceIssue(roomId: ID!, title: String!, description: String, category: String, priority: String, idempotencyKey: String!): MaintenanceRequest
   assignRoomToBooking(bookingId: ID!, roomId: ID!, idempotencyKey: String!): Booking
   updateBookingStayDates(bookingId: ID!, checkInDate: DateTime!, checkOutDate: DateTime!, idempotencyKey: String!): Booking
@@ -5316,6 +5445,28 @@ type Query {
   hotelNightAuditOperations(propertyKey: String!): HotelNightAuditOperations!
   hotelGroupOperations(propertyKey: String!): HotelGroupOperations!
   hotelOutboxOperations(propertyKey: String!): HotelOutboxOperations!
+  hotelGuestGovernance(guestId: ID!): String!
+  hotelGovernanceGuestSearch(search: String!): String!
+  hotelApprovalWorkspace(offset: Int): String!
+  hotelMfaStatus: String!
+  hotelMaintenanceCommercial(requestId: ID!): String!
+  hotelDerivedRateWorkspace: String!
+  hotelHousekeepingStaffCapabilities: String!
+  hotelPayerWindows(folioId: ID!, bookingId: ID): JSON!
+  guestFolio(bookingId: ID!): JSON!
+  hotelPayoutOperations: JSON!
+  hotelSecurityAuthorization(bookingId: ID!): JSON!
+  hotelFolioReceipt(folioId: ID!): JSON!
+  hotelCashierOperations: JSON!
+  hotelReceivableOperations: JSON! @deprecated(reason: "Use hotelReceivableOperationsPage for bounded workspace reads.")
+  hotelReceivableOperationsPage(afterAccountId: ID, afterInvoiceId: ID, pageSize: Int): JSON!
+  hotelDisputeOperations: JSON!
+  hotelGroupWorkspace(after: ID): String!
+  hotelLoyaltyAccount(bookingId: ID!): String!
+  hotelRelocation(bookingId: ID!): String!
+  hotelStayServices(bookingId: ID, roomId: ID): String!
+  hotelRoomOutages: String!
+  hotelStayRegister(bookingId: ID!): String!
   redirectToInit: Boolean
   publicHotelSettings: PublicHotelSettings!
   bookingPaymentProviders: [BookingCheckoutPaymentProvider!]!
@@ -5589,6 +5740,7 @@ type HotelRateOperations {
 
 type HotelHousekeepingTaskProjection {
   id: ID!
+  updatedAt: DateTime!
   status: String!
   taskType: String!
   priority: String!
@@ -5645,6 +5797,8 @@ type HotelFolioEntryProjection {
 }
 
 type HotelFolioProjection {
+  settlementBookingId: ID
+  groupBlock: HotelFolioGroupRef
   id: ID!
   folioNumber: String!
   status: String!
@@ -5660,6 +5814,11 @@ type HotelFolioProjection {
 type HotelFolioOperations {
   folios: [HotelFolioProjection!]!
   overdueExceptions: [HotelReservationProjection!]!
+}
+
+type HotelFolioGroupRef {
+  id: ID!
+  name: String!
 }
 
 type HotelChannelProjection {
@@ -5773,6 +5932,9 @@ type HotelOperationalReportDay {
 }
 
 type HotelOperationalReportSummary {
+  closedSnapshotDays: Int!
+  unclosedHistoricalDays: Int!
+  forecastDays: Int!
   start: DateTime!
   end: DateTime!
   businessDate: DateTime!
@@ -5814,6 +5976,7 @@ type HotelRoomTypeReport {
 }
 
 type HotelAnalyticsOperations {
+  demand: String!
   summary: HotelOperationalReportSummary!
   days: [HotelOperationalReportDay!]!
   channels: [HotelChannelReport!]!
@@ -5852,9 +6015,12 @@ type HotelOperatorCapabilities {
   canManageHousekeeping: Boolean!
   canManageGuests: Boolean!
   canManagePayments: Boolean!
+  canManageRoles: Boolean!
   canManageOnboarding: Boolean!
   canManageAudit: Boolean!
   canManageIntegrations: Boolean!
+  canManageGuestPrivacy: Boolean!
+  canApproveHotelExceptions: Boolean!
 }
 
 type HotelNightAuditRunProjection {
@@ -6028,6 +6194,8 @@ type StorefrontQuote {
   totalAmountMinor: Int!
   currencyCode: String!
   pricingVersion: String!
+  securityDepositMinor: Int!
+  depositPercent: Int!
   quoteToken: String!
 }
 
@@ -6154,8 +6322,10 @@ type GuestBooking {
   depositAmountMinor: Int
   balanceDueMinor: Int
   currencyCode: String
+  bookedStayTerms: JSON
   status: String
   paymentStatus: String
+  refundPendingMinor: Int
   specialRequests: String
   createdAt: DateTime
   confirmedAt: DateTime
@@ -6236,6 +6406,7 @@ type FolioClosureResult {
 }
 
 input StorefrontBookingCreateInput {
+  idempotencyKey: String!
   guestName: String!
   guestEmail: String!
   guestPhone: String
@@ -6251,6 +6422,19 @@ input StorefrontBookingCreateInput {
 }
 
 input HotelPropertySettingsInput {
+  refundApprovalThresholdMinor: Int
+  writeOffApprovalThresholdMinor: Int
+  cashVarianceApprovalThresholdMinor: Int
+  prearrivalEmailEnabled: Boolean
+  prearrivalDays: Int
+  loyaltyEnabled: Boolean
+  loyaltyEarnMinorPerPoint: Int
+  loyaltyRedeemMinorPerPoint: Int
+  loyaltyMinimumRedemptionPoints: Int
+  securityDepositMinor: Int
+  depositPercent: Int
+  groupsEnabled: Boolean
+  ratePublicationRequiresApproval: Boolean
   propertyName: String!
   tagline: String
   contactEmail: String!
@@ -6258,6 +6442,7 @@ input HotelPropertySettingsInput {
   addressLine1: String!
   addressLine2: String
   frontDeskCopy: String
+  timeZone: String!
   checkInTime: String!
   checkOutTime: String!
   currencyCode: String!
@@ -6308,5 +6493,6 @@ input StaffBookingCreateInput {
   internalNotes: String
   source: String
   status: String
+  quoteToken: String!
   idempotencyKey: String!
 }

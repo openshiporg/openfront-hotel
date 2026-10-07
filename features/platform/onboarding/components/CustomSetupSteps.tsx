@@ -1,175 +1,134 @@
+'use client';
+
 import React, { useState } from 'react';
-import { ArrowLeft, Check, Clipboard, Copy } from 'lucide-react';
+import { Clipboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DataCard } from './DataCard';
 import seedData from '@/features/platform/onboarding/lib/seed.json';
+import { validateHotelOnboardingData } from '@/features/platform/onboarding/lib/hotelOnboardingSchema';
 
 interface CustomSetupStepsProps {
-  currentJson?: any;
-  onJsonUpdate?: (newJson: any) => void;
-  onBack?: () => void;
+  currentJson?: unknown;
+  onJsonUpdate?: (newJson: Record<string, unknown>) => void;
 }
 
-function useCopyToClipboard(): [string | null, (text: string) => Promise<boolean>] {
-  const [copiedText, setCopiedText] = useState<string | null>(null);
-
+function useCopyToClipboard(): [(text: string) => Promise<boolean>] {
   const copy = React.useCallback(async (text: string) => {
-    if (!navigator?.clipboard) {
-      return false;
-    }
-
+    if (!navigator?.clipboard) return false;
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedText(text);
       return true;
     } catch {
-      setCopiedText(null);
       return false;
     }
   }, []);
-
-  return [copiedText, copy];
+  return [copy];
 }
 
-function getCompleteSetupJson() {
-  return seedData;
-}
-
-export function CustomSetupSteps({ onJsonUpdate = () => {}, onBack }: CustomSetupStepsProps) {
-  const [, copy] = useCopyToClipboard();
+export function CustomSetupSteps({ currentJson, onJsonUpdate = () => {} }: CustomSetupStepsProps) {
+  const [copy] = useCopyToClipboard();
   const [copiedItems, setCopiedItems] = useState<Record<string, boolean>>({});
-  const [customJson, setCustomJson] = useState('');
+  const [customJson, setCustomJson] = useState(() => currentJson ? JSON.stringify(currentJson, null, 2) : '');
   const [jsonError, setJsonError] = useState('');
-  const [jsonApplied, setJsonApplied] = useState(false);
-
-  const completeJson = getCompleteSetupJson();
 
   const copyToClipboard = async (text: string, itemKey: string) => {
-    const success = await copy(text);
-    if (success) {
-      setCopiedItems((prev) => ({ ...prev, [itemKey]: true }));
-      setTimeout(() => {
-        setCopiedItems((prev) => ({ ...prev, [itemKey]: false }));
-      }, 2000);
-    }
+    if (!(await copy(text))) return;
+    setCopiedItems((previous) => ({ ...previous, [itemKey]: true }));
+    window.setTimeout(() => setCopiedItems((previous) => ({ ...previous, [itemKey]: false })), 2000);
   };
 
-  const generateAIPrompt = () => {
-    return `I need help customizing the hotel onboarding JSON for The Alder House.
+  const generateAIPrompt = () => `I need help customizing this Openfront Hotel onboarding JSON for a real property-shaped demonstration dataset.
 
-Your first response should briefly summarize the current setup:
-- room types
-- rooms
-- rate plans
-- seasonal rates
-- guests
-- sample reservations
-- availability snapshots
+First summarize the current property identity, room types and amenities, rooms, public rate plans and cancellation policies, seasonal rates, inventory, guests, reservations, payments, housekeeping, maintenance, loyalty, and disabled channel examples. Then ask what should change.
 
-Then ask what should change for this property.
-
-When I am done, return one complete JSON object that keeps the same overall structure and is valid for direct paste into the hotel onboarding flow.`;
-  };
+Preserve the exact top-level structure and stable keys. Use only values supported by the supplied JSON and do not invent real provider credentials, live channel state, regulatory claims, availability, rates, or completed business events. Keep dailyMetrics empty because reports are derived. When I am finished, return one complete JSON object suitable for direct paste into Openfront Hotel.`;
 
   const validateAndApplyJson = () => {
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(customJson);
-      const requiredKeys = ['roomTypes', 'rooms', 'ratePlans', 'guests', 'bookings', 'inventory'];
-      const missingKeys = requiredKeys.filter((key) => !Array.isArray(parsed[key]));
-
-      if (missingKeys.length > 0) {
-        setJsonError(`Missing required keys: ${missingKeys.join(', ')}`);
-        return;
-      }
-
-      onJsonUpdate(parsed);
-      setJsonApplied(true);
-      setJsonError('');
+      parsed = JSON.parse(customJson);
     } catch {
       setJsonError('Invalid JSON format. Please check your syntax.');
+      return;
     }
+    const validation = validateHotelOnboardingData(parsed);
+    if (!validation.success) {
+      setJsonError(validation.errors.slice(0, 8).join('\n'));
+      return;
+    }
+    onJsonUpdate(validation.data);
+    setJsonError('');
   };
 
   const steps = [
     {
       number: 1,
-      title: 'Copy Base Hotel Configuration',
-      description: 'Start with the default property sample dataset.',
-      content: (
-        <DataCard
-          title="Hotel Onboarding Data"
-          content={JSON.stringify(completeJson, null, 2)}
-          onCopy={copyToClipboard}
-          copied={copiedItems.json || false}
-          copyKey="json"
-        />
-      ),
+      title: 'Copy Base Configuration',
+      description: 'Start with the complete Hotel template and its canonical entity relationships.',
+      content: <DataCard title="Hotel Onboarding Data" content={JSON.stringify(seedData, null, 2)} onCopy={copyToClipboard} copied={copiedItems.json || false} copyKey="json" />,
     },
     {
       number: 2,
       title: 'Copy AI Customization Prompt',
-      description: 'Use this with any AI assistant to reshape the property sample data.',
-      content: (
-        <DataCard
-          title="AI Prompt"
-          content={generateAIPrompt()}
-          onCopy={copyToClipboard}
-          copied={copiedItems.prompt || false}
-          copyKey="prompt"
-        />
-      ),
+      description: 'Use this prompt with an AI assistant to reshape the sample property safely.',
+      content: <DataCard title="AI Prompt" content={generateAIPrompt()} onCopy={copyToClipboard} copied={copiedItems.prompt || false} copyKey="prompt" />,
     },
     {
       number: 3,
+      title: 'Customize the Property',
+      description: 'Review identity, rooms, amenities, rates, policies, inventory, and PMS samples before applying anything.',
+      content: (
+        <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
+          <li>Keep room, room-type, guest, reservation, channel, and inventory references aligned.</li>
+          <li>Keep monetary amounts, guest counts, stay dates, and inventory counts internally consistent.</li>
+          <li>Leave providers and channels disabled unless they are configured later through their owned settings.</li>
+        </ul>
+      ),
+    },
+    {
+      number: 4,
       title: 'Paste Your Custom JSON',
-      description: 'Paste the final hotel onboarding JSON here.',
+      description: 'Validate the complete JSON before reviewing and confirming the setup.',
       content: (
         <div className="overflow-hidden rounded-lg border">
           <div className="flex items-center justify-between border-b bg-muted px-4 py-2">
-            <span className="text-sm font-medium text-muted-foreground">
-              Custom Hotel Onboarding Data
-            </span>
+            <span className="text-sm font-medium text-muted-foreground">Custom Hotel Onboarding Data</span>
             <Button
+              type="button"
               size="sm"
               variant="ghost"
+              aria-label="Paste hotel onboarding JSON from clipboard"
               onClick={async () => {
                 try {
                   const text = await navigator.clipboard.readText();
                   setCustomJson(text);
                   setJsonError('');
                 } catch {
-                  // ignore clipboard failure
+                  setJsonError('Clipboard access was unavailable. Paste into the editor manually.');
                 }
               }}
               className="h-6 w-6 p-0 hover:bg-background/80"
             >
-              <Clipboard className="h-3 w-3 text-muted-foreground" />
+              <Clipboard className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
             </Button>
           </div>
-          <div className="bg-background">
-            <Textarea
-              placeholder="Paste your customized hotel JSON configuration here..."
-              value={customJson}
-              onChange={(e) => {
-                setCustomJson(e.target.value);
-                setJsonError('');
-              }}
-              className="min-h-[220px] resize-none rounded-none border-0 bg-transparent p-4 font-mono text-xs focus:outline-none"
-            />
-          </div>
-          {jsonError && (
+          <Textarea
+            aria-label="Custom hotel onboarding JSON"
+            aria-invalid={Boolean(jsonError)}
+            aria-describedby={jsonError ? 'custom-hotel-json-error' : undefined}
+            value={customJson}
+            onChange={(event) => { setCustomJson(event.target.value); setJsonError(''); }}
+            className="min-h-[240px] resize-none rounded-none border-0 bg-transparent p-4 font-mono text-xs focus:outline-none"
+          />
+          {jsonError ? (
             <div className="px-4 pb-4">
-              <div className="rounded-md border border-destructive/20 bg-destructive/10 p-2">
-                <p className="text-xs text-destructive">{jsonError}</p>
-              </div>
+              <p id="custom-hotel-json-error" role="alert" className="whitespace-pre-line rounded-md border border-destructive/20 bg-destructive/10 p-2 text-xs text-destructive">{jsonError}</p>
             </div>
-          )}
+          ) : null}
           <div className="flex items-center justify-end border-t bg-muted px-4 py-2">
-            <Button size="sm" onClick={validateAndApplyJson} disabled={!customJson.trim()}>
-              Apply Configuration
-            </Button>
+            <Button type="button" size="sm" onClick={validateAndApplyJson} disabled={!customJson.trim()}>Apply Configuration</Button>
           </div>
         </div>
       ),
@@ -178,47 +137,21 @@ When I am done, return one complete JSON object that keeps the same overall stru
 
   return (
     <div className="space-y-6">
-      {jsonApplied && onBack && (
-        <div className="flex items-center space-x-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setJsonApplied(false);
-              onBack();
-            }}
-            className="h-8 px-2"
-          >
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            Back to Custom Setup
-          </Button>
-        </div>
-      )}
-
       <div className="space-y-2">
         <Label className="text-sm font-medium">Custom Hotel Setup</Label>
-        <p className="text-xs text-muted-foreground">
-          Build a property-specific sample dataset without leaving the canonical onboarding flow.
-        </p>
+        <p className="text-xs text-muted-foreground">Follow the shared custom setup path, with Hotel-specific validation at the same server boundary used by templates.</p>
       </div>
-
       <div className="space-y-0">
         {steps.map((step, index) => (
           <div key={step.number} className="relative">
-            {index < steps.length - 1 && (
-              <div className="absolute bottom-0 left-3 top-3 w-[1px] bg-border"></div>
-            )}
+            {index < steps.length - 1 ? <div className="absolute bottom-0 left-3 top-3 w-px bg-border" /> : null}
             <div className="relative mb-2 flex items-center space-x-3">
-              <div className="z-10 inline-flex size-6 items-center justify-center rounded-sm border border-border bg-background text-sm text-foreground shadow-sm">
-                {step.number}
-              </div>
-              <Label className="text-sm font-medium text-foreground">{step.title}</Label>
+              <div className="z-10 inline-flex size-6 items-center justify-center rounded-sm border bg-background text-sm shadow-sm">{step.number}</div>
+              <Label className="text-sm font-medium">{step.title}</Label>
             </div>
-            <div className="pl-9">
-              <div className="pb-6">
-                <p className="mb-3 text-xs text-muted-foreground">{step.description}</p>
-                {step.content}
-              </div>
+            <div className="pl-9 pb-6">
+              <p className="mb-3 text-xs text-muted-foreground">{step.description}</p>
+              {step.content}
             </div>
           </div>
         ))}

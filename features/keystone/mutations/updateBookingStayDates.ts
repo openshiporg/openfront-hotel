@@ -4,7 +4,7 @@ import {
   lockHotelLifecycle,
   recordHotelLifecycleEvent,
 } from '../lib/hotelLifecycle';
-import { changeUnpricedBookingStayDatesInTransaction } from '../lib/bookingStayDates';
+import { changeUnpricedBookingStayDatesInTransaction } from '../bookings/stayDates';
 
 export default async function updateBookingStayDates(
   root: unknown,

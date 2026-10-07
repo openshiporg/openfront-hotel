@@ -41,10 +41,13 @@ export default function OutboxPage() {
 
   React.useEffect(() => { void load(); }, [load]);
 
-  const replay = async (kind: 'event' | 'refund', id: string) => {
-    if (!window.confirm('Create an authorized replay from immutable evidence?')) return;
+  const replay = async (kind: 'event' | 'refund', id: string, deliveryUnknown = false) => {
+    const confirmation = deliveryUnknown
+      ? 'SMTP may already have accepted this message. Verify the recipient/provider receipt first; replaying without evidence can send a duplicate. Continue only after reviewing that risk.'
+      : 'Create an authorized replay from immutable evidence?';
+    if (!window.confirm(confirmation)) return;
     try {
-      await replayOutboxEvidence(kind, id);
+      await replayOutboxEvidence(kind, id, deliveryUnknown);
       toast({ title: 'Replay queued' });
       await load();
     } catch (error) {
@@ -79,7 +82,7 @@ export default function OutboxPage() {
                 <p className="mt-2 min-w-0 max-w-full text-sm [overflow-wrap:anywhere]">{event.aggregateType}:{event.aggregateId} · {event.attempts} attempts</p>
                 {event.lastError ? <p className="mt-1 min-w-0 max-w-full text-sm text-destructive [overflow-wrap:anywhere]">{event.lastError}</p> : null}
                 {event.status === 'dead_letter' ? capabilities.canManageIntegrations
-                  ? <Button className="mt-3" size="sm" onClick={() => replay('event', event.id)}><RotateCcw className="mr-2 h-4 w-4" />Replay</Button>
+                  ? <Button className="mt-3" size="sm" onClick={() => replay('event', event.id, String(event.lastError || '').startsWith('SMTP delivery outcome is unknown:'))}><RotateCcw className="mr-2 h-4 w-4" />{String(event.lastError || '').startsWith('SMTP delivery outcome is unknown:') ? 'Replay after receipt review' : 'Replay'}</Button>
                   : <p className="mt-2 text-xs text-muted-foreground">Integration permission is required to replay.</p>
                 : null}
                 <details className="mt-3 min-w-0 max-w-full text-sm"><summary>Attempt evidence ({event.attemptsEvidence.length})</summary>{event.attemptsEvidence.map((attempt: any) => <p key={attempt.id} className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">#{attempt.attemptNumber} {attempt.status} · {attempt.workerId} {attempt.errorMessage}</p>)}</details>
@@ -93,7 +96,7 @@ export default function OutboxPage() {
           <CardContent data-qa-layout="outbox-refunds-content" className="min-w-0 max-w-full space-y-3">
             {visibleRefunds.map((intent: any) => (
               <div key={intent.id} data-qa-layout="outbox-refund-row" className="flex min-w-0 max-w-full flex-col gap-3 border p-4 md:flex-row md:items-center md:justify-between">
-                <div className="min-w-0 max-w-full flex-1"><div className="flex min-w-0 max-w-full flex-wrap items-center gap-2"><Send className="h-4 w-4 shrink-0" /><p className="min-w-0 font-medium [overflow-wrap:anywhere]">{intent.booking.confirmationNumber} · {(intent.amountMinor / 100).toFixed(2)} {intent.currencyCode}</p><Badge className="shrink-0" variant={intent.status === 'dead_letter' ? 'destructive' : 'outline'}>{intent.status}</Badge></div><p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">{intent.reason} · {intent.attempts} attempts</p>{intent.lastError ? <p className="text-sm text-destructive [overflow-wrap:anywhere]">{intent.lastError}</p> : null}</div>
+                <div className="min-w-0 max-w-full flex-1"><div className="flex min-w-0 max-w-full flex-wrap items-center gap-2"><Send className="h-4 w-4 shrink-0" /><p className="min-w-0 font-medium [overflow-wrap:anywhere]">{intent.booking.confirmationNumber} · {(intent.amountMinor / 100).toFixed(2)} {intent.currencyCode}</p><Badge className="shrink-0" variant={intent.status === 'dead_letter' ? 'destructive' : 'outline'}>{intent.status}</Badge></div><p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">Refund intent {intent.intentKey} · {intent.reason} · {intent.attempts} attempts</p>{intent.lastError ? <p className="text-sm text-destructive [overflow-wrap:anywhere]">{intent.lastError}</p> : null}</div>
                 {intent.status === 'dead_letter' ? capabilities.canManageIntegrations && capabilities.canManagePayments
                   ? <Button className="shrink-0" size="sm" onClick={() => replay('refund', intent.id)}>Replay refund</Button>
                   : <p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">Payment and integration permissions are required to replay.</p>

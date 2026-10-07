@@ -1,5 +1,6 @@
+import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { permissions } from '../access';
-import { rejectDisabledGroupOperation } from '../lib/boundedLaunch';
+import { assertHotelGroupsEnabled } from '../lib/boundedLaunch';
 import {
   findHotelLifecycleReplay,
   lockHotelLifecycle,
@@ -18,7 +19,6 @@ export default async function updateHotelGroupBlockStatus(
   { groupBlockId, status, idempotencyKey }: { groupBlockId: string; status: string; idempotencyKey: string },
   context: any,
 ) {
-  rejectDisabledGroupOperation();
   if (!permissions.canManageBookings({ session: context.session })) {
     throw new Error('Not authorized to change group block status.');
   }
@@ -33,8 +33,9 @@ export default async function updateHotelGroupBlockStatus(
     action: 'status_changed',
   };
 
-  return context.transaction(async (transactionContext: any) => {
+  return runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma;
+    await assertHotelGroupsEnabled(prisma);
     await lockHotelLifecycle(prisma, eventKey);
     await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-group:${groupBlockId}`);
     const replay = await findHotelLifecycleReplay(prisma, eventKey, identity);
@@ -44,8 +45,15 @@ export default async function updateHotelGroupBlockStatus(
     const block = await prisma.groupBlock.findUnique({ where: { id: groupBlockId }, include: { allocations: true, masterFolio: true } });
     if (!block) throw new Error('Group block not found.');
     if (!TRANSITIONS[block.status]?.has(status)) throw new Error(`Group block cannot transition from ${block.status} to ${status}.`);
-    if (status === 'cancelled' && block.allocations.some((allocation: any) => allocation.roomsPickedUp > 0)) {
+    const activeBookings = await prisma.booking.count({ where: { groupBlockId, status: { notIn: ['cancelled', 'no_show', 'checked_out'] } } });
+    if (status === 'cancelled' && activeBookings > 0) {
       throw new Error('Picked-up group rooms must be released from their reservations before cancellation.');
+    }
+    if (status === 'definite' && block.releaseDate && new Date(block.releaseDate) <= new Date()) throw new Error('Release cutoff has passed; create a new group commitment.');
+    if (status === 'cancelled' && block.masterFolio) {
+      const entries = await prisma.folioEntry.count({ where: { folioId: block.masterFolio.id } });
+      if (entries && block.masterFolio.status !== 'closed') throw new Error('Settle and close the group master folio before cancelling the block.');
+      if (!entries) await prisma.folio.update({ where: { id: block.masterFolio.id }, data: { status: 'voided', closedAt: new Date() } });
     }
     const updated = await prisma.groupBlock.update({
       where: { id: block.id },
@@ -61,5 +69,5 @@ export default async function updateHotelGroupBlockStatus(
       afterSnapshot: { status: updated.status, releasedRooms: status === 'released' },
     });
     return updated;
-  }, { maxWait: 5_000, timeout: 30_000, isolationLevel: 'Serializable' });
+  });
 }

@@ -1,366 +1,133 @@
 'use client';
 
 import * as React from 'react';
-import {
-  Phone,
-  Mail,
-  MapPin,
-  Clock,
-  MessageSquare,
-  Send,
-  Loader2,
-  HelpCircle,
-  Calendar,
-  CreditCard,
-  Accessibility,
-  Utensils,
-} from 'lucide-react';
-
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { useToast } from '@/components/ui/use-toast';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion';
-import { useHotelSettings } from '@/features/storefront/components/HotelSettingsProvider';
+import Link from 'next/link';
+import { useHotelSettings } from '../components/HotelSettingsProvider';
 import { graphqlClient } from '@/lib/graphql-client';
-import { safeGuestWorkflowFailure } from '@/features/storefront/lib/qa-workflows';
+import { operationAttempt } from '@/lib/operationAttempt';
 
-const SUBMIT_CONTACT_MESSAGE = `
-  mutation SubmitHotelContactMessage(
-    $name: String!
-    $email: String!
-    $phone: String
-    $subject: String!
-    $message: String!
-    $idempotencyKey: String!
-  ) {
-    submitHotelContactMessage(
-      name: $name
-      email: $email
-      phone: $phone
-      subject: $subject
-      message: $message
-      idempotencyKey: $idempotencyKey
-    ) { reference status replayed }
-  }
-`;
-
-function getContactInfo(identity: ReturnType<typeof useHotelSettings>) {
-  return [
-  {
-    icon: Phone,
-    title: 'Phone',
-    value: identity.phone,
-    description: identity.hours,
-    href: `tel:${identity.phone.replace(/\D/g, '')}`,
-  },
-  {
-    icon: Mail,
-    title: 'Email',
-    value: identity.email,
-    description: 'General inquiries',
-    href: `mailto:${identity.email}`,
-  },
-  {
-    icon: MapPin,
-    title: 'Address',
-    value: identity.address.line1,
-    description: identity.address.line2,
-    href: null,
-  },
-  {
-    icon: Clock,
-    title: 'Check-in / out',
-    value: `${identity.checkIn} · ${identity.checkOut}`,
-    description: 'Front desk always open',
-    href: null,
-  },
-  ];
-}
-
-function getFaqs(identity: ReturnType<typeof useHotelSettings>) {
-  return [
-  {
-    category: 'Reservations',
-    icon: Calendar,
-    questions: [
-      {
-        question: 'What is your cancellation policy?',
-        answer:
-          'Free cancellation is available up to 48 hours before check-in for most flexible rates. Prepaid and promotional rates may differ—check your confirmation for specific terms.',
-      },
-      {
-        question: 'Can I modify my reservation?',
-        answer:
-          'Yes. Use booking lookup with your confirmation number, or contact the front desk to change dates or room type subject to availability.',
-      },
-      {
-        question: 'What time is check-in and check-out?',
-        answer: `Check-in is ${identity.checkIn} and check-out is ${identity.checkOut}. Early arrival and late departure may be available on request.`,
-      },
-    ],
-  },
-  {
-    category: 'Payment',
-    icon: CreditCard,
-    questions: [
-      {
-        question: 'What payment methods do you accept?',
-        answer:
-          'Major credit and debit cards are accepted for direct bookings. Payment provider availability is shown at checkout.',
-      },
-      {
-        question: 'Is a deposit required?',
-        answer:
-          'A valid card is required to confirm a reservation. Any incidental hold is released after departure per card network timing.',
-      },
-    ],
-  },
-  {
-    category: 'Amenities',
-    icon: Utensils,
-    questions: [
-      {
-        question: 'Is breakfast included?',
-        answer:
-          'Breakfast inclusion depends on your rate plan. Bed & Breakfast and Family Escape packages in the live catalog include breakfast.',
-      },
-      {
-        question: 'Is WiFi free?',
-        answer: 'Yes. High-speed WiFi is complimentary throughout the property.',
-      },
-    ],
-  },
-  {
-    category: 'Accessibility',
-    icon: Accessibility,
-    questions: [
-      {
-        question: 'Are accessible rooms available?',
-        answer:
-          'Yes. Request an accessible room when booking so the front desk can assign appropriate inventory.',
-      },
-      {
-        question: 'Do you allow service animals?',
-        answer: 'Service animals are welcome. Please note this in your reservation message.',
-      },
-    ],
-  },
-  ];
-}
-
+const SUBMIT_CONTACT_MESSAGE = `mutation SubmitHotelContactMessage($name: String!, $email: String!, $phone: String, $subject: String!, $message: String!, $idempotencyKey: String!) { submitHotelContactMessage(name: $name, email: $email, phone: $phone, subject: $subject, message: $message, idempotencyKey: $idempotencyKey) { reference status replayed } }`;
+const topics = [{ value: 'reservation', label: 'Planning a stay' }, { value: 'modification', label: 'Change or arrival request' }, { value: 'cancellation', label: 'Cancellation question' }, { value: 'billing', label: 'Payment, statement or refund' }, { value: 'accessibility', label: 'Accessibility requirements' }, { value: 'group', label: 'Multiple rooms' }, { value: 'feedback', label: 'Feedback' }, { value: 'other', label: 'Something else' }];
+const emptyForm = { name: '', email: '', phone: '', subject: '', message: '' };
 export default function ContactPage() {
   const identity = useHotelSettings();
-  const contactInfo = getContactInfo(identity);
-  const faqs = getFaqs(identity);
-  const { toast } = useToast();
-  const [submitting, setSubmitting] = React.useState(false);
-  const [submissionStatus, setSubmissionStatus] = React.useState<{ kind: 'success' | 'error'; message: string } | null>(null);
-  const [formData, setFormData] = React.useState({
-    name: '',
-    email: '',
-    phone: '',
-    subject: '',
-    message: '',
-  });
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSubjectChange = (value: string) => {
-    setFormData({ ...formData, subject: value });
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!formData.name || !formData.email || !formData.subject || !formData.message) {
-      const message = 'Select a subject and fill in every required field.';
-      setSubmissionStatus({ kind: 'error', message });
-      toast({ title: 'Missing information', description: message, variant: 'destructive' });
-      return;
-    }
-
-    setSubmitting(true);
-    setSubmissionStatus(null);
+  const [form, setForm] = React.useState(emptyForm);
+  const [pending, setPending] = React.useState(false);
+  const pendingRef = React.useRef(false);
+  const [error, setError] = React.useState('');
+  const [receipt, setReceipt] = React.useState<{ reference: string; status: string; } | null>(null);
+  React.useEffect(() => {
+    const requested = (new URLSearchParams(window.location.search).get('subject') || '').trim().toLowerCase();
+    const aliases: Record<string, string> = { 'room requirements': 'reservation', 'stay requirements': 'reservation', 'arrival question': 'modification' };
+    const subject = aliases[requested] || requested;
+    if (topics.some(topic => topic.value === subject)) setForm(previous => ({ ...previous, subject }));
+  }, []);
+  const update = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setForm(previous => ({ ...previous, [event.target.name]: event.target.value }));
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pendingRef.current) return;
+    const payload = { name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim() || null, subject: form.subject, message: form.message.trim() };
+    if (!payload.name || !payload.email || !payload.subject || !payload.message) { setError('Complete the required fields, including your message.'); return; }
+    pendingRef.current = true; setPending(true); setError('');
     try {
-      const response = await graphqlClient.request<{
-        submitHotelContactMessage: { reference: string; status: string };
-      }>(SUBMIT_CONTACT_MESSAGE, {
-        ...formData,
-        phone: formData.phone || null,
-        idempotencyKey: crypto.randomUUID(),
-      });
-      const acknowledgement = `Message queued for the front desk. Reference ${response.submitHotelContactMessage.reference}.`;
-      setSubmissionStatus({ kind: 'success', message: acknowledgement });
-      toast({ title: 'Message queued for the front desk', description: acknowledgement });
-      setFormData({ name: '', email: '', phone: '', subject: '', message: '' });
+      const attempt = await operationAttempt('contact', payload);
+      const result = await graphqlClient.request<{ submitHotelContactMessage: { reference: string; status: string; }; }>(SUBMIT_CONTACT_MESSAGE, { ...payload, idempotencyKey: attempt.key });
+      if (!result.submitHotelContactMessage?.reference) throw new Error('Missing acknowledgement');
+      setReceipt(result.submitHotelContactMessage);
+      setForm(emptyForm);
+      attempt.complete();
     } catch {
-      const failure = safeGuestWorkflowFailure('contact');
-      setSubmissionStatus({ kind: 'error', message: failure });
-      toast({ title: 'Message was not accepted', description: failure, variant: 'destructive' });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <main>
-      <section className="lodging-container py-16 md:py-24">
-        <div className="lodging-grid-break border-b border-[var(--lodging-rule)] pb-10">
-          <h1 className="lodging-display min-w-0">Contact the house.</h1>
-          <p className="lodging-lead min-w-0">
-            Reservations, modifications, and pre-arrival requests go to the property team—not a call center.
+      setError('We could not confirm that your message was accepted. Your details are still here; retrying the same message uses the same request reference. You can also contact the property directly.');
+    } finally { pendingRef.current = false; setPending(false); }
+  }
+  return <main className="lodging-container py-12 md:py-16">
+    <header className="hotel-page-head">
+      <p className="lodging-eyebrow">A little help from the house</p>
+      <h1 className="lodging-display">Let’s make your stay easier.</h1>
+      <p className="lodging-lead">Ask about your arrival, a reservation or a detail that matters to you. For an existing stay, the guest portal keeps your dates and statement close at hand.</p>
+    </header>
+    <nav aria-label="Guest help" className="hotel-subnav">
+      <Link href="/bookings/lookup">Manage a reservation</Link>
+      <Link href="/location">Plan your arrival</Link>
+      <Link href="/policies">Rates & policies</Link>
+    </nav>
+    <div className="grid gap-10 py-10 lg:grid-cols-[.8fr_1.2fr]">
+      <aside className="space-y-8">
+        <div>
+          <p className="lodging-eyebrow mb-3">Contact {identity.name}</p>
+          <h2 className="lodging-headline">Direct to the property.</h2>
+        </div>
+        <dl className="space-y-6">
+          {identity.phone && <div>
+            <dt className="lodging-label mb-2">Telephone</dt>
+            <dd>
+              <a className="lodging-link" href={`tel:${identity.phone.replace(/[^+\d]/g, '')}`}>{identity.phone}</a>
+            </dd>
+          </div>}
+          {identity.email && <div>
+            <dt className="lodging-label mb-2">Email</dt>
+            <dd className="break-words">
+              <a className="lodging-link" href={`mailto:${identity.email}`}>{identity.email}</a>
+            </dd>
+          </div>}
+          {identity.hours && <div>
+            <dt className="lodging-label mb-2">Published hours</dt>
+            <dd>{identity.hours}</dd>
+          </div>}
+          {identity.address.line1 && <div>
+            <dt className="lodging-label mb-2">Find us</dt>
+            <dd>{identity.address.line1}<br />{identity.address.line2}</dd>
+          </div>}
+        </dl>
+        {!identity.phone && !identity.email && <p className="hotel-notice">Direct contact details have not been published. You can send an inquiry using this form.</p>}
+        <div className="border-t border-[var(--lodging-rule)] pt-6 space-y-4">
+          <h3 className="lodging-title">Before you write</h3>
+          <p className="text-sm leading-7">A message requests assistance; it does not change or cancel a reservation. For cancellations, verify your booking to review its current policy and refund estimate.</p>
+          <p className="text-sm leading-7">For accessibility, transport or room arrangements, describe what you need and ask the property to confirm suitability before booking.</p>
+        </div>
+      </aside>
+      <section className="lodging-surface p-6 md:p-8">
+        <h2 className="lodging-title mb-6">Send the house a note</h2>
+        {receipt ? <div role="status" className="space-y-5">
+          <p className="lodging-eyebrow">Request recorded</p>
+          <p className="lodging-headline">Thank you for getting in touch.</p>
+          <p>Reference <strong className="break-all">{receipt.reference}</strong>
           </p>
-        </div>
-      </section>
-
-      <section className="lodging-container pb-12">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {contactInfo.map((info) => {
-            const Icon = info.icon;
-            const card = (
-              <div className="lodging-surface h-full p-6">
-                <Icon className="mb-5 h-5 w-5 text-[var(--lodging-accent-deep)]" />
-                <p className="lodging-eyebrow mb-2">{info.title}</p>
-                <p className="font-medium text-[var(--lodging-ink)]">{info.value}</p>
-                <p className="mt-2 text-sm text-[var(--lodging-ink-faint)]">{info.description}</p>
+          <p className="hotel-notice">Delivery status: {receipt.status.replaceAll('_', ' ')}. Your inquiry is recorded; this is not confirmation that a staff member has read it or approved a request.</p>
+          <button type="button" onClick={() => setReceipt(null)} className="lodging-button-ghost">Write another message</button>
+        </div> : <form onSubmit={submit} className="space-y-5">
+          <fieldset disabled={pending} className="space-y-5">
+            <legend className="sr-only">Your message and contact details</legend>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div>
+                <label htmlFor="contact-name" className="lodging-label">Name *</label>
+                <input id="contact-name" name="name" autoComplete="name" required maxLength={160} value={form.name} onChange={update} className="lodging-input mt-2" />
               </div>
-            );
-            return info.href ? (
-              <a key={info.title} href={info.href} className="block transition-opacity hover:opacity-85">
-                {card}
-              </a>
-            ) : (
-              <div key={info.title}>{card}</div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="lodging-container pb-20">
-        <div className="grid gap-8 lg:grid-cols-2">
-          <div className="lodging-surface p-6 md:p-8">
-            <div className="mb-6 flex items-center gap-2">
-              <MessageSquare className="h-5 w-5 text-[var(--lodging-accent-deep)]" />
-              <h2 className="lodging-title text-[clamp(1.5rem,2.5vw,2rem)]">Send a message</h2>
+              <div>
+                <label htmlFor="contact-email" className="lodging-label">Email *</label>
+                <input id="contact-email" name="email" type="email" autoComplete="email" required maxLength={254} value={form.email} onChange={update} className="lodging-input mt-2" />
+              </div>
             </div>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Full name *</Label>
-                  <Input id="name" name="name" value={formData.name} onChange={handleInputChange} required className="rounded-none border-[var(--lodging-rule)]" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email *</Label>
-                  <Input id="email" name="email" type="email" value={formData.email} onChange={handleInputChange} required className="rounded-none border-[var(--lodging-rule)]" />
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone</Label>
-                  <Input id="phone" name="phone" type="tel" value={formData.phone} onChange={handleInputChange} className="rounded-none border-[var(--lodging-rule)]" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="subject">Subject *</Label>
-                  <select
-                    id="subject"
-                    name="subject"
-                    value={formData.subject}
-                    onChange={(event) => handleSubjectChange(event.target.value)}
-                    required
-                    className="lodging-select rounded-none border-[var(--lodging-rule)]"
-                  >
-                    <option value="" disabled>Select a topic</option>
-                    <option value="reservation">Reservation inquiry</option>
-                    <option value="modification">Modify booking</option>
-                    <option value="cancellation">Cancellation request</option>
-                    <option value="billing">Billing question</option>
-                    <option value="feedback">Feedback</option>
-                    <option value="group">Group booking</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="message">Message *</Label>
-                <Textarea id="message" name="message" value={formData.message} onChange={handleInputChange} rows={5} required className="rounded-none border-[var(--lodging-rule)]" />
-              </div>
-              {submissionStatus ? (
-                <p
-                  role={submissionStatus.kind === 'error' ? 'alert' : 'status'}
-                  aria-live="polite"
-                  className={submissionStatus.kind === 'error' ? 'border-l-2 border-[var(--lodging-danger)] pl-4 text-sm text-[var(--lodging-danger)]' : 'border-l-2 border-[var(--lodging-accent)] pl-4 text-sm text-[var(--lodging-accent-deep)]'}
-                >
-                  {submissionStatus.message}
-                </p>
-              ) : null}
-              <Button type="submit" className="lodging-button h-12 w-full rounded-none border-0 bg-[var(--lodging-night)] hover:bg-[var(--lodging-accent-deep)]" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Sending
-                  </>
-                ) : (
-                  <>
-                    <Send className="mr-2 h-4 w-4" />
-                    Send message
-                  </>
-                )}
-              </Button>
-            </form>
-          </div>
-
-          <div className="lodging-surface p-6 md:p-8">
-            <div className="mb-6 flex items-center gap-2">
-              <HelpCircle className="h-5 w-5 text-[var(--lodging-accent-deep)]" />
-              <h2 className="lodging-title text-[clamp(1.5rem,2.5vw,2rem)]">Common questions</h2>
+            <div>
+              <label htmlFor="contact-phone" className="lodging-label">Telephone <span className="font-normal">(optional)</span>
+              </label>
+              <input id="contact-phone" name="phone" type="tel" autoComplete="tel" maxLength={40} value={form.phone} onChange={update} className="lodging-input mt-2" />
             </div>
-            {faqs.map((category) => (
-              <div key={category.category} className="mb-6 last:mb-0">
-                <div className="mb-3 flex items-center gap-2">
-                  <category.icon className="h-4 w-4 text-[var(--lodging-accent-deep)]" />
-                  <h3 className="font-medium text-[var(--lodging-ink)]">{category.category}</h3>
-                </div>
-                <Accordion type="single" collapsible className="w-full">
-                  {category.questions.map((faq, index) => (
-                    <AccordionItem key={index} value={`${category.category}-${index}`} className="border-[var(--lodging-rule)]">
-                      <AccordionTrigger className="text-left text-sm hover:no-underline">{faq.question}</AccordionTrigger>
-                      <AccordionContent className="text-sm leading-6 text-[var(--lodging-ink-muted)]">{faq.answer}</AccordionContent>
-                    </AccordionItem>
-                  ))}
-                </Accordion>
-              </div>
-            ))}
-          </div>
-        </div>
+            <div>
+              <label htmlFor="contact-subject" className="lodging-label">What can we help with? *</label>
+              <select id="contact-subject" name="subject" required value={form.subject} onChange={update} className="lodging-select mt-2">
+                <option value="">Choose a topic</option>{topics.map(topic => <option key={topic.value} value={topic.value}>{topic.label}</option>)}</select>
+            </div>
+            <div>
+              <label htmlFor="contact-message" className="lodging-label">Message *</label>
+              <textarea id="contact-message" name="message" required maxLength={4000} value={form.message} onChange={update} rows={6} aria-describedby="contact-privacy" className="lodging-textarea mt-2" />
+              <p id="contact-privacy" className="mt-2 text-sm text-[var(--lodging-ink-muted)]">Include your reservation reference if relevant. Please do not send payment card details or identity documents.</p>
+            </div>
+          </fieldset>
+          {error && <p role="alert" className="hotel-notice">{error}</p>}
+          <button type="submit" disabled={pending} className="lodging-button w-full">{pending ? 'Recording your message…' : 'Send message'}</button>
+        </form>}
       </section>
-
-      <section className="border-t border-[var(--lodging-rule)] bg-[var(--lodging-paper-2)]">
-        <div className="lodging-container py-14 text-center">
-          <h2 className="lodging-title">Need help before arrival?</h2>
-          <p className="mx-auto mt-3 max-w-xl text-[var(--lodging-ink-muted)] leading-7">
-            The front desk is available around the clock for urgent stay matters.
-          </p>
-          <div className="mt-8 flex flex-col justify-center gap-4 sm:flex-row">
-            <a href={`tel:${identity.phone.replace(/\D/g, '')}`} className="lodging-button">
-              <Phone className="h-4 w-4" />
-              Call front desk
-            </a>
-            <a href={`mailto:${identity.email}`} className="lodging-button-ghost">
-              <Mail className="h-4 w-4" />
-              Email concierge
-            </a>
-          </div>
-        </div>
-      </section>
-    </main>
-  );
+    </div>
+  </main>;
 }

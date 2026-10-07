@@ -5,6 +5,7 @@ import {
   recordHotelLifecycleEvent,
 } from '../lib/hotelLifecycle';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 
 export function getInventoryDay(dateInput: string | Date) {
   const date = new Date(dateInput);
@@ -61,6 +62,7 @@ export default async function updateRoomInventoryControls(
   await runSerializableTransaction(context, async (transactionContext: any) => {
     const prisma = transactionContext.prisma;
     await lockHotelLifecycle(prisma, eventKey);
+    await lockHotelBusinessDate(prisma);
     await prisma.$executeRawUnsafe(
       'SELECT pg_advisory_xact_lock(hashtext($1))',
       `hotel-inventory:${inventoryKey}`

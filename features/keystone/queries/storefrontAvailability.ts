@@ -1,4 +1,4 @@
-import { getHotelAvailability } from '../lib/hotelAvailability';
+import { getHotelAvailability } from '../inventory/roomAvailability';
 
 async function storefrontAvailability(
   _root: unknown,

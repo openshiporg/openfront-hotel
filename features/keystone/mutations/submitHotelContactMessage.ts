@@ -1,5 +1,5 @@
 import { enforceAbuseLimit } from '../lib/abuseControl';
-import { queueContactCommunication } from '../lib/hotelCommunications';
+import { queueContactCommunication } from '../communications/commands';
 
 export default async function submitHotelContactMessage(
   _root: unknown,

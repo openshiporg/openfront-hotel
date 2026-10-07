@@ -2,318 +2,133 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { format, parseISO, isPast, isFuture } from 'date-fns';
-import {
-  User,
-  Calendar,
-  CheckCircle2,
-  XCircle,
-  LogOut,
-  ChevronRight,
-  History,
-  Star,
-} from 'lucide-react';
-
-import { Booking } from '@/lib/types';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { formatStayDate } from '@/lib/hotelCalendarDate';
+import type { Booking } from '@/lib/types';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useToast } from '@/components/ui/use-toast';
-import {
-  lookupAccountAction,
-  type AccountLookupActionState,
-} from '@/features/storefront/actions/guest-search';
-import { GuestSearchStatus } from '@/features/storefront/components/GuestSearchStatus';
-import { GuestSearchSubmitButton } from '@/features/storefront/components/GuestSearchSubmitButton';
+import { lookupAccountAction, signOutGuestAction, type AccountLookupActionState } from '../actions/guest-search';
+import { GuestSearchStatus } from '../components/GuestSearchStatus';
+import { GuestSearchSubmitButton } from '../components/GuestSearchSubmitButton';
+import { bookingGroup, reservationPresentation } from '../lib/stay-context';
 
-function statusPill(status: string | null) {
-  if (status === 'cancelled' || status === 'no_show') return 'lodging-pill lodging-pill-danger';
-  if (status === 'confirmed' || status === 'checked_in') return 'lodging-pill lodging-pill-accent';
-  return 'lodging-pill';
-}
+const initialState: AccountLookupActionState = { status: 'idle', message: '', bookings: null, formData: { email: '' } };
+const groups = [{ id: 'upcoming', label: 'Current & upcoming', empty: 'No current or upcoming stays in this session.' }, { id: 'past', label: 'Completed', empty: 'Completed stays will appear here.' }, { id: 'cancelled', label: 'Cancelled & other', empty: 'No cancelled, processing or missed stays in this session.' }] as const;
 
-function statusLabel(status: string | null) {
-  if (!status) return 'Unknown';
-  return status.replace('_', ' ');
-}
-
-function StatCard({
-  icon: Icon,
-  count,
-  label,
-}: {
-  icon: React.ElementType;
-  count: number;
-  label: string;
-}) {
-  return (
-    <div className="lodging-surface flex items-center gap-4 p-6">
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center border border-[var(--lodging-rule)] rounded-full text-[var(--lodging-accent-deep)]">
-        <Icon className="h-5 w-5" />
-      </div>
-      <div className="min-w-0">
-        <p className="lodging-serif text-3xl leading-none text-[var(--lodging-ink)]">{count}</p>
-        <p className="lodging-eyebrow mt-1.5 text-[0.625rem]">{label}</p>
-      </div>
-    </div>
-  );
-}
-
-const initialState: AccountLookupActionState = {
-  status: 'idle',
-  message: '',
-  bookings: null,
-  formData: { email: '' },
-};
-
-export default function AccountPage() {
-  const { toast } = useToast();
+function AccountContent() {
+  const router = useRouter();
+  const search = useSearchParams();
+  const requestedTab = search?.get('tab');
+  const tab = groups.some(group => group.id === requestedTab) ? requestedTab! : 'upcoming';
   const emailRef = React.useRef<HTMLInputElement>(null);
   const [state, formAction] = React.useActionState(lookupAccountAction, initialState);
-  const [isLoggedIn, setIsLoggedIn] = React.useState(false);
-  const [bookings, setBookings] = React.useState<Booking[]>([]);
-  const [guestInfo, setGuestInfo] = React.useState<{ email: string; name: string } | null>(null);
-
+  const [signedOut, setSignedOut] = React.useState(false);
+  const signedOutRef = React.useRef(false);
+  const [bookings, setBookings] = React.useState<Booking[] | null>(null);
+  const [signingOut, setSigningOut] = React.useState(false);
+  const signingOutRef = React.useRef(false);
+  const [logoutError, setLogoutError] = React.useState('');
   React.useEffect(() => {
-    const saved = localStorage.getItem('openfront_guest_context');
-    if (!saved || !emailRef.current?.value) {
-      try {
-        const parsed = saved ? JSON.parse(saved) : null;
-        if (emailRef.current && parsed?.email) emailRef.current.value = parsed.email;
-      } catch {
-        // Ignore stale local convenience state; server action verification is authoritative.
-      }
+    if (signedOutRef.current || state.status !== 'matched' || !state.bookings?.length) return;
+    setBookings(state.bookings as unknown as Booking[]);
+    setSignedOut(false);
+  }, [state]);
+
+  async function handleLogout() {
+    if (signingOutRef.current) return;
+    signingOutRef.current = true;
+    signedOutRef.current = true;
+    setSigningOut(true);
+    setLogoutError('');
+    try {
+      await signOutGuestAction();
+      setSignedOut(true);
+      setBookings(null);
+      if (emailRef.current) emailRef.current.value = '';
+      router.refresh();
+    } catch {
+      setLogoutError('Sign-out did not complete. Please try again before leaving a shared device.');
+    } finally {
+      signingOutRef.current = false;
+      setSigningOut(false);
     }
-  }, []);
-
-  React.useEffect(() => {
-    if (state.status !== 'matched' || !state.bookings?.length) return;
-    const loadedBookings = state.bookings as unknown as Booking[];
-    const firstName = loadedBookings[0].guestName?.split(' ')[0] || 'Guest';
-    setBookings(loadedBookings);
-    setGuestInfo({ email: state.formData.email, name: firstName });
-    setIsLoggedIn(true);
-    localStorage.setItem(
-      'openfront_guest_context',
-      JSON.stringify({ email: state.formData.email, name: loadedBookings[0]?.guestName || firstName }),
-    );
-    toast({ title: 'Welcome back', description: 'Your verified reservations are loaded.' });
-  }, [state.bookings, state.formData.email, state.status, toast]);
-
-  const handleLogout = () => {
-    localStorage.removeItem('openfront_guest_context');
-    setIsLoggedIn(false);
-    setBookings([]);
-    setGuestInfo(null);
-    if (emailRef.current) emailRef.current.value = '';
-    toast({ title: 'Signed out', description: 'You have been signed out of the guest portal.' });
-  };
-
-  const upcomingBookings = bookings.filter(
-    (b) => isFuture(parseISO(b.checkInDate)) && b.status !== 'cancelled'
-  );
-  const pastBookings = bookings.filter(
-    (b) => isPast(parseISO(b.checkOutDate)) || b.status === 'checked_out'
-  );
-  const cancelledBookings = bookings.filter((b) => b.status === 'cancelled');
-
-  if (!isLoggedIn) {
-    return (
-      <main className="lodging-page min-h-screen">
-        <div className="lodging-container max-w-md py-20 md:py-28">
-          <div className="lodging-surface p-8 md:p-10">
-            <div className="mb-8 flex h-14 w-14 items-center justify-center border border-[var(--lodging-rule)] rounded-full text-[var(--lodging-accent-deep)]">
-              <User className="h-7 w-7" />
-            </div>
-            <p className="lodging-eyebrow mb-3 text-[var(--lodging-accent-deep)]">Guest portal</p>
-            <h1 className="lodging-headline mb-3">Access your stays.</h1>
-            <p className="lodging-lead mb-8">
-              Verify one reservation first, then use its email to view bookings available in your secure guest session.
-            </p>
-
-            <form action={formAction} className="space-y-6">
-              <div className="space-y-2">
-                <label htmlFor="email" className="lodging-label">Email address</label>
-                <input
-                  key={`email-${state.status}-${state.formData.email}`}
-                  ref={emailRef}
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  defaultValue={state.formData.email}
-                  className="lodging-input"
-                  required
-                />
-              </div>
-              <GuestSearchStatus state={{ phase: state.status, message: state.message, value: state.bookings }} />
-              <GuestSearchSubmitButton idleLabel="Find my reservations" pendingLabel="Locating profile…" />
-            </form>
-
-            <div className="lodging-divider my-8" />
-            <p className="mb-4 text-center text-sm text-[var(--lodging-ink-faint)]">
-              Only have a confirmation number?
-            </p>
-            <Link href="/bookings/lookup" className="lodging-button-ghost w-full justify-center">
-              Search by confirmation number
-            </Link>
-          </div>
-        </div>
-      </main>
-    );
   }
 
-  return (
-    <main className="lodging-page min-h-screen">
-      <div className="lodging-container max-w-4xl py-12 md:py-16">
-        <header className="mb-10 flex flex-col justify-between gap-6 border-b border-[var(--lodging-rule)] pb-8 md:flex-row md:items-end">
-          <div className="min-w-0">
-            <p className="lodging-eyebrow mb-2 text-[var(--lodging-accent-deep)]">Guest portal</p>
-            <h1 className="lodging-display">Welcome back, {guestInfo?.name?.split(' ')[0]}.</h1>
-            <p className="lodging-lead mt-3">{guestInfo?.email}</p>
+  return <main className="lodging-container py-12 md:py-16">
+    <header className="hotel-page-head">
+      <p className="lodging-eyebrow">Your guest portal</p>
+      <h1 className="lodging-display">{bookings ? 'Your stays, together.' : 'A place for your stay.'}</h1>
+      <p className="lodging-lead">{bookings ? 'Review dates, check your statement and request help with a verified reservation.' : 'Verify a reservation with your confirmation number first. Then use its email to open the stays verified in this browser.'}</p>
+    </header>
+    <nav aria-label="Guest portal" className="hotel-subnav">
+      <Link href="/bookings/lookup">Find a reservation</Link>
+      <Link href="/account" aria-current="page">Verified stays</Link>
+      <Link href="/contact">Contact the house</Link>
+    </nav>
+    {!bookings ? <div className="grid gap-10 py-10 md:grid-cols-2">
+      <section className="lodging-surface p-6 md:p-8">
+        <h2 className="lodging-title mb-5">Open verified stays</h2>
+        {signedOut && <p role="status" className="hotel-notice mb-5">You are signed out. Verify a reservation again to restore access.</p>}
+        <form action={formAction} onSubmit={() => { signedOutRef.current = false; setSignedOut(false); }} className="space-y-5">
+          <div>
+            <label htmlFor="email" className="lodging-label">Booking email</label>
+            <input key={signedOut ? 'email-signed-out' : `email-${state.status}-${state.formData.email}`} ref={emailRef} id="email" name="email" type="email" autoComplete="email" required maxLength={254} defaultValue={signedOut ? '' : state.formData.email} className="lodging-input mt-2" />
           </div>
-          <button type="button" onClick={handleLogout} className="lodging-button-ghost shrink-0">
-            <LogOut className="h-4 w-4" /> Sign out
-          </button>
-        </header>
-
-        <div className="mb-10 grid gap-4 sm:grid-cols-3">
-          <StatCard icon={Calendar} count={upcomingBookings.length} label="Upcoming stays" />
-          <StatCard icon={CheckCircle2} count={pastBookings.length} label="Completed stays" />
-          <StatCard icon={Star} count={bookings.length} label="Lifetime visits" />
-        </div>
-
-        <Tabs defaultValue="upcoming" className="w-full">
-          <TabsList className="lodging-surface mb-8 flex h-auto w-full justify-start gap-1 rounded-[var(--radius-sm)] border border-[var(--lodging-rule)] bg-[var(--lodging-paper)] p-1">
-            <TabsTrigger
-              value="upcoming"
-              className="rounded-[var(--radius-sm)] px-5 py-2 data-[state=active]:bg-[var(--lodging-night)] data-[state=active]:text-[color-mix(in_oklch,var(--lodging-paper)_95%,white)]"
-            >
-              Upcoming
-            </TabsTrigger>
-            <TabsTrigger
-              value="past"
-              className="rounded-[var(--radius-sm)] px-5 py-2 data-[state=active]:bg-[var(--lodging-night)] data-[state=active]:text-[color-mix(in_oklch,var(--lodging-paper)_95%,white)]"
-            >
-              Past
-            </TabsTrigger>
-            <TabsTrigger
-              value="cancelled"
-              className="rounded-[var(--radius-sm)] px-5 py-2 data-[state=active]:bg-[var(--lodging-night)] data-[state=active]:text-[color-mix(in_oklch,var(--lodging-paper)_95%,white)]"
-            >
-              Cancelled
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="upcoming">
-            {upcomingBookings.length === 0 ? (
-              <EmptyState
-                icon={Calendar}
-                title="No upcoming reservations"
-                copy="Ready to plan your next stay?"
-                actionHref="/rooms"
-                actionLabel="Browse rooms"
-              />
-            ) : (
-              <div className="space-y-4">
-                {upcomingBookings.map((booking) => (
-                  <BookingRow key={booking.id} booking={booking} />
-                ))}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="past">
-            {pastBookings.length === 0 ? (
-              <EmptyState icon={History} title="No past stays" copy="Your completed stays will appear here." />
-            ) : (
-              <div className="space-y-4">
-                {pastBookings.map((booking) => (
-                  <BookingRow key={booking.id} booking={booking} />
-                ))}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="cancelled">
-            {cancelledBookings.length === 0 ? (
-              <EmptyState icon={XCircle} title="No cancelled reservations" copy="Cancelled bookings will appear here." />
-            ) : (
-              <div className="space-y-4">
-                {cancelledBookings.map((booking) => (
-                  <BookingRow key={booking.id} booking={booking} />
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+          {!signedOut && <GuestSearchStatus state={{ phase: state.status, message: state.message, value: state.bookings }} />}
+          <GuestSearchSubmitButton idleLabel="Open my verified stays" pendingLabel="Finding verified stays…" />
+        </form>
+      </section>
+      <aside className="space-y-5 py-4">
+        <p className="lodging-eyebrow">First visit to the portal?</p>
+        <h2 className="lodging-headline">Start with a reservation.</h2>
+        <p className="lodging-lead">Your confirmation number and booking email establish access. This portal lists only reservations verified in your guest session; it is not a complete history of every visit.</p>
+        <Link href="/bookings/lookup" className="lodging-button-ghost">Verify a reservation</Link>
+      </aside>
+    </div> : <section className="py-8">
+      <div className="mb-8 flex flex-wrap justify-between items-center gap-4">
+        <p className="text-sm">{bookings.length} verified {bookings.length === 1 ? 'reservation' : 'reservations'} in this session</p>
+        <button type="button" className="lodging-button-ghost" onClick={handleLogout} disabled={signingOut}>{signingOut ? 'Signing out…' : 'Sign out of guest access'}</button>
       </div>
-    </main>
-  );
+      {logoutError && <p role="alert" className="hotel-notice mb-6">{logoutError}</p>}
+      <Tabs value={tab} onValueChange={value => { const params = new URLSearchParams(search?.toString()); params.set('tab', value); router.push(`/account?${params}`, { scroll: false }); }}>
+        <TabsList className="mb-8 flex h-auto flex-wrap justify-start gap-2 bg-transparent p-0">{groups.map(group => <TabsTrigger key={group.id} value={group.id} className="lodging-button-ghost data-[state=active]:border-[var(--lodging-ink)]">{group.label} ({bookings.filter(booking => bookingGroup(booking.status) === group.id).length})</TabsTrigger>)}</TabsList>
+        {groups.map(group => <TabsContent key={group.id} value={group.id}>
+          {bookings.filter(booking => bookingGroup(booking.status) === group.id).length === 0 ? <div className="lodging-surface p-8">
+            <h2 className="lodging-title">{group.empty}</h2>
+            <p className="lodging-lead mt-3">Add another reservation through booking lookup, or explore rooms for your next visit.</p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link href="/bookings/lookup" className="lodging-button-ghost">Find another stay</Link>
+              <Link href="/rooms" className="lodging-button">Explore rooms</Link>
+            </div>
+          </div> : <div className="space-y-5">{bookings.filter(booking => bookingGroup(booking.status) === group.id).map(booking => <article key={booking.id} className="lodging-surface p-6 md:p-8">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="lodging-title">{booking.confirmationNumber}</h2>
+              <span className="lodging-pill">{reservationPresentation(booking.status).label}</span>
+            </div>
+            <dl className="grid gap-6 sm:grid-cols-3">
+              <div>
+                <dt className="lodging-eyebrow mb-2">Arrival</dt>
+                <dd>{formatStayDate(booking.checkInDate, { month: 'short', day: 'numeric', year: 'numeric' })}</dd>
+              </div>
+              <div>
+                <dt className="lodging-eyebrow mb-2">Departure</dt>
+                <dd>{formatStayDate(booking.checkOutDate, { month: 'short', day: 'numeric', year: 'numeric' })}</dd>
+              </div>
+              <div>
+                <dt className="lodging-eyebrow mb-2">Stay</dt>
+                <dd>{booking.numberOfNights} {booking.numberOfNights === 1 ? 'night' : 'nights'}</dd>
+              </div>
+            </dl>
+            <Link href={`/booking/${encodeURIComponent(booking.id)}`} className="lodging-button-ghost mt-6">Manage this reservation</Link>
+          </article>)}</div>}
+        </TabsContent>)}
+      </Tabs>
+    </section>}
+  </main>;
 }
-
-function EmptyState({
-  icon: Icon,
-  title,
-  copy,
-  actionHref,
-  actionLabel,
-}: {
-  icon: React.ElementType;
-  title: string;
-  copy: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <div className="lodging-surface py-16 text-center">
-      <Icon className="mx-auto mb-5 h-10 w-10 text-[var(--lodging-ink-faint)]" />
-      <h3 className="lodging-title text-[clamp(1.25rem,2vw,1.5rem)]">{title}</h3>
-      <p className="lodging-lead mx-auto mt-2 max-w-sm">{copy}</p>
-      {actionHref && actionLabel ? (
-        <Link href={actionHref} className="lodging-button mt-8 inline-flex">
-          {actionLabel}
-        </Link>
-      ) : null}
-    </div>
-  );
-}
-
-function BookingRow({ booking }: { booking: Booking }) {
-  return (
-    <div className="lodging-surface p-6">
-      <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-        <div className="min-w-0 flex-1">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h3 className="lodging-serif text-lg text-[var(--lodging-ink)]">{booking.confirmationNumber}</h3>
-            <span className={statusPill(booking.status)}>{statusLabel(booking.status)}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-5 text-sm md:grid-cols-4">
-            <div>
-              <p className="lodging-eyebrow mb-1 text-[0.6rem]">Check-in</p>
-              <p className="text-[var(--lodging-ink)]">{format(parseISO(booking.checkInDate), 'MMM dd, yyyy')}</p>
-            </div>
-            <div>
-              <p className="lodging-eyebrow mb-1 text-[0.6rem]">Check-out</p>
-              <p className="text-[var(--lodging-ink)]">{format(parseISO(booking.checkOutDate), 'MMM dd, yyyy')}</p>
-            </div>
-            <div>
-              <p className="lodging-eyebrow mb-1 text-[0.6rem]">Duration</p>
-              <p className="text-[var(--lodging-ink)]">
-                {booking.numberOfNights} {booking.numberOfNights === 1 ? 'night' : 'nights'}
-              </p>
-            </div>
-            <div>
-              <p className="lodging-eyebrow mb-1 text-[0.6rem]">Total</p>
-              <p className="text-[var(--lodging-ink)]">${(booking.totalAmount || 0).toFixed(2)}</p>
-            </div>
-          </div>
-        </div>
-        <Link
-          href={`/booking/${booking.id}`}
-          className="lodging-button-ghost shrink-0"
-        >
-          View reservation <ChevronRight className="h-4 w-4" />
-        </Link>
-      </div>
-    </div>
-  );
+export default function AccountPage() {
+  return <React.Suspense fallback={<main className="lodging-container py-16">
+    <p role="status">Opening your guest portal…</p>
+  </main>}>
+    <AccountContent />
+  </React.Suspense>;
 }

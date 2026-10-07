@@ -1,5 +1,5 @@
 import { permissions } from '../access';
-import { reverseFolioPosting } from '../lib/folioPosting';
+import { reverseFolioPosting } from '../folios/commands';
 
 export default async function reverseFolioEntry(
   root: unknown,
@@ -7,11 +7,12 @@ export default async function reverseFolioEntry(
     entryId,
     postingKey,
     reason,
-  }: { entryId: string; postingKey: string; reason: string },
+    approvalId,
+  }: { approvalId?: string | null; entryId: string; postingKey: string; reason: string },
   context: any
 ) {
   if (!permissions.canManagePayments({ session: context.session })) {
     throw new Error('Not authorized to reverse folio entries.');
   }
-  return reverseFolioPosting({ context, entryId, postingKey, reason });
+  return reverseFolioPosting({ context, entryId, postingKey, reason, approvalId });
 }

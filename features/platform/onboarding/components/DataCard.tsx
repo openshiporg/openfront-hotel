@@ -20,24 +20,28 @@ export function DataCard({ title, content, onCopy, copied, copyKey, showPasteBut
         <div className="flex items-center space-x-2">
           {showPasteButton && onPaste && (
             <Button
+              type="button"
               size="sm"
               variant="ghost"
+              aria-label={`Paste ${title}`}
               onClick={onPaste}
               className="h-6 w-6 p-0 hover:bg-background/80"
             >
-              <Clipboard className="h-3 w-3 text-muted-foreground" />
+              <Clipboard className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
             </Button>
           )}
           <Button
+            type="button"
             size="sm"
             variant="ghost"
+            aria-label={copied ? `${title} copied` : `Copy ${title}`}
             onClick={() => onCopy(content, copyKey)}
             className="h-6 w-6 p-0 hover:bg-background/80"
           >
             {copied ? (
-              <Check className="h-3 w-3 text-green-600" />
+              <Check className="h-3 w-3 text-green-600" aria-hidden="true" />
             ) : (
-              <Copy className="h-3 w-3 text-muted-foreground" />
+              <Copy className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
             )}
           </Button>
         </div>

@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Rocket } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -80,8 +79,8 @@ export function OnboardingCards({
   steps: OnboardingStep[];
   onboardingStatus?: string;
   onDismiss: () => void;
-  onOpenDialog: () => void;
-  userRole?: { canManageOnboarding?: boolean } | null;
+  onOpenDialog?: () => void;
+  userRole?: any;
 }) {
   const [dismissedSteps] = React.useState<string[]>([]);
   const cards = steps.filter(({ href }) => !dismissedSteps.includes(href));
@@ -90,17 +89,17 @@ export function OnboardingCards({
 
   React.useEffect(() => {
     let timeout: NodeJS.Timeout | undefined = undefined;
-    if (cardCount === 0) {
+    if (cardCount === 0)
       timeout = setTimeout(() => setShowCompleted(false), 2700);
-    }
     return () => clearTimeout(timeout);
   }, [cardCount]);
 
+  // Don't show onboarding if user doesn't have permission
   if (!userRole?.canManageOnboarding) {
     return null;
   }
 
-  if (onboardingStatus === "completed" || onboardingStatus === "dismissed") {
+  if (onboardingStatus === "completed") {
     return null;
   }
 
@@ -128,7 +127,7 @@ function OnboardingCard({
   title: string;
   description: string;
   onDismiss?: () => void;
-  onOpenDialog: () => void;
+  onOpenDialog?: () => void;
 }) {
   const [isHovered, setIsHovered] = React.useState(false);
   const [isDismissed, setIsDismissed] = React.useState(false);
@@ -144,6 +143,7 @@ function OnboardingCard({
 
   return (
     <>
+      {/* Full sidebar view */}
       <div
         className={cn(
           "group relative rounded-lg border bg-white dark:bg-black transition-all duration-300 ease-spring group-has-[[data-collapsible=icon]]/sidebar-wrapper:hidden",
@@ -165,11 +165,8 @@ function OnboardingCard({
 
         <InfoCardFooter isHovered={isHovered}>
           <div className="m-2 space-x-2">
-            <Button size="sm" asChild className="text-xs h-6">
-              <Link href="/dashboard/platform/property">Configure real property</Link>
-            </Button>
-            <Button size="sm" variant="outline" onClick={onOpenDialog} className="text-xs h-6">
-              Load demo
+            <Button size="sm" onClick={onOpenDialog} className="text-xs h-6">
+              Get started
             </Button>
             <Button
               variant="ghost"
@@ -183,6 +180,7 @@ function OnboardingCard({
         </InfoCardFooter>
       </div>
 
+      {/* Icon-only sidebar view */}
       <div
         className={cn(
           "hidden group-has-[[data-collapsible=icon]]/sidebar-wrapper:block",

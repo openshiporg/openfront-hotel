@@ -67,7 +67,17 @@ export function useOnboardingState() {
   };
 
   const setSelectedTemplate = (template: TemplateType) => {
-    setState((prev) => ({ ...prev, selectedTemplate: template }));
+    setState((prev) => ({
+      ...prev,
+      selectedTemplate: template,
+      step: 'template',
+      customJsonApplied: false,
+      progressMessage: '',
+      error: null,
+      itemErrors: {},
+      loadingItems: { ...initialItemsState },
+      completedItems: { ...initialItemsState },
+    }));
   };
 
   const setCurrentJsonData = (data: any) => {
@@ -153,6 +163,20 @@ export function useOnboardingState() {
     }));
   };
 
+  const resetDialogState = () => {
+    setState((prev) => ({
+      ...prev,
+      step: 'template',
+      customJsonApplied: false,
+      progressMessage: '',
+      error: null,
+      itemErrors: {},
+      loadingItems: { ...initialItemsState },
+      completedItems: { ...initialItemsState },
+      isLoading: false,
+    }));
+  };
+
   return {
     ...state,
     setStep,
@@ -166,5 +190,6 @@ export function useOnboardingState() {
     setItemCompleted,
     setItemError,
     resetOnboardingState,
+    resetDialogState,
   };
 }

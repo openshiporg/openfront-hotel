@@ -1,12 +1,13 @@
 'use client';
 
 import React from 'react';
-import { AlertCircle, ArrowUpRight, Building2, CircleCheck, Loader2, Package } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ArrowUpRight, Building2, CircleCheck, Loader2, Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -31,6 +32,7 @@ import { getItemsFromJsonData } from '../utils/dataUtils';
 interface OnboardingDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  onCompleted?: () => void;
 }
 
 const templateIcons = {
@@ -39,7 +41,7 @@ const templateIcons = {
   custom: CircleCheck,
 } as const;
 
-const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) => {
+const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, onCompleted }) => {
   const onboardingState = useOnboardingState();
   const {
     step,
@@ -63,6 +65,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
     setError,
     setIsLoading,
     resetOnboardingState,
+    resetDialogState,
   } = onboardingState;
 
   const { runOnboarding } = useOnboardingApi({
@@ -77,9 +80,17 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
     setError,
     setIsLoading,
     resetOnboardingState,
+    onCompleted,
   });
 
   if (!isOpen) return null;
+  const canConfirm = Boolean(currentJsonData) && (selectedTemplate !== 'custom' || customJsonApplied);
+  const handleOpenChange = (open: boolean) => {
+    if (!open && !isLoading) {
+      resetDialogState();
+      onClose();
+    }
+  };
 
   const displayNames: Record<string, string[]> = SECTION_DEFINITIONS.reduce((acc, section) => {
     acc[section.type] = currentJsonData
@@ -89,10 +100,15 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
   }, {} as Record<string, string[]>);
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-[95vw] flex-col overflow-hidden p-0 gap-0 sm:max-w-4xl">
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="flex max-h-[calc(100dvh-2rem)] max-w-[95vw] flex-col overflow-hidden p-0 gap-0 sm:max-w-4xl"
+        onEscapeKeyDown={(event) => { if (isLoading) event.preventDefault(); }}
+        onPointerDownOutside={(event) => { if (isLoading) event.preventDefault(); }}
+      >
         <DialogHeader className="mb-0 border-b px-4 py-4 sm:px-6 shrink-0">
-          <DialogTitle>Hotel onboarding</DialogTitle>
+          <DialogTitle>Hotel Setup</DialogTitle>
+          <DialogDescription>Choose a Hotel template or apply validated custom JSON, then create the linked property data in one retry-safe operation.</DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
@@ -121,7 +137,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                   <>
                     <h4 className="mb-2 text-sm font-medium text-foreground">Setup complete</h4>
                     <p className="mb-4 text-sm text-muted-foreground">
-                      Your {selectedTemplate === 'minimal' ? 'basic' : 'complete'} property dataset is now ready.
+                      Your {selectedTemplate === 'minimal' ? 'basic' : selectedTemplate === 'custom' ? 'custom' : 'complete'} property dataset is now ready.
                     </p>
                     <div className="mb-4 flex items-center space-x-2 text-sm text-emerald-600 dark:text-emerald-500">
                       <CircleCheck className="h-4 w-4 fill-emerald-500 text-background" />
@@ -231,8 +247,8 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
               {error && !isLoading && step !== 'done' && (
                 <Badge color="rose" className="rounded-none gap-3 border-b text-sm">
                   <AlertCircle className="size-4 sm:size-7" />
-                  <span className="text-xs sm:text-sm">
-                    There was a problem creating the property sample data. Review the first failed section and retry.
+                  <span className="whitespace-pre-line text-xs sm:text-sm" role="alert">
+                    {error}
                   </span>
                 </Badge>
               )}
@@ -265,8 +281,8 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                         Creating...
                       </Button>
                     ) : (
-                      <Button onClick={runOnboarding} className="w-full sm:w-auto">
-                        Confirm
+                      <Button onClick={runOnboarding} disabled={!canConfirm} className="w-full sm:w-auto">
+                        {selectedTemplate === 'custom' && !customJsonApplied ? 'Apply custom JSON first' : 'Confirm'}
                       </Button>
                     )}
                   </div>
@@ -283,9 +299,15 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                   setCurrentJsonData(newJsonData);
                   setCustomJsonApplied(true);
                 }}
-                onBack={() => setCustomJsonApplied(false)}
               />
             ) : (
+              <>
+                {selectedTemplate === 'custom' && step === 'template' && customJsonApplied ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setCustomJsonApplied(false)} className="mb-4">
+                    <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" />
+                    Edit custom JSON
+                  </Button>
+                ) : null}
               <SectionRenderer
                 sections={SECTION_DEFINITIONS}
                 selectedTemplate={selectedTemplate}
@@ -297,6 +319,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                 step={step}
                 currentJsonData={currentJsonData}
               />
+              </>
             )}
           </div>
         </div>
@@ -305,8 +328,8 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
           {error && !isLoading && step !== 'done' && (
             <Badge color="rose" className="rounded-none gap-3 border-b text-sm">
               <AlertCircle className="size-4 sm:size-7" />
-              <span className="text-xs sm:text-sm">
-                There was a problem creating the property sample data. Review the first failed section and retry.
+              <span className="whitespace-pre-line text-xs sm:text-sm" role="alert">
+                {error}
               </span>
             </Badge>
           )}
@@ -339,8 +362,8 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose }) 
                     Creating...
                   </Button>
                 ) : (
-                  <Button onClick={runOnboarding} className="flex-1">
-                    Confirm
+                  <Button onClick={runOnboarding} disabled={!canConfirm} className="flex-1">
+                    {selectedTemplate === 'custom' && !customJsonApplied ? 'Apply custom JSON first' : 'Confirm'}
                   </Button>
                 )}
               </div>

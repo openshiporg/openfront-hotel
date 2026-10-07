@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 
-import { persistAuthenticatedHotelOutboxReceipt } from '@/features/keystone/lib/hotelOutbox';
+import { HotelOutboxReceiptConflictError, persistAuthenticatedHotelOutboxReceipt } from '@/features/keystone/communications/outbox';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,8 +49,7 @@ export async function POST(request: Request) {
       headers: { 'Cache-Control': 'no-store' },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    const conflict = message.includes('already bound');
+    const conflict = error instanceof HotelOutboxReceiptConflictError;
     return Response.json(
       { accepted: false, error: conflict ? 'Receiver evidence conflict.' : 'Receiver authentication failed.' },
       { status: conflict ? 409 : 401, headers: { 'Cache-Control': 'no-store' } },

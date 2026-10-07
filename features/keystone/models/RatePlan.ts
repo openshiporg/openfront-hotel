@@ -72,7 +72,7 @@ export const RatePlan = list({
       ui: { itemView: { fieldMode: 'read' }, description: 'Derived compatibility value; minor units are authoritative.' },
     }),
 
-    bookings: relationship({ ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),
+    bookings: relationship({ access: { create: () => false, update: () => false }, ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),
 
     // Seasonal adjustments stored as JSON
     seasonalAdjustments: json({
@@ -250,6 +250,9 @@ export const RatePlan = list({
       ...(Number.isSafeInteger(resolvedData.baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 } : {}),
     }),
     validateInput: ({ resolvedData, item, addValidationError }) => {
+      if (!item && resolvedData.status === 'active') addValidationError('Create a draft, then publish it through the approved rate lifecycle.');
+      const economic = ['baseRateMinor', 'roomType', 'currencyCode', 'seasonalAdjustments', 'minimumStay', 'maximumStay', 'advanceBookingMin', 'advanceBookingMax', 'cancellationPolicy', 'mealPlan', 'validFrom', 'validTo', 'applicableDays', 'isPromotional', 'promoCode'];
+      if (item?.status === 'active' && economic.some(field => resolvedData[field] !== undefined && JSON.stringify(resolvedData[field]) !== JSON.stringify(item[field]))) addValidationError('Unpublish the rate through the approved lifecycle before editing its economics, then publish the reviewed terms.');
       const promotional = resolvedData.isPromotional ?? item?.isPromotional ?? false;
       const promoCode = String(resolvedData.promoCode ?? item?.promoCode ?? '').trim();
       const currencyCode = String(resolvedData.currencyCode ?? item?.currencyCode ?? 'USD').trim().toUpperCase();

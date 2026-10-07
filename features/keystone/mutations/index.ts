@@ -1,3 +1,22 @@
+import { hotelHousekeepingStaffCapabilities, updateHotelHousekeepingStaffCapability } from '../workforce/housekeepingCapabilities';
+import guestFolio from '../queries/guestFolio';
+import { hotelPayoutOperations, manageHotelPayout } from '../finance/hotelPayoutReconciliation';
+import { hotelRelocation, updateHotelRelocation } from '../operations/guestRelocation';
+import { hotelSecurityAuthorization, manageHotelSecurityAuthorization } from '../security/authorization';
+import { hotelDerivedRateTypeDefs, hotelDerivedRateResolvers } from '../rates/derived';
+import { hotelLoyaltyAccount, redeemHotelLoyalty } from '../loyalty/commands';
+import { maintenanceCommercialTypeDefs, maintenanceCommercialResolvers } from '../operations/maintenanceCommercial';
+import { saveHotelChannelDraft } from '../lib/hotelChannelConfiguration';
+import { hotelMfaTypeDefs, hotelMfaResolvers } from '../lib/hotelMfa';
+import { hotelPayerWindows, hotelReceivableOperations, hotelReceivableOperationsPage, manageHotelReceivable } from '../receivables/commands';
+import { hotelDisputeOperations, annotateHotelDispute } from '../finance/hotelDisputes';
+import { hotelGroupWorkspace, createHotelGroupRoomingList, closeHotelGroupMasterFolio, detachHotelGroupBooking } from '../groups/commands';
+import { hotelFolioReceipt } from '../lib/hotelFolioReceipt';
+import { guestBookedStayTerms } from '../lib/storefrontBooking';
+import { hotelGuestGovernanceTypeDefs, hotelGuestGovernanceResolvers } from '../guest-governance/commands';
+import { getHotelStayServices, updateHotelStayService } from '../operations/stayServices';
+import { hotelCashierOperations, manageHotelCashier } from '../cashier/commands';
+import { getHotelRoomOutages, updateHotelRoomOutage } from '../operations/roomOutages';
 import { mergeSchemas } from "@graphql-tools/schema";
 import type { GraphQLSchema } from 'graphql';
 import redirectToInit from "./redirectToInit";
@@ -6,22 +25,23 @@ import pushInventoryToChannel from "./pushInventoryToChannel";
 import pullReservationsFromChannel from "./pullReservationsFromChannel";
 import initiateBookingPaymentSession from './initiateBookingPaymentSession';
 import completeBookingPayment from './completeBookingPayment';
-import createStorefrontBooking, { type StorefrontBookingInput } from './createStorefrontBooking';
-import createStaffBooking, { type StaffBookingInput } from './createStaffBooking';
+import { getHotelStayRegister, updateHotelStayRegister } from '../operations/stayRegister';
+import createStorefrontBooking, { type StorefrontBookingInput } from '../bookings/createStorefrontBooking';
+import createStaffBooking, { type StaffBookingInput } from '../bookings/createStaffBooking';
 import amendStaffBooking from './amendStaffBooking';
 import submitHotelContactMessage from './submitHotelContactMessage';
 import requestBookingPaymentRefund from './requestBookingPaymentRefund';
 import updateHotelPropertySettings from './updateHotelPropertySettings';
-import updateBookingStatus from './updateBookingStatus';
-import updateRoomOperationalStatus from './updateRoomOperationalStatus';
-import reportRoomMaintenanceIssue from './reportRoomMaintenanceIssue';
-import assignRoomToBooking from './assignRoomToBooking';
+import updateBookingStatus from '../bookings/status';
+import updateRoomOperationalStatus from '../operations/roomLifecycle';
+import reportRoomMaintenanceIssue from '../operations/maintenanceIssue';
+import assignRoomToBooking from '../bookings/roomAssignment';
 import updateBookingStayDates from './updateBookingStayDates';
 import retryFailedChannelSyncs from './retryFailedChannelSyncs';
-import updateMaintenanceRequestStatus from './updateMaintenanceRequestStatus';
+import updateMaintenanceRequestStatus from '../operations/maintenanceRequests';
 import updateRoomInventoryControls from './updateRoomInventoryControls';
-import requestBookingModification from './requestBookingModification';
-import resolveBookingModificationRequest from './resolveBookingModificationRequest';
+import requestBookingModification from '../bookings/requestModification';
+import resolveBookingModificationRequest from '../bookings/resolveModificationRequest';
 import bookingPaymentProviders from '../queries/bookingPaymentProviders';
 import activeBookingPaymentSession from '../queries/activeBookingPaymentSession';
 import guestBooking from '../queries/guestBooking';
@@ -40,10 +60,10 @@ import postFolioEntry from './postFolioEntry';
 import reverseFolioEntry from './reverseFolioEntry';
 import recordBookingPayment from './recordBookingPayment';
 import closeReconciledFolio from './closeReconciledFolio';
-import updateHousekeepingTaskStatus from './updateHousekeepingTaskStatus';
+import updateHousekeepingTaskStatus from '../workforce/housekeepingTasks';
 import updateRatePlanPublication from './updateRatePlanPublication';
 import { hotelOperationsResolvers, hotelOperationsTypeDefs } from '../queries/hotelOperations';
-import runHotelNightAudit from './runHotelNightAudit';
+import runHotelNightAudit from '../operations/nightAudit';
 import createHotelGroupBlock from './createHotelGroupBlock';
 import replayHotelOutboxEvent from './replayHotelOutboxEvent';
 import pickupHotelGroupBlock from './pickupHotelGroupBlock';
@@ -53,6 +73,7 @@ import replayRefundIntent from './replayRefundIntent';
 import redeemHotelPasswordResetToken from './redeemHotelPasswordResetToken';
 import configureHotelPaymentProvider from './configureHotelPaymentProvider';
 import { paymentProviderCredentials } from '../lib/integrationConfig';
+import { applyHotelAuthGraphqlPolicy } from '../lib/hotelAuthGraphqlSchema';
 
 const graphql = String.raw;
 
@@ -129,6 +150,7 @@ function mapGuestBooking(booking: any) {
   if (!booking) return null;
   return {
     ...booking,
+    bookedStayTerms: guestBookedStayTerms(booking),
     checkInDate: booking.checkInDate ? new Date(booking.checkInDate) : null,
     checkOutDate: booking.checkOutDate ? new Date(booking.checkOutDate) : null,
     createdAt: booking.createdAt ? new Date(booking.createdAt) : null,
@@ -145,10 +167,14 @@ function mapGuestBooking(booking: any) {
 }
 
 export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
-  return mergeSchemas({
+  const schema = mergeSchemas({
     schemas: [baseSchema],
     typeDefs: graphql`
       ${hotelOperationsTypeDefs}
+      ${hotelGuestGovernanceTypeDefs}
+      ${hotelMfaTypeDefs}
+      ${maintenanceCommercialTypeDefs}
+      ${hotelDerivedRateTypeDefs}
 
       type PublicHotelSettings {
         state: String!
@@ -231,6 +257,8 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         totalAmountMinor: Int!
         currencyCode: String!
         pricingVersion: String!
+        securityDepositMinor: Int!
+        depositPercent: Int!
         quoteToken: String!
       }
 
@@ -357,8 +385,10 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         depositAmountMinor: Int
         balanceDueMinor: Int
         currencyCode: String
+        bookedStayTerms: JSON
         status: String
         paymentStatus: String
+        refundPendingMinor: Int
         specialRequests: String
         createdAt: DateTime
         confirmedAt: DateTime
@@ -370,6 +400,22 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
       }
 
       type Query {
+        hotelHousekeepingStaffCapabilities: String!
+        hotelPayerWindows(folioId: ID!, bookingId: ID): JSON!
+        guestFolio(bookingId: ID!): JSON!
+        hotelPayoutOperations: JSON!
+        hotelSecurityAuthorization(bookingId: ID!): JSON!
+        hotelFolioReceipt(folioId: ID!): JSON!
+        hotelCashierOperations: JSON!
+        hotelReceivableOperations: JSON! @deprecated(reason: "Use hotelReceivableOperationsPage for bounded workspace reads.")
+        hotelReceivableOperationsPage(afterAccountId: ID, afterInvoiceId: ID, pageSize: Int): JSON!
+        hotelDisputeOperations: JSON!
+        hotelGroupWorkspace(after: ID): String!
+        hotelLoyaltyAccount(bookingId: ID!): String!
+        hotelRelocation(bookingId: ID!): String!
+        hotelStayServices(bookingId: ID, roomId: ID): String!
+        hotelRoomOutages: String!
+        hotelStayRegister(bookingId: ID!): String!
         redirectToInit: Boolean
         publicHotelSettings: PublicHotelSettings!
         bookingPaymentProviders: [BookingCheckoutPaymentProvider!]!
@@ -461,6 +507,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
       }
 
       input StorefrontBookingCreateInput {
+        idempotencyKey: String!
         guestName: String!
         guestEmail: String!
         guestPhone: String
@@ -476,6 +523,19 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
       }
 
       input HotelPropertySettingsInput {
+        refundApprovalThresholdMinor: Int
+        writeOffApprovalThresholdMinor: Int
+        cashVarianceApprovalThresholdMinor: Int
+        prearrivalEmailEnabled: Boolean
+        prearrivalDays: Int
+        loyaltyEnabled: Boolean
+        loyaltyEarnMinorPerPoint: Int
+        loyaltyRedeemMinorPerPoint: Int
+        loyaltyMinimumRedemptionPoints: Int
+        securityDepositMinor: Int
+        depositPercent: Int
+        groupsEnabled: Boolean
+        ratePublicationRequiresApproval: Boolean
         propertyName: String!
         tagline: String
         contactEmail: String!
@@ -483,6 +543,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         addressLine1: String!
         addressLine2: String
         frontDeskCopy: String
+        timeZone: String!
         checkInTime: String!
         checkOutTime: String!
         currencyCode: String!
@@ -533,10 +594,25 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         internalNotes: String
         source: String
         status: String
+        quoteToken: String!
         idempotencyKey: String!
       }
 
       type Mutation {
+        updateHotelRelocation(bookingId: ID!, status: String!, expectedRevision: Int!, propertyName: String, contact: String, confirmation: String, costMinor: Int, guestAgreement: String, followUp: String, costEvidence: String, idempotencyKey: String!): String!
+        detachHotelGroupBooking(bookingId: ID!, checkInDate: DateTime!, checkOutDate: DateTime!, roomTypeId: ID!, ratePlanId: ID!, reason: String!, idempotencyKey: String!): String!
+        manageHotelPayout(input: JSON!): JSON!
+        manageHotelSecurityAuthorization(input: JSON!): JSON!
+        redeemHotelLoyalty(bookingId: ID!, points: Int!, idempotencyKey: String!): String!
+        saveHotelChannelDraft(input: JSON!): JSON!
+        manageHotelReceivable(input: JSON!): JSON!
+        annotateHotelDispute(input: JSON!): JSON!
+        createHotelGroupRoomingList(groupBlockId: ID!, allocationId: ID!, rows: String!, idempotencyKey: String!): String!
+        closeHotelGroupMasterFolio(groupBlockId: ID!, idempotencyKey: String!): String!
+        manageHotelCashier(input: JSON!): JSON!
+        updateHotelStayService(serviceId: ID, bookingId: ID, roomId: ID, category: String, title: String, description: String, priority: String, dueAt: DateTime, status: String!, expectedStatus: String, assignedToId: ID, resolution: String, idempotencyKey: String!): String!
+        updateHotelRoomOutage(roomId: ID!, outageId: ID, startDate: DateTime, endDate: DateTime, reason: String!, action: String!, idempotencyKey: String!): String!
+        updateHotelStayRegister(bookingId: ID!, action: String!, name: String, occupantId: ID, keyReference: String, idempotencyKey: String!): String!
         configureHotelPaymentProvider(code: String!, enabled: Boolean!, credentials: HotelPaymentProviderCredentialsInput): HotelPaymentProviderConfigurationResult!
         redeemHotelPasswordResetToken(email: String!, token: String!, password: String!): HotelPasswordResetResult!
         updateHotelPropertySettings(data: HotelPropertySettingsInput!, idempotencyKey: String!): HotelSettings!
@@ -546,10 +622,11 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           businessDate: DateTime!
           idempotencyKey: String!
         ): HotelNightAuditRunProjection!
-        replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!): HotelOutboxReplayResult!
+        replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!, acknowledgeUnknownDelivery: Boolean): HotelOutboxReplayResult!
         replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
         resolveOverdueCheckedInBooking(
           bookingId: ID!
+          approvalId: ID
           idempotencyKey: String!
           reason: String!
         ): OverdueStayResolutionResult!
@@ -565,6 +642,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           idempotencyKey: String!
         ): HotelGroupBlockProjection!
         createHotelGroupBlock(
+          ratePlanId: ID
           name: String!
           arrivalDate: DateTime!
           departureDate: DateTime!
@@ -583,6 +661,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         ensureReservationSnapshots(bookingId: ID!): ReservationSnapshotResult!
         postFolioEntry(
           bookingId: ID!
+          approvalId: ID
           postingKey: String!
           entryType: String!
           direction: String!
@@ -593,6 +672,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         ): FolioPostingResult!
         reverseFolioEntry(
           entryId: ID!
+          approvalId: ID
           postingKey: String!
           reason: String!
         ): FolioPostingResult!
@@ -624,6 +704,9 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         createStaffBooking(data: StaffBookingCreateInput!): Booking!
         amendStaffBooking(
           bookingId: ID!
+          targetRoomId: ID
+          earlyDepartureApprovalId: ID
+          earlyDepartureReason: String
           checkInDate: DateTime!
           checkOutDate: DateTime!
           roomTypeId: ID
@@ -633,6 +716,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         ): Booking!
         requestBookingPaymentRefund(
           paymentId: ID!
+          approvalId: ID
           amountMinor: Int!
           reason: String!
           idempotencyKey: String!
@@ -644,8 +728,11 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           notes: String
           idempotencyKey: String!
         ): Room
+        updateHotelHousekeepingStaffCapability(staffId: ID!, configuration: String!, expectedRevision: Int!, idempotencyKey: String!): String!
         updateHousekeepingTaskStatus(
           taskId: ID!
+          expectedStatus: String
+          expectedUpdatedAt: DateTime
           status: String!
           assignedToId: ID
           notes: String
@@ -653,6 +740,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         ): HousekeepingTask
         updateRatePlanPublication(
           ratePlanId: ID!
+          approvalId: ID
           status: String
           isPublic: Boolean
           idempotencyKey: String!
@@ -716,6 +804,16 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
     `,
     resolvers: {
       Query: {
+        hotelHousekeepingStaffCapabilities, hotelPayerWindows, hotelFolioReceipt, hotelSecurityAuthorization, guestFolio, hotelPayoutOperations,
+        ...hotelGuestGovernanceResolvers.Query,
+        ...hotelMfaResolvers.Query,
+        ...maintenanceCommercialResolvers.Query,
+        ...hotelDerivedRateResolvers.Query,
+        hotelReceivableOperations, hotelReceivableOperationsPage, hotelDisputeOperations, hotelGroupWorkspace, hotelLoyaltyAccount, hotelRelocation,
+        hotelCashierOperations,
+        hotelStayServices: getHotelStayServices,
+        hotelRoomOutages: getHotelRoomOutages,
+        hotelStayRegister: getHotelStayRegister,
         ...hotelOperationsResolvers.Query,
         redirectToInit,
         publicHotelSettings,
@@ -739,6 +837,15 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         guestCancellationQuote,
       },
       Mutation: {
+        ...hotelGuestGovernanceResolvers.Mutation,
+        ...hotelMfaResolvers.Mutation,
+        ...maintenanceCommercialResolvers.Mutation,
+        ...hotelDerivedRateResolvers.Mutation,
+        updateHotelRelocation, detachHotelGroupBooking, manageHotelPayout, manageHotelSecurityAuthorization, redeemHotelLoyalty, saveHotelChannelDraft, manageHotelReceivable, annotateHotelDispute, createHotelGroupRoomingList, closeHotelGroupMasterFolio,
+        manageHotelCashier,
+        updateHotelStayService,
+        updateHotelRoomOutage,
+        updateHotelStayRegister,
         configureHotelPaymentProvider,
         redeemHotelPasswordResetToken,
         updateHotelPropertySettings,
@@ -801,7 +908,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         requestBookingPaymentRefund,
         updateBookingStatus,
         updateRoomOperationalStatus,
-        updateHousekeepingTaskStatus,
+        updateHotelHousekeepingStaffCapability, updateHousekeepingTaskStatus,
         updateRatePlanPublication,
         reportRoomMaintenanceIssue,
         assignRoomToBooking,
@@ -824,4 +931,5 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
       },
     },
   });
+  return applyHotelAuthGraphqlPolicy(schema);
 }

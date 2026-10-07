@@ -1,6 +1,10 @@
 'use client';
 
 import React from 'react';
+import { DerivedRatePanel } from '../DerivedRatePanel';
+import { operationAttempt } from '@/lib/operationAttempt';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import Link from 'next/link';
 import { CalendarRange, DollarSign, Eye, EyeOff, RefreshCw, Tag } from 'lucide-react';
 
@@ -100,6 +104,7 @@ export function RatePlansPage() {
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [sort, setSort] = React.useState('priority');
+  const [approvalId, setApprovalId] = React.useState('');
 
   const fetchRatePlans = React.useCallback(async () => {
     setLoading(true);
@@ -155,7 +160,10 @@ export function RatePlansPage() {
 
   const updateRatePlan = async (id: string, data: Record<string, any>, successMessage: string) => {
     try {
-      await updateRatePlanPublicationAction({ ratePlanId: id, status: data.status, isPublic: data.isPublic });
+      const payload = { ratePlanId: id, status: data.status, isPublic: data.isPublic, approvalId: approvalId.trim() };
+      const attempt = await operationAttempt('rate-publication', payload);
+      await updateRatePlanPublicationAction({ ...payload, idempotencyKey: attempt.key });
+      attempt.complete();
       await fetchRatePlans();
       toast({ title: 'Rate plan updated', description: successMessage });
     } catch (error) {
@@ -225,6 +233,8 @@ export function RatePlansPage() {
   return (
     <PageContainer title="Rate Plans" header={header} breadcrumbs={breadcrumbs}>
       <div className="space-y-6 p-4 md:p-6">
+        <div className="space-y-2"><Label htmlFor="rate-approval">Publication approval ID</Label><Input id="rate-approval" value={approvalId} onChange={event => setApprovalId(event.target.value)} /><p className="text-xs text-muted-foreground">Approval must name the rate-plan ID and exact resulting status/public visibility. <Link href="/dashboard/platform/approvals" target="_blank" className="underline">Open approvals</Link></p></div>
+        <DerivedRatePanel />
         {error ? <WorkspaceError message={error} onRetry={fetchRatePlans} /> : null}
         {loading && ratePlans.length === 0 && roomTypes.length === 0 ? <WorkspaceLoading label="Loading rates and inventory" /> : null}
         <div className="grid gap-4 md:grid-cols-4">
@@ -396,7 +406,7 @@ export function RatePlansPage() {
                       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-medium">{plan.name}</p>
+                            <p className="font-medium">{plan.name}</p><p className="text-xs text-muted-foreground">Approval target: {plan.id}</p>
                             {statusBadge(plan.status)}
                             {plan.isPublic ? <Badge variant="outline">Public</Badge> : <Badge variant="outline">Private</Badge>}
                             {plan.isPromotional && <Badge className="bg-purple-100 text-purple-700">Promo</Badge>}

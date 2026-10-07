@@ -1,6 +1,8 @@
 import { checkbox } from "@keystone-6/core/fields"
 
 export const permissionFields = {
+  canManageGuestPrivacy: checkbox({ defaultValue: false, label: "User can manage guest privacy requests and identity evidence" }),
+  canApproveHotelExceptions: checkbox({ defaultValue: false, label: "User can independently approve hotel financial and revenue exceptions" }),
   canAccessDashboard: checkbox({
     defaultValue: false,
     label: "User can access the dashboard"

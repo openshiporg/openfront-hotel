@@ -1,14 +1,16 @@
 import { permissions } from '../access';
-import { requestBookingPaymentRefund as requestRefund } from '../lib/bookingRefund';
+import { requestBookingPaymentRefund as requestRefund } from '../refunds/bookingRefund';
 
 export default async function requestBookingPaymentRefund(
   _root: unknown,
   {
+    approvalId,
     paymentId,
     amountMinor,
     reason,
     idempotencyKey,
   }: {
+    approvalId?: string | null;
     paymentId: string;
     amountMinor: number;
     reason: string;
@@ -21,6 +23,7 @@ export default async function requestBookingPaymentRefund(
   }
   return requestRefund({
     context,
+    approvalId,
     paymentId,
     amountMinor,
     reason,

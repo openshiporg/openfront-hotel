@@ -31,6 +31,7 @@ type Quote = {
   totalAmountMinor: number;
   currencyCode: string;
   cancellationPolicy: string;
+  quoteToken: string;
 };
 
 function utcDateInput(offset: number) {
@@ -57,6 +58,8 @@ export function StaffReservationForm({
   const [busy, setBusy] = React.useState(false);
   const [roomTypes, setRoomTypes] = React.useState<RoomType[]>([]);
   const [quote, setQuote] = React.useState<Quote | null>(null);
+  const createPendingRef = React.useRef(false);
+  const idempotencyKeyRef = React.useRef<string | null>(null);
   const [form, setForm] = React.useState({
     guestName: '', guestEmail: '', guestPhone: '',
     checkInDate: utcDateInput(1),
@@ -68,6 +71,7 @@ export function StaffReservationForm({
   const update = (values: Partial<typeof form>) => {
     setForm(current => ({ ...current, ...values }));
     setQuote(null);
+    idempotencyKeyRef.current = null;
   };
 
   React.useEffect(() => {
@@ -119,6 +123,7 @@ export function StaffReservationForm({
     setBusy(true);
     try {
       setQuote(await getStaffReservationQuote(quoteVariables()) as Quote);
+      idempotencyKeyRef.current = crypto.randomUUID();
     } catch (error) {
       toast({ title: 'Quote unavailable', description: error instanceof Error ? error.message : 'Check dates, occupancy, and rate restrictions.', variant: 'destructive' });
     } finally {
@@ -127,11 +132,14 @@ export function StaffReservationForm({
   };
 
   const create = async () => {
-    if (!quote) return;
+    if (!quote || createPendingRef.current) return;
+    createPendingRef.current = true;
     setBusy(true);
     try {
       const booking = await createStaffReservationAction({
         ...quoteVariables(),
+        quoteToken: quote.quoteToken,
+        idempotencyKey: idempotencyKeyRef.current || crypto.randomUUID(),
         guestName: form.guestName,
         guestEmail: form.guestEmail,
         guestPhone: form.guestPhone || null,
@@ -143,10 +151,12 @@ export function StaffReservationForm({
       toast({ title: 'Reservation created', description: `Confirmation ${booking.confirmationNumber} was persisted.` });
       setOpen(false);
       setQuote(null);
+      idempotencyKeyRef.current = null;
       await onCreated?.();
     } catch (error) {
       toast({ title: 'Reservation not created', description: error instanceof Error ? error.message : 'The reservation failed validation.', variant: 'destructive' });
     } finally {
+      createPendingRef.current = false;
       setBusy(false);
     }
   };

@@ -49,6 +49,20 @@ export interface Room {
   status: string | null;
 }
 
+export interface StayPriceSummary {
+  ratePlanName: string;
+  nights: number;
+  roomSubtotalMinor: number;
+  taxAmountMinor: number;
+  feesAmountMinor: number;
+  totalAmountMinor: number;
+  currencyCode: string;
+  depositPercent: number;
+  securityDepositMinor: number;
+  cancellationPolicy: string;
+  mealPlan: string;
+}
+
 export interface Booking {
   id: string;
   confirmationNumber: string;
@@ -67,6 +81,12 @@ export interface Booking {
   totalAmount: number | null;
   depositAmount: number | null;
   balanceDue: number | null;
+  roomRateMinor?: number | null;
+  taxAmountMinor?: number | null;
+  feesAmountMinor?: number | null;
+  totalAmountMinor?: number | null;
+  currencyCode?: string | null;
+  bookedStayTerms?: StayPriceSummary | null;
   status: string | null;
   paymentStatus: string | null;
   source: string | null;

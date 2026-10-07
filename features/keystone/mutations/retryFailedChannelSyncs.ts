@@ -1,5 +1,5 @@
 import { permissions } from '../access'
-import { retryFailedChannelSyncs } from '../lib/channelSync'
+import { retryFailedChannelSyncs } from '../channels/commands'
 
 export default async function retryFailedChannelSyncsMutation(
   root: unknown,

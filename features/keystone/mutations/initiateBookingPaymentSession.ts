@@ -1,12 +1,17 @@
 import { createPayment } from '../utils/paymentProviderAdapter';
+import { getBookingCollectibleBalance } from '../folios/bookingFolio';
+import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { retireBookingPaymentSession } from '../payments/settlement';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
-import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
+import { assertGuestBookingAccess, canManageBookingRecords } from '../lib/guestBookingAccess';
 import {
+  bookingPaymentDueNow,
   assertCustomerPaymentProvider,
   isPaymentProviderConfigured,
 } from '../lib/paymentSecurity';
 
 const PAYABLE_BOOKING_STATUSES = new Set(['pending', 'confirmed']);
+const MAX_PAYMENT_SESSION_MINOR = 2_147_483_647;
 
 function requestHeader(context: any, name: string) {
   const headers = context?.req?.headers;
@@ -66,7 +71,8 @@ async function initiateBookingPaymentSession(
     returnUrl?: string | null;
     cancelUrl?: string | null;
   },
-  context: any
+  context: any,
+  createPaymentAdapter: typeof createPayment = createPayment,
 ) {
   const sudoContext = context.sudo();
 
@@ -88,6 +94,9 @@ async function initiateBookingPaymentSession(
       currencyCode
       holdExpiresAt
       paymentStatus
+      pricingRevision
+      pricingSnapshot
+      billingFolio { id }
       paymentSessions {
         id
         amount
@@ -110,6 +119,8 @@ async function initiateBookingPaymentSession(
     throw new Error('Booking not found');
   }
 
+  if (booking.billingFolio?.id && !canManageBookingRecords(context)) throw new Error('The group payer manages this master folio. Contact the property for your individual balance.');
+
   if (!PAYABLE_BOOKING_STATUSES.has(booking.status)) {
     throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
   }
@@ -117,9 +128,13 @@ async function initiateBookingPaymentSession(
   if (booking.status === 'pending' && booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= new Date()) {
     throw new Error('This reservation hold has expired.');
   }
-  const amountInCents = Number(booking.balanceDueMinor || 0);
-  if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0 || booking.paymentStatus === 'paid') {
+  const collectibleMinor = (await runSerializableTransaction(context, tx => getBookingCollectibleBalance(tx, bookingId))).balanceDueMinor;
+  const amountInCents = bookingPaymentDueNow(booking, collectibleMinor);
+  if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0) {
     throw new Error('This booking has no outstanding balance.');
+  }
+  if (amountInCents > MAX_PAYMENT_SESSION_MINOR) {
+    throw new Error('Payment session amount exceeds the PostgreSQL Int32 minor-unit limit.');
   }
 
   const provider = await context.prisma.paymentProvider.findUnique({ where: { code: paymentProviderCode } });
@@ -129,7 +144,9 @@ async function initiateBookingPaymentSession(
   }
 
   const currencyCode = String(booking.currencyCode || 'USD').toUpperCase();
-  const idempotencyKey = `${booking.id}:${provider.code}:${amountInCents}:${currencyCode}`;
+  const obligationKey = `${booking.id}:${provider.code}:v${booking.pricingRevision || 1}:${amountInCents}:${currencyCode}`;
+  const retiredAttempts = (booking.paymentSessions || []).filter((session: any) => session.idempotencyKey?.startsWith(`${obligationKey}:attempt:`) && session.data?.retiredAt).length;
+  const idempotencyKey = `${obligationKey}:attempt:${retiredAttempts}`;
   const existingSession = booking.paymentSessions?.find(
     (session: any) => session.idempotencyKey === idempotencyKey
   );
@@ -145,10 +162,7 @@ async function initiateBookingPaymentSession(
 
     for (const session of booking.paymentSessions || []) {
       if (session.id !== existingSession.id && session.isSelected) {
-        await sudoContext.query.BookingPaymentSession.updateOne({
-          where: { id: session.id },
-          data: { isSelected: false },
-        });
+        await retireBookingPaymentSession(context, session.id, booking.id);
       }
     }
 
@@ -175,7 +189,7 @@ async function initiateBookingPaymentSession(
     });
   }
 
-  const sessionData = await createPayment({
+  const sessionData = await createPaymentAdapter({
     provider,
     amount: amountInCents,
     currency: currencyCode,
@@ -196,10 +210,7 @@ async function initiateBookingPaymentSession(
 
   for (const session of booking.paymentSessions || []) {
     if (session.isSelected) {
-      await sudoContext.query.BookingPaymentSession.updateOne({
-        where: { id: session.id },
-        data: { isSelected: false },
-      });
+      await retireBookingPaymentSession(context, session.id, booking.id);
     }
   }
 
@@ -211,7 +222,7 @@ async function initiateBookingPaymentSession(
         amount: amountInCents,
         isSelected: true,
         isInitiated: false,
-        data: sessionData,
+        data: { ...sessionData, obligation: { depositPercent: booking.pricingSnapshot?.depositPercent ?? 100, pricingRevision: booking.pricingRevision || 1, amountMinor: amountInCents, currencyCode } },
         idempotencyKey,
       },
       query: `
