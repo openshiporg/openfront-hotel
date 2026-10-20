@@ -62,3 +62,11 @@ export const REPORT_ROOM_MAINTENANCE_ISSUE = String.raw`
     }
   }
 `;
+
+export const SCHEDULE_HOUSEKEEPING_TASK = String.raw`
+  mutation ScheduleHousekeepingTask($roomId: ID!, $taskType: String!, $priority: Int, $assignedToId: ID, $notes: String, $idempotencyKey: String!) {
+    scheduleHousekeepingTask(roomId: $roomId, taskType: $taskType, priority: $priority, assignedToId: $assignedToId, notes: $notes, idempotencyKey: $idempotencyKey) {
+      id taskType status priority
+    }
+  }
+`;

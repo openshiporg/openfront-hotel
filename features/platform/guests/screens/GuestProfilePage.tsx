@@ -1,72 +1,88 @@
 'use client';
 
 import React from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, CalendarPlus, MessageSquare, Pencil, Send, UserRoundX } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
+import { toast } from 'sonner';
 import { GuestProfile, type Guest } from '@/features/platform/guests/components/GuestProfile';
-import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';
+import { PlatformPage } from '@/features/platform/components/PlatformPage';
+import { WorkspaceEmpty, WorkspaceError, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
 import { getGuestProfile } from '../actions';
+import { GuestRecordDialog } from '../components/GuestRecordDialog';
+
+const GUESTS_CRUMB = [{ label: 'Guests', href: '/dashboard/platform/guests' }];
 
 export default function GuestProfilePage() {
   const router = useRouter();
   const params = useParams();
-  const { toast } = useToast();
   const guestId = params?.id as string;
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [guest, setGuest] = React.useState<Guest | null>(null);
+  const search = useSearchParams();
+  const [editing, setEditing] = React.useState<'record' | 'notes' | null>(search?.get('focus') === 'specialNotes' ? 'notes' : null);
 
-  React.useEffect(() => {
-    const run = async () => {
-      if (!guestId) return;
-      try {
-        setError(null);
-        setGuest(await getGuestProfile(guestId) as Guest | null);
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : 'Failed to load guest profile.';
-        setError(message);
-        toast({ title: 'Guest profile unavailable', description: message, variant: 'destructive' });
-      } finally {
-        setLoading(false);
-      }
-    };
-    void run();
-  }, [guestId, toast]);
+  const load = React.useCallback(async () => {
+    if (!guestId) return;
+    try {
+      setError(null);
+      setGuest(await getGuestProfile(guestId) as Guest | null);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Failed to load guest profile.';
+      setError(message);
+      toast.error('Guest profile unavailable', { description: message });
+    } finally {
+      setLoading(false);
+    }
+  }, [guestId]);
+  React.useEffect(() => { void load(); }, [load]);
 
-  const header = (
-    <div className="flex items-center gap-4">
-      <Button variant="ghost" size="icon" onClick={() => router.back()}><ArrowLeft className="h-5 w-5" /></Button>
-      <div>
-        <h1 className="text-lg font-semibold md:text-2xl">Guest Profile</h1>
-        {guest && <p className="text-muted-foreground">{guest.firstName} {guest.lastName}</p>}
-      </div>
-    </div>
-  );
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Guests', path: '/dashboard/platform/guests' },
-    { type: 'page' as const, label: guest ? `${guest.firstName} ${guest.lastName}` : 'Profile' },
-  ];
+  const backButton = <Button variant="ghost" size="sm" asChild><Link href="/dashboard/platform/guests"><ArrowLeft aria-hidden="true" />All guests</Link></Button>;
 
-  if (loading) return <PageContainer title="Guest Profile" header={header} breadcrumbs={breadcrumbs}><div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div></PageContainer>;
-  if (error) return <PageContainer title="Guest Profile" header={header} breadcrumbs={breadcrumbs}><div className="p-4 md:p-6"><WorkspaceError message={error} onRetry={() => window.location.reload()} /></div></PageContainer>;
-  if (!guest) return <PageContainer title="Guest Profile" header={header} breadcrumbs={breadcrumbs}><div className="py-12 text-center"><p className="mb-1 text-lg font-medium">Guest not found</p><p className="mb-4 text-sm text-muted-foreground">The profile may be outside your authority or no longer available.</p><Button onClick={() => router.push('/dashboard/platform/guests')}>Back to guests</Button></div></PageContainer>;
+  if (loading) {
+    return <PlatformPage title="Guest Profile" crumbs={GUESTS_CRUMB} actions={backButton}><WorkspaceLoading label="Loading guest profile" rows={4} /></PlatformPage>;
+  }
+  if (error) {
+    return <PlatformPage title="Guest Profile" crumbs={GUESTS_CRUMB} actions={backButton}><WorkspaceError message={error} onRetry={() => window.location.reload()} title="Guest Profile Unavailable" /></PlatformPage>;
+  }
+  if (!guest) {
+    return (
+      <PlatformPage title="Guest not found" crumbs={GUESTS_CRUMB}>
+        <div className="rounded-lg border bg-card">
+          <WorkspaceEmpty
+            icon={UserRoundX}
+            title="This guest profile isn't available"
+            description="It may be outside your authority, merged into another profile or no longer retained."
+            action={<Button size="sm" variant="outline" onClick={() => router.push('/dashboard/platform/guests')}><ArrowLeft aria-hidden="true" />Back to guests</Button>}
+          />
+        </div>
+      </PlatformPage>
+    );
+  }
+
+  const name = `${guest.firstName || ''} ${guest.lastName || ''}`.trim() || 'Guest profile';
+  const addNote = () => setEditing('notes');
 
   return (
-    <PageContainer title="Guest Profile" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full max-w-5xl p-4 md:p-6">
-        <GuestProfile
-          guest={guest}
-          onEdit={() => router.push(`/dashboard/guests/${guestId}`)}
-          onSendEmail={() => { window.location.href = `mailto:${guest.email}`; }}
-          onNewReservation={() => router.push(`/dashboard/platform/reservations?guestId=${guestId}&new=1`)}
-          onAddNote={() => router.push(`/dashboard/guests/${guestId}?focus=specialNotes`)}
-        />
-      </div>
-    </PageContainer>
+    <PlatformPage
+      title={name}
+      crumbs={GUESTS_CRUMB}
+      description="Profile, stay history and service context."
+      actions={(
+        <>
+          <Button size="sm" variant="ghost" onClick={addNote}><MessageSquare aria-hidden="true" />Add note</Button>
+          <Button size="sm" variant="outline" onClick={() => setEditing('record')}><Pencil aria-hidden="true" />Edit record</Button>
+          {guest.email ? <Button size="sm" variant="outline" onClick={() => { window.location.href = `mailto:${guest.email}`; }}><Send aria-hidden="true" />Email</Button> : null}
+          <Button size="sm" onClick={() => router.push(`/dashboard/platform/reservations?guestId=${guestId}&new=1`)}><CalendarPlus aria-hidden="true" />New reservation</Button>
+        </>
+      )}
+    >
+      <GuestProfile guest={guest} onAddNote={addNote} />
+      <GuestRecordDialog guest={guest} mode={editing} onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); toast.success('Guest record saved'); void load(); }} />
+    </PlatformPage>
   );
 }

@@ -1,6 +1,7 @@
 import { keystoneContext } from '@/features/keystone/context';
 import { isOnlinePaymentProviderCode } from '@/features/keystone/lib/paymentSecurity';
 import { processBookingPaymentWebhook } from '@/features/keystone/mutations/handleBookingPaymentProviderWebhook';
+import { readBoundedRequestText, RequestBodyRejectedError } from '@/features/keystone/lib/boundedRequestBody';
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
@@ -13,13 +14,12 @@ export async function POST(
     return Response.json({ success: false, error: 'Webhook endpoint not found.' }, { status: 404 });
   }
 
-  const declaredLength = Number(request.headers.get('content-length') || 0);
-  if (declaredLength > MAX_WEBHOOK_BYTES) {
-    return Response.json({ success: false, error: 'Invalid webhook body.' }, { status: 413 });
-  }
-  const rawBody = await request.text();
-  if (!rawBody || Buffer.byteLength(rawBody, 'utf8') > MAX_WEBHOOK_BYTES) {
-    return Response.json({ success: false, error: 'Invalid webhook body.' }, { status: 400 });
+  let rawBody: string;
+  try {
+    rawBody = await readBoundedRequestText(request, MAX_WEBHOOK_BYTES);
+  } catch (error) {
+    const status = error instanceof RequestBodyRejectedError ? error.status : 400;
+    return Response.json({ success: false, error: 'Invalid webhook body.' }, { status });
   }
 
   try {

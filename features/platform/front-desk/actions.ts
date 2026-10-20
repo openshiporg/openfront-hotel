@@ -2,8 +2,8 @@
 
 
 import { keystoneClient } from '@/features/dashboard/lib/keystoneClient';
+import { safeActionMessage } from '@/features/platform/lib/safeGraphQLError';
 import {
-  boundedDateRange,
   boundedEnum,
   boundedId,
   boundedIsoDate,
@@ -12,8 +12,8 @@ import {
 } from '@/features/platform/lib/actionResult';
 
 const FRONT_DESK = String.raw`
-  query FrontDeskReservations($start: DateTime!, $end: DateTime!) {
-    hotelFrontDesk(propertyKey: "the-alder-house", start: $start, end: $end) {
+  query FrontDeskReservations {
+    hotelFrontDesk(propertyKey: "the-alder-house") {
       businessDate
       reservations {
         id confirmationNumber guestName checkInDate checkOutDate status numberOfGuests
@@ -49,14 +49,14 @@ async function safeFrontDeskMutation<T>(
 ): Promise<FrontDeskMutationResult<T>> {
   try {
     return { ok: true, data: await operation() };
-  } catch {
-    return { ok: false, message };
+  } catch (error) {
+    return { ok: false, message: safeActionMessage(error, message) };
   }
 }
 
-export async function getFrontDeskWorkspace(start: string, end: string) {
-  const range = boundedDateRange(start, end, 31);
-  const response = await keystoneClient<any>(FRONT_DESK, range);
+/** Reservations for the week either side of the property's business date. */
+export async function getFrontDeskWorkspace() {
+  const response = await keystoneClient<any>(FRONT_DESK);
   return requireActionData(response).hotelFrontDesk;
 }
 

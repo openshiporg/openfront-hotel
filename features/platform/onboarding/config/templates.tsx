@@ -111,7 +111,7 @@ export const HOTEL_TEMPLATES: Record<'full' | 'minimal' | 'custom', HotelTemplat
   },
   custom: {
     name: 'Custom Setup',
-    description: 'Paste a hotel onboarding JSON payload tailored to your property and sample data needs.',
+    description: 'Paste your own property configuration in JSON.',
     icon: <CircleCheck className="h-5 w-5" />,
     hotelSettings: ['The Alder House'],
     roomTypes: ['Classic Queen', 'Deluxe King'],

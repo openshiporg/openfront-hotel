@@ -12,6 +12,16 @@ import {
 } from '@keystone-6/core/fields';
 import { isSignedIn, permissions, rules } from '../access';
 import { trackingFields } from './trackingFields';
+import { enforceAbuseLimit } from '../lib/abuseControl';
+
+// Dashboard sign-up is open only when the deployment sets PUBLIC_SIGNUPS_ALLOWED=true,
+// the same switch that shows the sign-up page. Accounts created this way have no
+// role, so they cannot reach the dashboard until an administrator assigns one.
+const PUBLIC_SIGNUP_FIELDS = new Set(['name', 'email', 'password']);
+const publicSignUpsAllowed = () => process.env.PUBLIC_SIGNUPS_ALLOWED === 'true';
+
+const canCreateUser = (args: any) =>
+  permissions.canManagePeople(args) || (!args.session && publicSignUpsAllowed());
 
 const canManageUsers = ({ session }: any) => {
   if (!isSignedIn({ session })) {
@@ -26,7 +36,7 @@ const canManageUsers = ({ session }: any) => {
 export const User = list({
   access: {
     operation: {
-      create: permissions.canManagePeople,
+      create: canCreateUser,
       query: isSignedIn,
       update: isSignedIn,
       delete: permissions.canManagePeople,
@@ -111,6 +121,16 @@ export const User = list({
     ...trackingFields,
   },
   hooks: {
+    resolveInput: async ({ operation, inputData, resolvedData, context }) => {
+      // Trusted server paths (initial admin, storefront guest registration) run with sudo.
+      const sudo = context.graphql.schema === context.sudo().graphql.schema;
+      if (operation !== 'create' || sudo || permissions.canManagePeople({ session: context.session })) return resolvedData;
+      const extra = Object.keys(inputData ?? {}).filter((key) => !PUBLIC_SIGNUP_FIELDS.has(key));
+      if (extra.length) throw new Error('Only name, email and password can be set when signing up.');
+      const email = String(resolvedData.email || '').trim().toLowerCase();
+      await enforceAbuseLimit(context, { scope: 'dashboard-signup', identity: email, limit: 5, windowMs: 60 * 60_000 });
+      return { ...resolvedData, email };
+    },
     beforeOperation: async ({ operation, item, resolvedData }) => {
       if (operation !== 'update' || !item) return;
       const roleChange = resolvedData.role !== undefined;

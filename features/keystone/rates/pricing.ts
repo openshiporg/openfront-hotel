@@ -38,6 +38,9 @@ export type HotelPriceInput = {
   promoCode?: string | null;
 };
 
+const MAX_STORED_MINOR = 2_147_483_647;
+const STAY_TOO_LARGE = 'This stay is too large to price online. Choose fewer nights or contact the property.';
+
 export async function calculateHotelPrice(context: any, input: HotelPriceInput, options: { existingStay?: boolean; derivedParents?: string[] } = {}) {
   const ancestors = options.derivedParents || [];
   if (ancestors.includes(input.ratePlanId) || ancestors.length >= 8) throw new Error('Derived rate cycle or depth greater than eight plans.');
@@ -93,6 +96,7 @@ export async function calculateHotelPrice(context: any, input: HotelPriceInput, 
     }
     if (parentQuote) amount = resolveDerivedRateAmount(ratePlan.id, new Map([[ratePlan.id, ratePlan], [parentQuote.ratePlan.id, parentQuote.ratePlan]]), new Map([[ratePlan.id, derivedConfig]]), () => parentQuote.nightlyRates.find((night: any) => night.date === day.toISOString().slice(0, 10)).amountMinor);
     if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('Seasonal pricing produced an invalid amount.');
+    if (amount > MAX_STORED_MINOR) throw new Error(STAY_TOO_LARGE);
     return { date: day.toISOString().slice(0, 10), amountMinor: amount, seasonalRateId: season?.id || null, seasonalRateName: season?.name || null };
   });
   const roomSubtotalMinor = nightlyRates.reduce((sum, night) => sum + night.amountMinor, 0);
@@ -100,6 +104,11 @@ export async function calculateHotelPrice(context: any, input: HotelPriceInput, 
   const taxMinor = Math.round(roomSubtotalMinor * taxRateBasisPoints / 10_000);
   const feesMinor = Number(settings.serviceFeeMinor || 0);
   const totalMinor = roomSubtotalMinor + taxMinor + feesMinor;
+  // Every stored and GraphQL money field is a 32-bit integer; refuse a stay that cannot be
+  // represented before any quote token, booking or payment is created.
+  if ([roomSubtotalMinor, taxMinor, feesMinor, totalMinor, Number(settings.securityDepositMinor ?? 0)].some(value => !Number.isSafeInteger(value) || value < 0 || value > MAX_STORED_MINOR)) {
+    throw new Error(STAY_TOO_LARGE);
+  }
   const currencyCode = String(ratePlan.currencyCode || roomType.currencyCode || settings.currencyCode || 'USD').toUpperCase();
   if (new Set([ratePlan.currencyCode, roomType.currencyCode, settings.currencyCode].filter(Boolean).map((v: string) => v.toUpperCase())).size > 1) {
     throw new Error('Pricing currency configuration is inconsistent.');

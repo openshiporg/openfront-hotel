@@ -13,19 +13,14 @@ import { notFound } from 'next/navigation'
 import { ListPageClient } from './ListPageClient'
 
 interface PageProps {
-  params?: Promise<{ listKey: string }>;
-  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+  params: Promise<{ listKey: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
 export async function ListPage({ params, searchParams }: PageProps) {
-  const resolvedParams = params ? await params : undefined;
-  const resolvedSearchParams = searchParams ? await searchParams : {};
-  const listKeyParam = resolvedParams?.listKey;
-
-  if (!listKeyParam) {
-    notFound()
-  }
-
+  const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams;
+  const { listKey: listKeyParam } = resolvedParams;
   const searchParamsObj = Object.fromEntries(
     Object.entries(resolvedSearchParams).map(([key, value]) => [
       key,
@@ -100,9 +95,17 @@ export async function ListPage({ params, searchParams }: PageProps) {
   // Remove duplicates
   selectedFields = [...new Set(selectedFields)]
 
-  // Staff list data is always fetched through the no-store authenticated GraphQL transport.
+  // Fetch list items data with cache options
+  const cacheOptions = {
+    next: {
+      tags: [`list-${list.key}`],
+      revalidate: 300, // 5 minutes
+    },
+  }
+
+  // Use the working dashboard action for list items data
   // IMPORTANT: Pass list.key (not listKeyParam which is the path)
-  const response = await getListItemsAction(list.key, variables, selectedFields)
+  const response = await getListItemsAction(list.key, variables, selectedFields, cacheOptions)
 
   let fetchedData: { items: any[], count: number } = { items: [], count: 0 }
   let error: string | null = null

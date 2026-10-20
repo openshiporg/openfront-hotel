@@ -1,40 +1,17 @@
 'use client';
-import { formatStayDate } from '@/lib/hotelCalendarDate';
 
 import React from 'react';
 import Link from 'next/link';
-import { format, parseISO, differenceInDays } from 'date-fns';
-import { 
-  User, 
-  Mail, 
-  Phone, 
-  MapPin, 
-  Calendar, 
-  Star, 
-  Award, 
-  CreditCard,
-  Clock,
-  MessageSquare,
-  FileText,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-  ChevronRight,
-  Edit,
-  Send,
-  Plus,
-  Briefcase,
-  Shield,
-  Heart
-} from 'lucide-react';
+import { AlertCircle, Briefcase, CalendarClock, ChevronRight, FileText, Heart, Mail, MapPin, MessageSquare, Phone, Plus, Shield, Star } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
+import { StatStrip } from '@/features/platform/components/Stats';
+import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
+import { DetailList, InitialsAvatar, Panel, PanelBody, PanelHeader, SectionLabel } from '@/features/platform/components/Surface';
+import { WorkspaceTabs, WorkspaceTabsContent, WorkspaceTabsList, WorkspaceTabsTrigger } from '@/features/platform/components/Tabs';
+import { WorkspaceEmpty } from '@/features/platform/components/WorkspaceControls';
+import { formatMoney, formatStay, formatStayRange, humanize, nightsBetween, pluralize } from '@/features/platform/lib/format';
 
 export interface GuestPreferences {
   pillowType?: string;
@@ -105,487 +82,220 @@ interface GuestProfileProps {
   onAddNote?: () => void;
 }
 
-function getLoyaltyTierColor(tier?: string) {
-  switch (tier) {
-    case 'diamond':
-      return 'bg-blue-100 text-blue-700 border-blue-200';
-    case 'platinum':
-      return 'bg-purple-100 text-purple-700 border-purple-200';
-    case 'gold':
-      return 'bg-yellow-100 text-yellow-700 border-yellow-200';
-    case 'silver':
-      return 'bg-gray-100 text-gray-700 border-gray-200';
-    case 'bronze':
-    default:
-      return 'bg-amber-100 text-amber-700 border-amber-200';
-  }
-}
+const ID_LABELS: Record<string, string> = { passport: 'Passport', drivers_license: "Driver's license", national_id: 'National ID' };
 
-function getStatusBadge(status: string) {
-  switch (status) {
-    case 'confirmed':
-      return <Badge className="bg-green-100 text-green-700">Confirmed</Badge>;
-    case 'pending':
-      return <Badge className="bg-yellow-100 text-yellow-700">Pending</Badge>;
-    case 'checked_in':
-      return <Badge className="bg-blue-100 text-blue-700">Checked In</Badge>;
-    case 'checked_out':
-      return <Badge className="bg-gray-100 text-gray-700">Completed</Badge>;
-    case 'cancelled':
-      return <Badge className="bg-red-100 text-red-700">Cancelled</Badge>;
-    case 'no_show':
-      return <Badge className="bg-orange-100 text-orange-700">No Show</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
+const NOT_RECORDED = 'Not recorded';
+/** A stored preference, or "Not recorded" when the guest has not told us. */
+const recorded = (value: unknown) => (typeof value === 'string' && value.trim() ? value : NOT_RECORDED);
+const recordedYesNo = (value: unknown) => (value === true ? 'Yes' : value === false ? 'No' : NOT_RECORDED);
 
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
-}
-
-export function GuestProfile({ 
-  guest, 
-  onEdit, 
-  onSendEmail, 
-  onNewReservation,
-  onAddNote 
-}: GuestProfileProps) {
-  const initials = `${guest.firstName?.charAt(0) || ''}${guest.lastName?.charAt(0) || ''}`.toUpperCase();
-  
-  const upcomingBookings = guest.bookings?.filter(
-    (b) => ['pending', 'confirmed', 'checked_in', 'cancellation_pending'].includes(b.status)
-  ) || [];
-  
-  const pastBookings = guest.bookings?.filter(
-    (b) => b.status === 'checked_out'
-  ) || [];
-  
-  const cancelledBookings = guest.bookings?.filter(
-    (b) => ['cancelled', 'no_show'].includes(b.status)
-  ) || [];
-
-  const totalNights = pastBookings.reduce((acc, booking) => {
-    const nights = differenceInDays(parseISO(booking.checkOutDate), parseISO(booking.checkInDate));
-    return acc + nights;
-  }, 0);
+export function GuestProfile({ guest, onAddNote }: GuestProfileProps) {
+  const name = `${guest.firstName || ''} ${guest.lastName || ''}`.trim();
+  const upcomingBookings = guest.bookings?.filter((b) => ['pending', 'confirmed', 'checked_in', 'cancellation_pending'].includes(b.status)) || [];
+  const pastBookings = guest.bookings?.filter((b) => b.status === 'checked_out') || [];
+  const cancelledBookings = guest.bookings?.filter((b) => ['cancelled', 'no_show'].includes(b.status)) || [];
+  const totalNights = pastBookings.reduce((acc, booking) => acc + nightsBetween(booking.checkInDate, booking.checkOutDate), 0);
+  const preferences = guest.preferences || {};
+  const address = [guest.address1, guest.address2, [guest.city, guest.state].filter(Boolean).join(', ') + (guest.postalCode ? ` ${guest.postalCode}` : ''), guest.country].map((line) => line?.trim()).filter(Boolean);
 
   return (
     <div className="space-y-6">
-      {/* Header Card */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col md:flex-row md:items-start gap-6">
-            {/* Avatar & Basic Info */}
-            <div className="flex items-start gap-4">
-              <Avatar className="h-20 w-20 text-2xl">
-                <AvatarFallback className={cn(
-                  guest.isVip ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
-                )}>
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-              
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <h2 className="text-2xl font-bold">
-                    {guest.firstName} {guest.lastName}
-                  </h2>
-                  {guest.isVip && (
-                    <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">
-                      <Star className="h-3 w-3 mr-1" />
-                      VIP
-                    </Badge>
-                  )}
-                  {guest.isBlacklisted && (
-                    <Badge variant="destructive">
-                      <XCircle className="h-3 w-3 mr-1" />
-                      Blacklisted
-                    </Badge>
-                  )}
-                </div>
-                
-                {guest.loyaltyTier && (
-                  <Badge className={cn('mb-2', getLoyaltyTierColor(guest.loyaltyTier))}>
-                    <Award className="h-3 w-3 mr-1" />
-                    {guest.loyaltyTier.charAt(0).toUpperCase() + guest.loyaltyTier.slice(1)} legacy tier
-                    {guest.loyaltyNumber && ` • ${guest.loyaltyNumber}`}
-                  </Badge>
-                )}
-                
-                <div className="flex flex-col gap-1 text-sm text-muted-foreground">
-                  <a href={`mailto:${guest.email}`} className="flex items-center gap-2 hover:text-foreground">
-                    <Mail className="h-4 w-4" />
-                    {guest.email}
-                  </a>
-                  {guest.phone && (
-                    <a href={`tel:${guest.phone}`} className="flex items-center gap-2 hover:text-foreground">
-                      <Phone className="h-4 w-4" />
-                      {guest.phone}
-                    </a>
-                  )}
-                  {guest.company && (
-                    <span className="flex items-center gap-2">
-                      <Briefcase className="h-4 w-4" />
-                      {guest.company}
-                    </span>
-                  )}
-                </div>
-              </div>
+      <Panel>
+        <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-start">
+          <InitialsAvatar name={name || '?'} tone={guest.isBlacklisted ? 'restricted' : guest.isVip ? 'vip' : 'neutral'} className="size-16 text-lg" />
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold leading-7">{name || 'Unnamed guest'}</h2>
+              {guest.isVip ? <StatusPill tone="warning" label={<span className="inline-flex items-center gap-1"><Star className="size-3" aria-hidden="true" />VIP</span>} /> : null}
+              {guest.isBlacklisted ? <StatusPill tone="danger" label="Restricted" /> : null}
+              {guest.loyaltyTier ? <Tag>{humanize(guest.loyaltyTier)} legacy tier{guest.loyaltyNumber ? ` · ${guest.loyaltyNumber}` : ''}</Tag> : null}
             </div>
-
-            {/* Quick Actions */}
-            <div className="flex flex-wrap gap-2 md:ml-auto">
-              {onNewReservation && (
-                <Button onClick={onNewReservation}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  New Reservation
-                </Button>
-              )}
-              {onSendEmail && (
-                <Button variant="outline" onClick={onSendEmail}>
-                  <Send className="h-4 w-4 mr-2" />
-                  Open Email Client
-                </Button>
-              )}
-              {onEdit && (
-                <Button variant="outline" onClick={onEdit}>
-                  <Edit className="h-4 w-4 mr-2" />
-                  Edit
-                </Button>
-              )}
-              {onAddNote && (
-                <Button variant="outline" onClick={onAddNote}>
-                  <MessageSquare className="h-4 w-4 mr-2" />
-                  Add Note
-                </Button>
-              )}
+            <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-sm text-muted-foreground">
+              {guest.email ? <a href={`mailto:${guest.email}`} className="inline-flex items-center gap-1.5 hover:text-foreground"><Mail className="size-3.5" aria-hidden="true" />{guest.email}</a> : null}
+              {guest.phone ? <a href={`tel:${guest.phone}`} className="inline-flex items-center gap-1.5 hover:text-foreground"><Phone className="size-3.5" aria-hidden="true" />{guest.phone}</a> : null}
+              {guest.company ? <span className="inline-flex items-center gap-1.5"><Briefcase className="size-3.5" aria-hidden="true" />{guest.company}</span> : null}
+              {guest.createdAt ? <span className="inline-flex items-center gap-1.5"><CalendarClock className="size-3.5" aria-hidden="true" />Guest since {formatStay(guest.createdAt, { month: 'short', year: 'numeric' })}</span> : null}
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-3xl font-bold">{pastBookings.length}</p>
-              <p className="text-sm text-muted-foreground">Completed Stays Shown</p>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-3xl font-bold">{totalNights}</p>
-              <p className="text-sm text-muted-foreground">Total Nights</p>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-3xl font-bold">
-                {formatCurrency(pastBookings.reduce((acc, b) => acc + (b.totalAmount || 0), 0))}
-              </p>
-              <p className="text-sm text-muted-foreground">Shown Stay Value</p>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center">
-              <p className="text-3xl font-bold">{guest.loyaltyPoints || '0'}</p>
-              <p className="text-sm text-muted-foreground">Legacy Points (read-only)</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <StatStrip
+        items={[
+          { label: 'Completed stays shown', value: pastBookings.length, hint: `${upcomingBookings.length} current or upcoming` },
+          { label: 'Nights stayed', value: totalNights, hint: 'Across completed stays shown' },
+          { label: 'Stay value shown', value: formatMoney(pastBookings.reduce((acc, b) => acc + (b.totalAmount || 0), 0)), hint: 'Booked totals, not payments' },
+          { label: 'Legacy points', value: guest.loyaltyPoints || '0', hint: 'Read-only' },
+        ]}
+      />
 
-      {/* Tabs for Details */}
-      <Tabs defaultValue="stays">
-        <TabsList>
-          <TabsTrigger value="stays">Stay History</TabsTrigger>
-          <TabsTrigger value="preferences">Preferences</TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="notes">Notes</TabsTrigger>
-        </TabsList>
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <Panel>
+          <WorkspaceTabs defaultValue="stays">
+            <WorkspaceTabsList className="pt-1">
+              <WorkspaceTabsTrigger value="stays" count={guest.bookings?.length || 0}>Stays</WorkspaceTabsTrigger>
+              <WorkspaceTabsTrigger value="preferences">Preferences</WorkspaceTabsTrigger>
+              <WorkspaceTabsTrigger value="identity">Identity</WorkspaceTabsTrigger>
+              <WorkspaceTabsTrigger value="notes">Notes</WorkspaceTabsTrigger>
+            </WorkspaceTabsList>
 
-        {/* Stay History Tab */}
-        <TabsContent value="stays" className="space-y-4">
-          <p className="text-xs text-muted-foreground">Latest 100 reservations; operational Reports remain authoritative for period totals.</p>
-          {upcomingBookings.length > 0 && (
-            <div>
-              <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
-                Current & Upcoming Stays
-              </h3>
-              <div className="space-y-3">
-                {upcomingBookings.map((booking) => (
-                  <BookingCard key={booking.id} booking={booking} />
-                ))}
-              </div>
-            </div>
-          )}
-          
-          <div>
-            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Past Stays
-            </h3>
-            {pastBookings.length === 0 ? (
-              <Card>
-                <CardContent className="py-8 text-center text-muted-foreground">
-                  No past stays recorded
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-3">
-                {pastBookings.map((booking) => (
-                  <BookingCard key={booking.id} booking={booking} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {cancelledBookings.length > 0 && (
-            <div>
-              <h3 className="text-lg font-semibold mb-3 flex items-center gap-2 text-muted-foreground">
-                <XCircle className="h-5 w-5" />
-                Cancelled / No-Shows
-              </h3>
-              <div className="space-y-3">
-                {cancelledBookings.map((booking) => (
-                  <BookingCard key={booking.id} booking={booking} />
-                ))}
-              </div>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Preferences Tab */}
-        <TabsContent value="preferences">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Heart className="h-5 w-5" />
-                Guest Preferences
-              </CardTitle>
-              <CardDescription>
-                Saved preferences for personalized service
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <h4 className="font-medium">Room Preferences</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Pillow Type</span>
-                      <span>{guest.preferences?.pillowType || 'Standard'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Floor Preference</span>
-                      <span>{guest.preferences?.floorPreference || 'Any'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Bed Type</span>
-                      <span>{guest.preferences?.bedType || 'Any'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Smoking</span>
-                      <span>{guest.preferences?.smokingPreference || 'Non-smoking'}</span>
-                    </div>
-                  </div>
+            <WorkspaceTabsContent value="stays">
+              {guest.bookings?.length ? (
+                <div className="divide-y">
+                  <BookingGroup title="Current & upcoming" bookings={upcomingBookings} />
+                  <BookingGroup title="Past stays" bookings={pastBookings} emptyLabel="No completed stays recorded." />
+                  <BookingGroup title="Cancelled & no-shows" bookings={cancelledBookings} muted />
                 </div>
+              ) : (
+                <WorkspaceEmpty icon={CalendarClock} title="No reservations yet" description="Stays booked for this guest will appear here." />
+              )}
+              <p className="border-t px-4 py-2.5 text-xs text-muted-foreground sm:px-5">Latest 100 reservations. Use Analytics for totals over a period.</p>
+            </WorkspaceTabsContent>
 
-                <div className="space-y-4">
-                  <h4 className="font-medium">Service Preferences</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Early Check-in</span>
-                      <span>{guest.preferences?.earlyCheckIn ? 'Yes' : 'No'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Late Check-out</span>
-                      <span>{guest.preferences?.lateCheckOut ? 'Yes' : 'No'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Special Diet</span>
-                      <span>{guest.preferences?.specialDiet || 'None'}</span>
-                    </div>
-                    {guest.preferences?.accessibility && guest.preferences.accessibility.length > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Accessibility</span>
-                        <span>{guest.preferences.accessibility.join(', ')}</span>
-                      </div>
-                    )}
-                  </div>
+            <WorkspaceTabsContent value="preferences">
+              <PanelBody className="grid gap-8 md:grid-cols-2">
+                <div className="space-y-3">
+                  <SectionLabel>Room</SectionLabel>
+                  <PreferenceList items={[
+                    ['Pillow type', recorded(preferences.pillowType)],
+                    ['Floor', recorded(preferences.floorPreference)],
+                    ['Bed type', recorded(preferences.bedType)],
+                    ['Smoking', recorded(preferences.smokingPreference)],
+                  ]} />
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+                <div className="space-y-3">
+                  <SectionLabel>Service</SectionLabel>
+                  <PreferenceList items={[
+                    ['Early check-in', recordedYesNo(preferences.earlyCheckIn)],
+                    ['Late check-out', recordedYesNo(preferences.lateCheckOut)],
+                    ['Special diet', recorded(preferences.specialDiet)],
+                    ...(preferences.accessibility?.length ? [['Accessibility', preferences.accessibility.join(', ')] as [string, string]] : []),
+                  ]} />
+                </div>
+              </PanelBody>
+            </WorkspaceTabsContent>
 
-        {/* Documents Tab */}
-        <TabsContent value="documents">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Identity Documents
-              </CardTitle>
-              <CardDescription>
-                Legacy identity details; verification evidence is managed separately
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+            <WorkspaceTabsContent value="identity">
               {!guest.idType ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No documents on file</p>
-                </div>
+                <WorkspaceEmpty icon={FileText} title="No identity details on file" description="Verification evidence is recorded through Guest Governance." />
               ) : (
-                <div className="space-y-4">
-                  <div className="flex items-start gap-4 p-4 border rounded-lg">
-                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                      <FileText className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">
-                          {guest.idType === 'passport' ? 'Passport' 
-                            : guest.idType === 'drivers_license' ? "Driver's License"
-                            : guest.idType === 'national_id' ? 'National ID'
-                            : 'Other ID'}
-                        </p>
-                        <Badge variant="outline">
-                          <AlertCircle className="h-3 w-3 mr-1" />
-                          Verification not recorded
-                        </Badge>
+                <PanelBody>
+                  <div className="flex items-start gap-4 rounded-lg border p-4">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"><Shield className="size-5" aria-hidden="true" /></span>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium">{ID_LABELS[guest.idType] || 'Other ID'}</p>
+                        <StatusPill tone="neutral" label={<span className="inline-flex items-center gap-1"><AlertCircle className="size-3" aria-hidden="true" />Verification in Guest Governance</span>} />
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        {guest.idNumber ? `***${guest.idNumber.slice(-4)}` : 'On file'}
-                      </p>
-                      {guest.nationality && (
-                        <p className="text-sm text-muted-foreground">
-                          Nationality: {guest.nationality}
-                        </p>
-                      )}
+                      <p className="font-mono text-sm text-muted-foreground">{guest.idNumber ? `•••• ${guest.idNumber.slice(-4)}` : 'On file'}</p>
+                      {guest.nationality ? <p className="text-sm text-muted-foreground">Nationality: {guest.nationality}</p> : null}
                     </div>
                   </div>
-                </div>
+                  <p className="mt-3 text-xs text-muted-foreground">Identity verification is recorded in <Link href="/dashboard/platform/guest-governance" className="underline underline-offset-2">Guest Governance</Link>.</p>
+                </PanelBody>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+            </WorkspaceTabsContent>
 
-        {/* Notes Tab */}
-        <TabsContent value="notes">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MessageSquare className="h-5 w-5" />
-                Special Notes
-              </CardTitle>
-              <CardDescription>
-                Important information about this guest
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+            <WorkspaceTabsContent value="notes">
               {!guest.specialNotes ? (
-                <div className="py-8 text-center text-muted-foreground">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No notes recorded</p>
-                  {onAddNote && (
-                    <Button variant="outline" className="mt-4" onClick={onAddNote}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Note
-                    </Button>
-                  )}
-                </div>
+                <WorkspaceEmpty
+                  icon={MessageSquare}
+                  title="No notes recorded"
+                  description="Important service context for this guest belongs here."
+                  action={onAddNote ? <Button variant="outline" size="sm" onClick={onAddNote}><Plus aria-hidden="true" />Add note</Button> : undefined}
+                />
               ) : (
-                <div className="p-4 bg-muted rounded-lg">
-                  <p className="whitespace-pre-wrap">{guest.specialNotes}</p>
-                </div>
+                <PanelBody>
+                  <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-4 text-sm leading-6">{guest.specialNotes}</p>
+                </PanelBody>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </WorkspaceTabsContent>
+          </WorkspaceTabs>
+        </Panel>
 
-      {/* Address Card */}
-      {(guest.address1 || guest.city) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MapPin className="h-5 w-5" />
-              Address
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <address className="not-italic text-sm">
-              {guest.address1 && <p>{guest.address1}</p>}
-              {guest.address2 && <p>{guest.address2}</p>}
-              {(guest.city || guest.state || guest.postalCode) && (
-                <p>
-                  {guest.city}{guest.city && guest.state && ', '}{guest.state} {guest.postalCode}
-                </p>
-              )}
-              {guest.country && <p>{guest.country}</p>}
-            </address>
-          </CardContent>
-        </Card>
-      )}
+        <div className="space-y-6">
+          <Panel>
+            <PanelHeader title="Contact" icon={MapPin} />
+            <PanelBody>
+              <DetailList
+                columns={1}
+                items={[
+                  { label: 'Email', value: guest.email || '—' },
+                  { label: 'Phone', value: guest.phone || '—' },
+                  { label: 'Company', value: guest.company, hidden: !guest.company },
+                  { label: 'Address', value: address.length ? <address className="not-italic">{address.map((line) => <span key={line} className="block">{line}</span>)}</address> : 'No address on file' },
+                ]}
+              />
+            </PanelBody>
+          </Panel>
+          <Panel>
+            <PanelHeader title="Service flags" icon={Heart} />
+            <PanelBody>
+              <DetailList
+                columns={1}
+                items={[
+                  { label: 'VIP', value: guest.isVip ? 'Yes' : 'No' },
+                  { label: 'Restricted', value: guest.isBlacklisted ? <span className="text-rose-700 dark:text-rose-400">Yes — review before booking</span> : 'No' },
+                  { label: 'Last stay', value: guest.lastStayAt ? formatStay(guest.lastStayAt) : 'Never' },
+                ]}
+              />
+            </PanelBody>
+          </Panel>
+        </div>
+      </div>
     </div>
   );
 }
 
-function BookingCard({ booking }: { booking: GuestBooking }) {
-  const nights = differenceInDays(parseISO(booking.checkOutDate), parseISO(booking.checkInDate));
-  
+function PreferenceList({ items }: { items: Array<[string, string]> }) {
   return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-medium">{booking.confirmationNumber}</span>
-              {getStatusBadge(booking.status)}
-            </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              <span>
-                {formatStayDate(booking.checkInDate, { month: "short", day: "numeric", year: "numeric" })} - {formatStayDate(booking.checkOutDate, { month: "short", day: "numeric", year: "numeric" })}
-              </span>
-              <span>{nights} night{nights !== 1 ? 's' : ''}</span>
-              {booking.roomType && <span>{booking.roomType}</span>}
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="font-semibold">
-              {formatCurrency(booking.totalAmount || 0)}
-            </span>
-            <Button variant="ghost" size="icon" asChild>
-              <Link href={`/dashboard/bookings/${booking.id}`}>
-                <ChevronRight className="h-4 w-4" />
-              </Link>
-            </Button>
-          </div>
+    <dl className="divide-y rounded-lg border text-sm">
+      {items.map(([label, value]) => (
+        <div key={label} className="flex justify-between gap-4 px-3 py-2">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="text-right font-medium">{value}</dd>
         </div>
-        {booking.specialRequests && (
-          <div className="mt-2 text-sm text-muted-foreground border-t pt-2">
-            <span className="font-medium">Requests:</span> {booking.specialRequests}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+      ))}
+    </dl>
+  );
+}
+
+function BookingGroup({ title, bookings, emptyLabel, muted }: { title: string; bookings: GuestBooking[]; emptyLabel?: string; muted?: boolean }) {
+  if (!bookings.length && !emptyLabel) return null;
+  return (
+    <section>
+      <div className="flex items-center justify-between bg-muted/30 px-4 py-2 sm:px-5">
+        <SectionLabel>{title}</SectionLabel>
+        <span className="text-xs tabular-nums text-muted-foreground">{bookings.length}</span>
+      </div>
+      {bookings.length ? (
+        <ul className="divide-y">
+          {bookings.map((booking) => {
+            const nights = nightsBetween(booking.checkInDate, booking.checkOutDate);
+            return (
+              <li key={booking.id}>
+                <Link href={`/dashboard/bookings/${booking.id}`} className={cn('group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-muted/30 sm:px-5', muted && 'opacity-75')}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-sm font-medium">{booking.confirmationNumber}</span>
+                      <StatusPill kind="booking" value={booking.status} />
+                    </div>
+                    <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                      <span>{formatStayRange(booking.checkInDate, booking.checkOutDate)}</span>
+                      <span>{pluralize(nights, 'night')}</span>
+                      {booking.roomType ? <span>{booking.roomType}</span> : null}
+                    </p>
+                    {booking.specialRequests ? <p className="mt-1 truncate text-xs text-muted-foreground"><span className="font-medium text-foreground/80">Requests:</span> {booking.specialRequests}</p> : null}
+                  </div>
+                  <span className="shrink-0 text-sm font-medium tabular-nums">{formatMoney(booking.totalAmount || 0)}</span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">{emptyLabel}</p>}
+    </section>
   );
 }
 

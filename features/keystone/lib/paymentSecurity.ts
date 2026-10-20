@@ -1,5 +1,6 @@
 import {
   paymentIntegrationConfigured,
+  paymentProviderEnabled,
   paymentProviderCredentialsConfigured,
   type PersistedPaymentProvider,
 } from './integrationConfig';
@@ -67,7 +68,7 @@ export function isPaymentProviderRecoveryConfigured(provider: PersistedPaymentPr
 export function assertPaymentIntegrationAvailable(provider: PersistedPaymentProvider) {
   const providerCode = String(provider?.code || '');
   assertCustomerPaymentProvider(providerCode);
-  if (!provider?.isInstalled) throw new PaymentProviderConfigurationError(providerCode, 'disabled');
+  if (!paymentProviderEnabled(provider)) throw new PaymentProviderConfigurationError(providerCode, 'disabled');
   if (!isPaymentProviderConfigured(provider)) {
     throw new PaymentProviderConfigurationError(providerCode, 'credentials_incomplete');
   }

@@ -81,6 +81,7 @@ export interface Booking {
   totalAmount: number | null;
   depositAmount: number | null;
   balanceDue: number | null;
+  balanceDueMinor?: number | null;
   roomRateMinor?: number | null;
   taxAmountMinor?: number | null;
   feesAmountMinor?: number | null;

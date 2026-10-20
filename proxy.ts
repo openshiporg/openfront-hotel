@@ -1,35 +1,33 @@
-import { handleDashboardRoutes, getAuthenticatedUser } from '@/features/dashboard/middleware';
-import { NextRequest, NextResponse } from 'next/server';
-import { freshInstallRedirectPath } from '@/features/dashboard/lib/freshInstall';
+import type { NextRequest } from "next/server";
+import { handleDashboardRoutes, getAuthenticatedUser } from "@/features/dashboard/middleware";
+import { handleStorefrontRoutes } from "@/features/storefront/middleware";
+import { NextResponse } from "next/server";
 
+const dashboardPath = "/dashboard";
+
+// Main middleware function that handles all routes
 export async function proxy(request: NextRequest) {
-  // GraphQL parsing, reset authority, and abuse limits run in pages/api/graphql,
-  // where JSON and multipart requests share the same parsed operation boundary.
-  if (request.nextUrl.pathname.startsWith('/api/')) return NextResponse.next();
-
   // Get authenticated user once
   const { user, redirectToInit } = await getAuthenticatedUser(request);
 
-  // Fresh installs should not expose the storefront until the initial admin exists.
-  // Match canonical Openfront: any non-init route redirects to dashboard init.
-  const initRedirect = freshInstallRedirectPath(request.nextUrl.pathname, redirectToInit);
-  if (initRedirect) return NextResponse.redirect(new URL(initRedirect, request.url));
+  // If redirectToInit is true (no users exist) and user is on storefront, redirect to dashboard init
+  if (redirectToInit && !request.nextUrl.pathname.startsWith(`${dashboardPath}/init`)) {
+    return NextResponse.redirect(new URL(`${dashboardPath}/init`, request.url));
+  }
 
-  // Let dashboard handler manage its routes
-  const dashboardResponse = await handleDashboardRoutes(request, user, redirectToInit);
-  if (dashboardResponse) return dashboardResponse;
-
-  return NextResponse.next();
+  // Let each handler manage its own routes and logic
+  const response = await handleDashboardRoutes(request, user, redirectToInit);
+  
+  // If dashboard handler didn't handle the route, pass to storefront
+  if (!response) {
+    return handleStorefrontRoutes(request, user);
+  }
+  
+  return response;
 }
 
 export const config = {
   matcher: [
-    /*
-     * API routes stay matched for route-specific authorization. Exclude only:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.svg (favicon file)
-     */
-    '/((?!_next/static|_next/image|favicon.svg).*)',
+    "/((?!api|_next/static|_next/image|favicon.svg|images|assets|png|svg|jpg|jpeg|gif|webp).*)",
   ],
 };

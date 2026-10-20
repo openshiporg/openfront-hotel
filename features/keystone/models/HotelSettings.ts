@@ -3,6 +3,8 @@ import { checkbox, integer, text } from '@keystone-6/core/fields';
 
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
+import { DEFAULT_STORE_LOGO_COLOR, normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
+import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
 
 export const HotelSettings = list({
   isSingleton: true,
@@ -63,6 +65,34 @@ export const HotelSettings = list({
     locationImagePath: text(),
     locationImageAltText: text(),
     locationImageCaption: text(),
+    // Openfront store-logo contract. Empty keeps the existing accent mark, so the
+    // migration does not replace Alder's live branding with a donor default logo.
+    logoIcon: text({
+      ui: { description: 'Sanitized SVG used by the storefront header, menu and footer' },
+      hooks: {
+        resolveInput: ({ resolvedData, fieldKey }) => {
+          const value = resolvedData[fieldKey];
+          if (value === undefined || value === null || value === '') return value;
+          return typeof value === 'string' ? sanitizeStoreLogoSvg(value) : '';
+        },
+        validate: ({ inputData, resolvedData, fieldKey, addValidationError }) => {
+          const submitted = inputData?.[fieldKey];
+          if (typeof submitted === 'string' && submitted.trim() && !resolvedData?.[fieldKey]) {
+            addValidationError('Logo must be a valid, safe SVG document');
+          }
+        },
+      },
+    }),
+    logoColor: text({
+      defaultValue: DEFAULT_STORE_LOGO_COLOR,
+      ui: { description: 'CSS hue rotation in degrees applied to the logo only' },
+      hooks: {
+        resolveInput: ({ resolvedData, fieldKey }) => {
+          const value = resolvedData[fieldKey];
+          return value === undefined ? value : normalizeStoreLogoColor(value);
+        },
+      },
+    }),
     ...trackingFields,
   },
 });

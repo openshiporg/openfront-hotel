@@ -33,6 +33,13 @@ function httpsOrigin(env: NodeJS.ProcessEnv, key: string) {
   return url.origin;
 }
 
+const SITE_ORIGIN_KEYS = ['NEXT_PUBLIC_SITE_URL', 'NEXTAUTH_URL'] as const;
+
+/** The configured public site origin, from NEXT_PUBLIC_SITE_URL or its NEXTAUTH_URL alias. */
+export function configuredSiteOrigin(env: NodeJS.ProcessEnv = process.env) {
+  return String(env.NEXT_PUBLIC_SITE_URL || env.NEXTAUTH_URL || '').trim();
+}
+
 function complete(values: Array<string | undefined>) {
   return values.every(value => Boolean(String(value || '').trim()));
 }
@@ -59,12 +66,12 @@ export function validateProductionConfig(env: NodeJS.ProcessEnv = process.env): 
   strongDomainSecret(env, 'HOTEL_DATA_ENCRYPTION_KEY');
   strongDomainSecret(env, 'HOTEL_QUOTE_SECRET');
   if (String(env.RESET_ACTION_SECRET || '').trim()) strongDomainSecret(env, 'RESET_ACTION_SECRET');
-  const site = httpsOrigin(env, 'NEXT_PUBLIC_SITE_URL');
-  const auth = httpsOrigin(env, 'NEXTAUTH_URL');
-  if (site !== auth) throw new Error('NEXT_PUBLIC_SITE_URL and NEXTAUTH_URL must use the same canonical origin.');
-  const trustProxy = String(env.TRUST_PROXY || 'off').toLowerCase();
-  if (!['off', 'railway'].includes(trustProxy)) throw new Error('TRUST_PROXY must be off or railway.');
-  if (trustProxy === 'railway' && !env.RAILWAY_ENVIRONMENT) throw new Error('TRUST_PROXY=railway requires RAILWAY_ENVIRONMENT.');
+  // One public origin: NEXT_PUBLIC_SITE_URL, or the legacy NEXTAUTH_URL alias. Either is
+  // enough; when both are set they must agree.
+  const supplied = SITE_ORIGIN_KEYS.filter((key) => String(env[key] || '').trim());
+  if (!supplied.length) throw new Error('NEXT_PUBLIC_SITE_URL (or NEXTAUTH_URL) is required in production.');
+  const origins = new Set(supplied.map((key) => httpsOrigin(env, key)));
+  if (origins.size > 1) throw new Error('NEXT_PUBLIC_SITE_URL and NEXTAUTH_URL must use the same canonical origin.');
 
   return capabilities;
 }

@@ -1,5 +1,6 @@
 import { recordVerifiedSecurityAuthorization } from '../security/authorization';
 import { recordVerifiedDispute } from '../finance/hotelDisputes';
+import { recordVerifiedProviderRefund } from '../refunds/providerRefunds';
 import { handleWebhook } from '../utils/paymentProviderAdapter';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import {
@@ -36,6 +37,23 @@ export async function processBookingPaymentWebhook({
   const verified = await handleWebhook({ provider, rawBody, headers });
   if (!verified?.isValid) throw new Error('Webhook signature verification failed.');
 
+  // Never record or process another shop's shared-account Stripe events.
+  if (providerCode === 'pp_stripe_stripe' && verified.resource?.metadata?.source !== 'openfront-hotel') {
+    const resource = verified.resource;
+    const paymentId = typeof resource?.payment_intent === 'string' ? resource.payment_intent : resource?.payment_intent?.id || resource?.id;
+    // Owned means an exact provider reference this property recorded: a checkout session, or a
+    // captured payment such as a card-hold capture, which has no checkout session.
+    const owned = paymentId && (
+      await context.prisma.bookingPaymentSession.findFirst({
+        where: { paymentProviderId: provider.id, data: { path: ['paymentIntentId'], equals: paymentId } }, select: { id: true },
+      })
+      || await context.prisma.bookingPayment.findFirst({
+        where: { paymentProviderId: provider.id, paymentType: { not: 'refund' }, OR: [{ providerPaymentId: paymentId }, { providerCaptureId: paymentId }] }, select: { id: true },
+      })
+    );
+    if (!owned) return { success: true, ignored: true };
+  }
+
   const identity = requireVerifiedWebhookIdentity({
     providerCode,
     rawBody,
@@ -58,6 +76,7 @@ export async function processBookingPaymentWebhook({
   }
   if (verified.securityAuthorization) return recordVerifiedSecurityAuthorization(context, provider, verified.securityAuthorization, replay);
   if (verified.dispute) return recordVerifiedDispute(context, provider, verified.dispute, replay);
+  if (verified.refund) return recordVerifiedProviderRefund(context, provider, verified.refund, replay);
   const disposition = classifyPaymentWebhookType(identity.eventType);
   const settlement = verified.settlement || {};
   const bookingId = String(settlement.bookingId || '').trim();

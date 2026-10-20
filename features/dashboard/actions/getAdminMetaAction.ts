@@ -6,7 +6,6 @@
 
 import { cache } from 'react'
 import { keystoneClient, type KeystoneResponse } from '../lib/keystoneClient'
-import { safeGraphQLError, safeGraphQLLog } from '../lib/safeGraphQLError'
 import { getGraphQLNames } from '../lib/getGqlNames'
 
 // Cache the admin meta fetching to avoid repeated GraphQL calls
@@ -80,8 +79,8 @@ const getCachedAdminMeta = cache(async (): Promise<KeystoneResponse<any>> => {
   const response = await keystoneClient(query)
 
   if (!response.success) {
-    console.error('Failed to fetch admin meta:', safeGraphQLLog(response.error))
-    return { success: false, error: safeGraphQLError(response.error).message }
+    console.error('Failed to fetch admin meta:', response.error)
+    return response
   }
 
   const adminMeta = response.data?.keystone?.adminMeta
@@ -95,7 +94,7 @@ const getCachedAdminMeta = cache(async (): Promise<KeystoneResponse<any>> => {
 
   // Enhance all lists with gqlNames before returning
   const enhancedLists = adminMeta.lists.map((list: any) => {
-    const gqlNames = getGraphQLNames(list.key, { plural: list.plural, listQueryName: list.listQueryName })
+    const gqlNames = getGraphQLNames(list.key, { plural: list.plural })
 
     return {
       ...list,
@@ -157,10 +156,10 @@ export async function getAdminMetaAction(listKey?: string): Promise<KeystoneResp
     // Return full admin meta
     return response
   } catch (error) {
-    console.error('Error in getAdminMetaAction:', safeGraphQLLog(error))
+    console.error("Dashboard operation failed (details redacted).")
     return {
       success: false,
-      error: safeGraphQLError(error).message
+      error: "Unknown error"
     }
   }
 }

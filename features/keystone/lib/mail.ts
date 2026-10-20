@@ -1,6 +1,7 @@
 import { createTransport, getTestMessageUrl } from "nodemailer";
 import type { HotelCommunicationPayload } from '../communications/commands';
 import { HotelOutboxDeliveryError } from '../communications/outbox';
+import { configuredSiteOrigin } from './productionConfig';
 
 // SMTP values are infrastructure wiring. Durable property state decides whether
 // Hotel communications are eligible for delivery.
@@ -9,7 +10,7 @@ export function hotelMailInfrastructureConfigured() {
 }
 
 function getBaseUrlForEmails(): string {
-  const configured = process.env.PASSWORD_RESET_ORIGIN || process.env.NEXT_PUBLIC_SITE_URL;
+  const configured = process.env.PASSWORD_RESET_ORIGIN || configuredSiteOrigin();
   if (configured) return configured.replace(/\/$/, '');
   if (process.env.NODE_ENV === 'production') throw new Error('Email origin is not configured.');
   return 'http://localhost:3001';
@@ -28,6 +29,7 @@ function getTransport() {
   return createTransport({
     host,
     port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_PORT === '465',
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
@@ -70,9 +72,12 @@ function passwordResetEmail({ url }: { url: string }): string {
   `;
 }
 
-export async function sendPasswordResetEmail(resetToken: string, to: string, baseUrl?: string): Promise<void> {
+export async function sendPasswordResetEmail(resetToken: string, to: string, baseUrl?: string, audience: 'staff' | 'guest' = 'staff'): Promise<void> {
   // Use provided baseUrl or fall back to utility function
   const frontendUrl = baseUrl || getBaseUrlForEmails();
+  const resetPath = audience === 'guest'
+    ? `/account/reset?token=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(to)}`
+    : `/dashboard/reset?token=${resetToken}`;
 
   // email the user a token
   const info = await getTransport().sendMail({
@@ -80,7 +85,7 @@ export async function sendPasswordResetEmail(resetToken: string, to: string, bas
     from: mailFrom(),
     subject: "Your password reset token!",
     html: passwordResetEmail({
-      url: `${frontendUrl}/dashboard/reset?token=${resetToken}`,
+      url: `${frontendUrl}${resetPath}`,
     }),
   });
   if (process.env.SMTP_USER?.includes("ethereal.email")) {

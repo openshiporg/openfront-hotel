@@ -1,33 +1,34 @@
+import { CalendarClock, Utensils } from 'lucide-react';
 import type { StayPriceSummary } from '@/lib/types';
-import { cancellationTerms, money } from '../lib/stay-context';
+import { cancellationTerms, mealPlanLabel, money } from '../lib/stay-context';
 
 export function BookedStayTermsPanel({ terms }: { terms: StayPriceSummary | null | undefined }) {
   if (!terms) return null;
 
   const initialDepositMinor = Math.ceil(terms.totalAmountMinor * terms.depositPercent / 100);
-  const rows: Array<[string, number]> = [
-    ['Room subtotal', terms.roomSubtotalMinor],
-    ['Taxes', terms.taxAmountMinor],
-    ['Fees', terms.feesAmountMinor],
-    ['Original stay total', terms.totalAmountMinor],
-    [`Initial deposit policy (${terms.depositPercent}%)`, initialDepositMinor],
-    ['Separate security authorization', terms.securityDepositMinor],
-  ];
 
-  return <section aria-label="Original booked rate terms" className="lodging-surface space-y-4 p-5">
-    <header>
-      <p className="lodging-eyebrow">Original booked rate</p>
-      <h3 className="lodging-title mt-2">{terms.ratePlanName}</h3>
-      <p className="mt-1 text-sm">{terms.nights} {terms.nights === 1 ? 'night' : 'nights'}</p>
+  return <section aria-label="Original booked rate terms" className="sf-card sf-pad">
+    <header className="sf-row" style={{ justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 14 }}>
+      <div>
+        <p className="sf-eyebrow sf-eyebrow--plain">Original booked rate</p>
+        <h3 className="sf-h3" style={{ marginTop: 6 }}>{terms.ratePlanName}</h3>
+      </div>
+      <span className="sf-badge">{terms.nights} {terms.nights === 1 ? 'night' : 'nights'}</span>
     </header>
-    <dl className="space-y-2 text-sm">
-      {rows.map(([label, amount], index) => <div key={label} className={`flex justify-between gap-4 ${index === 3 ? 'border-t border-[var(--lodging-rule)] pt-3 font-medium' : ''}`}>
-        <dt>{label}</dt>
-        <dd>{money(amount, terms.currencyCode)}</dd>
-      </div>)}
-    </dl>
-    <p className="text-sm">Cancellation: {cancellationTerms(terms.cancellationPolicy)}</p>
-    <p className="text-sm">Meal plan: {terms.mealPlan.replaceAll('_', ' ')}.</p>
-    <p className="text-xs text-[var(--lodging-ink-muted)]">These are the rate terms recorded with the booking. Payment status and any current collectible balance are shown separately.</p>
+    <div className="sf-bill">
+      <div className="sf-bill__row"><span>Room subtotal</span><span>{money(terms.roomSubtotalMinor, terms.currencyCode)}</span></div>
+      <div className="sf-bill__row"><span>Taxes</span><span>{money(terms.taxAmountMinor, terms.currencyCode)}</span></div>
+      <div className="sf-bill__row"><span>Fees</span><span>{money(terms.feesAmountMinor, terms.currencyCode)}</span></div>
+      <div className="sf-bill__total"><b>Original stay total<small>{terms.currencyCode}</small></b><span className="sf-amount">{money(terms.totalAmountMinor, terms.currencyCode)}</span></div>
+      <div className="sf-bill__pay">
+        <div><span>Initial deposit policy ({terms.depositPercent}%)</span><span>{money(initialDepositMinor, terms.currencyCode)}</span></div>
+        <div><span>Separate security authorization</span><span>{money(terms.securityDepositMinor, terms.currencyCode)}</span></div>
+      </div>
+      <div className="sf-bill__terms">
+        <p><CalendarClock aria-hidden="true" /><span>Cancellation: {cancellationTerms(terms.cancellationPolicy)}</span></p>
+        <p><Utensils aria-hidden="true" /><span>Meal plan: {mealPlanLabel(terms.mealPlan) || terms.mealPlan.replaceAll('_', ' ')}.</span></p>
+      </div>
+    </div>
+    <p className="sf-fine" style={{ marginTop: 14 }}>These are the rate terms recorded with the booking. Payment status and any current collectible balance are shown separately.</p>
   </section>;
 }

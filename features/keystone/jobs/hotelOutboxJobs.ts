@@ -7,7 +7,7 @@ import {
   dispatchHotelOutboxBatch,
 } from '../communications/outbox';
 import { getOutboxDispatchConfig } from '../lib/integrationConfig';
-import { recordWorkerProgress } from '../lib/workerProgress';
+import { recordWorkerHeartbeat, recordWorkerProgress } from '../lib/workerProgress';
 import { safeOperationalErrorMessage } from '../lib/safeOperationalError';
 import {
   HOTEL_COMMUNICATION_TOPICS,
@@ -63,7 +63,7 @@ export function startHotelOutboxJobs(config: KeystoneConfig) {
     try {
       const scheduled = await queueHotelPrearrivalCommunications(context);
       if (scheduled.failures) console.error('Scheduled communication records failed:', scheduled.failures);
-      await dispatchHotelOutboxBatch(
+      const result = await dispatchHotelOutboxBatch(
         context.prisma,
         {
           propertyKey: 'the-alder-house', workerId,
@@ -73,7 +73,9 @@ export function startHotelOutboxJobs(config: KeystoneConfig) {
         },
         handler,
       );
-      if (!scheduled.failures) await recordWorkerProgress(context.prisma, 'outbox');
+      await recordWorkerHeartbeat(context.prisma, 'outbox');
+      // A cycle where deliveries had to be retried or dead-lettered is not progress.
+      if (!scheduled.failures && !result.retried && !result.deadLettered) await recordWorkerProgress(context.prisma, 'outbox');
     } catch (error) {
       console.error(safeOperationalErrorMessage('worker', error));
     }

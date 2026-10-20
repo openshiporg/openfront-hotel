@@ -6,8 +6,7 @@ import {
   useStripe,
   useElements,
 } from '@stripe/react-stripe-js';
-import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Lock } from 'lucide-react';
 
 interface StripeCheckoutFormProps {
   amount: number;
@@ -64,24 +63,26 @@ export function StripeCheckoutForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="sf-stack" style={{ '--stack': '20px' } as React.CSSProperties}>
       <PaymentElement />
 
-      <Button
+      <button
         type="submit"
-        size="lg"
-        className="w-full"
+        className="sf-btn sf-btn--lg sf-btn--block"
         disabled={!stripe || isProcessing}
       >
         {isProcessing ? (
           <>
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-            Processing Payment...
+            <Loader2 className="sf-spinner" aria-hidden="true" />
+            Processing payment…
           </>
         ) : (
-          `Pay ${new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(amount)}`
+          <>
+            <Lock aria-hidden="true" />
+            {`Pay ${new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(amount)}`}
+          </>
         )}
-      </Button>
+      </button>
     </form>
   );
 }

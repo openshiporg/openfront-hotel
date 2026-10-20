@@ -5,6 +5,7 @@ import { acquireWorkerLease, createNonOverlappingTick, createWorkerLeaseOwnerId 
 import { expireHotelHoldBatch } from '../lib/expireHotelHolds';
 import { recordWorkerProgress } from '../lib/workerProgress';
 import { safeOperationalErrorMessage } from '../lib/safeOperationalError';
+import { pruneExpiredAbuseBuckets } from '../lib/abuseControl';
 
 export async function runHotelHoldWorkerCycle(
   context: any,
@@ -19,6 +20,8 @@ export async function runHotelHoldWorkerCycle(
   if (groupResult.leaseLost) return;
   if (result.failures.length) console.error('Hotel hold expiry records failed:', result.failures.length);
   else await recordWorkerProgress(context.prisma, 'holds');
+  // Abuse-limit counters for finished windows; capped per minute so cleanup never competes with requests.
+  await pruneExpiredAbuseBuckets(context.prisma).catch((error: unknown) => console.error(safeOperationalErrorMessage('worker', error)));
 }
 
 export function startHotelHoldJobs(config: KeystoneConfig) {

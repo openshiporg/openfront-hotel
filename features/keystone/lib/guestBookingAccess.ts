@@ -135,6 +135,11 @@ export function setGuestBookingAccess(context: any, bookingId: string, token: st
   );
 }
 
+/** Reservations this device has proven access to (booking creation or confirmation-number lookup). */
+export function listGuestBookingAccess(context: any): GuestAccessEntry[] {
+  return parseGuestAccessEntries(context);
+}
+
 export function getGuestBookingToken(context: any, bookingId: string) {
   return parseGuestAccessEntries(context).find((entry) => entry.bookingId === bookingId)?.token || null;
 }
@@ -154,11 +159,15 @@ export async function assertGuestBookingAccess(context: any, bookingId: string) 
       id
       guestEmail
       guestAccessTokenHash
+      guest { id }
     `,
   });
 
   if (!booking) throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
   if (canManageBookingRecords(context)) return booking;
+  // A signed-in guest account owns the stays attached to it.
+  const session = context.session;
+  if (session?.itemId && session.data?.isActive === true && !session.data?.role && booking.guest?.id === session.itemId) return booking;
 
   const token = getGuestBookingToken(context, bookingId);
   if (!token || !guestAccessTokenMatches(booking.guestAccessTokenHash, token)) {

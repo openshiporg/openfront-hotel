@@ -19,9 +19,31 @@ function object(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 
-export function paymentProviderCredentials(provider: PersistedPaymentProvider) {
+export function paymentProviderUsesEnvironment(provider: PersistedPaymentProvider) {
+  return provider.code === 'pp_stripe_stripe' &&
+    !Object.values(object(provider.credentials)).some(value => value !== null && value !== undefined && value !== '');
+}
+
+export type PaymentProviderCredentialValues = Record<string, string | boolean | undefined>;
+
+export function paymentProviderCredentials(provider: PersistedPaymentProvider): PaymentProviderCredentialValues {
+  if (paymentProviderUsesEnvironment(provider)) {
+    return {
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    };
+  }
   const stored = object(provider.credentials);
-  return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, decryptSensitiveText(value)]));
+  // Only secrets are stored encrypted. Typed settings such as PayPal's `sandbox: false` keep
+  // their type; reading them as text would turn a live account back into sandbox mode.
+  return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, typeof value === 'boolean' ? value : decryptSensitiveText(value)]));
+}
+
+export function paymentProviderEnabled(provider: PersistedPaymentProvider) {
+  return paymentProviderUsesEnvironment(provider)
+    ? process.env.STRIPE_ENABLED === 'true' && object(provider.metadata).stripeEnvironmentDisabled !== true
+    : Boolean(provider.isInstalled);
 }
 
 /** Credential completeness is independent from admitting new checkout. */
@@ -42,9 +64,9 @@ export function paymentProviderCredentialsConfigured(provider: PersistedPaymentP
   return false;
 }
 
-/** Persisted provider enablement and credential completeness govern new checkout. */
+/** Saved credentials win; empty Stripe records may use deployment credentials. */
 export function paymentIntegrationConfigured(provider: PersistedPaymentProvider) {
-  return Boolean(provider?.isInstalled) && paymentProviderCredentialsConfigured(provider);
+  return paymentProviderEnabled(provider) && paymentProviderCredentialsConfigured(provider);
 }
 
 export type OutboxDispatchConfig = {

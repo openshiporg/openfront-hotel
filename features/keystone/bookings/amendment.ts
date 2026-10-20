@@ -56,7 +56,7 @@ export async function amendUnpaidBooking({
   guestName: string; guestEmail: string; guestProfileId: string; numberOfGuests: number;
   totalAmountMinor: number; currencyCode?: string; idempotencyKey: string; source?: string; withinTransaction?: boolean;
   commercialPricing?: {
-    depositPercent?: number; securityDepositMinor?: number; arrivalInstant?: string; propertyTimeZone?: string; cancellationPolicy?: string | null; ratePlanId: string; pricingVersion: string; roomSubtotalMinor: number; taxMinor: number; feesMinor: number;
+    depositPercent?: number; securityDepositMinor?: number; arrivalInstant?: string; propertyTimeZone?: string; cancellationPolicy?: string | null; ratePlanId: string; ratePlanName?: string | null; mealPlan?: string | null; pricingVersion: string; roomSubtotalMinor: number; taxMinor: number; feesMinor: number;
     totalMinor: number; taxRateBasisPoints: number; nightlyRates: Array<{ date: string; amountMinor: number; seasonalRateId?: string | null; seasonalRateName?: string | null }>;
   };
   actorId?: string | null;
@@ -133,6 +133,12 @@ export async function amendUnpaidBooking({
     const taxMinor = commercialPricing?.taxMinor ?? 0;
     const feesMinor = commercialPricing?.feesMinor ?? 0;
     const nightlyRates = commercialPricing?.nightlyRates ?? fallbackNightly;
+    // Guests see the booked rate name, meal plan and policy beside revised dates, so a
+    // revision carries them forward (from the new quote, or the same booked rate).
+    const ratePlanId = commercialPricing?.ratePlanId ?? booking.ratePlanId;
+    const sameBookedRate = (booking.pricingSnapshot?.ratePlanId ?? booking.ratePlanId) === ratePlanId;
+    const ratePlanName = commercialPricing?.ratePlanName || (sameBookedRate ? booking.pricingSnapshot?.ratePlanName : null) || null;
+    const mealPlan = commercialPricing?.mealPlan || (sameBookedRate ? booking.pricingSnapshot?.mealPlan : null) || null;
     const depositPercent = Number(commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent ?? (booking.totalAmountMinor > 0 ? Number(booking.depositAmountMinor || 0) / booking.totalAmountMinor * 100 : 0));
     if (!Number.isFinite(depositPercent) || depositPercent < 0 || depositPercent > 100) throw new Error('Booked deposit policy is invalid.');
     const depositAmountMinor = Math.round(totalAmountMinor * depositPercent / 100);
@@ -143,9 +149,9 @@ export async function amendUnpaidBooking({
       roomRateMinor: roomSubtotalMinor, taxAmountMinor: taxMinor, feesAmountMinor: feesMinor, totalAmountMinor,
       balanceDueMinor, paymentStatus, currencyCode, depositAmountMinor, depositAmount: depositAmountMinor / 100, roomRate: roomSubtotalMinor / 100, taxAmount: taxMinor / 100,
       feesAmount: feesMinor / 100, totalAmount: totalAmountMinor / 100, balanceDue: balanceDueMinor / 100,
-      ratePlanId: commercialPricing?.ratePlanId ?? booking.ratePlanId,
+      ratePlanId,
       pricingVersion: commercialPricing?.pricingVersion ?? `${source}-amendment-v1`, pricingRevision: revision,
-      pricingSnapshot: { depositPercent: commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent, securityDepositMinor: commercialPricing?.securityDepositMinor ?? booking.pricingSnapshot?.securityDepositMinor, arrivalInstant: commercialPricing?.arrivalInstant || booking.pricingSnapshot?.arrivalInstant, propertyTimeZone: commercialPricing?.propertyTimeZone || booking.pricingSnapshot?.propertyTimeZone, cancellationPolicy: commercialPricing?.cancellationPolicy || booking.pricingSnapshot?.cancellationPolicy, snapshotKeyPrefix: `v${revision}`, source, nightlyRates, roomSubtotalMinor, taxMinor, feesMinor, totalMinor: totalAmountMinor, currencyCode, taxRateBasisPoints: commercialPricing?.taxRateBasisPoints ?? 0 },
+      pricingSnapshot: { depositPercent: commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent, securityDepositMinor: commercialPricing?.securityDepositMinor ?? booking.pricingSnapshot?.securityDepositMinor, arrivalInstant: commercialPricing?.arrivalInstant || booking.pricingSnapshot?.arrivalInstant, propertyTimeZone: commercialPricing?.propertyTimeZone || booking.pricingSnapshot?.propertyTimeZone, cancellationPolicy: commercialPricing?.cancellationPolicy || booking.pricingSnapshot?.cancellationPolicy, ratePlanId, ratePlanName, mealPlan, previousRevision: { revision: Number(booking.pricingRevision || 1), checkInDate: new Date(booking.checkInDate).toISOString(), checkOutDate: new Date(booking.checkOutDate).toISOString(), totalMinor: booking.totalAmountMinor, arrivalInstant: booking.pricingSnapshot?.arrivalInstant || null }, snapshotKeyPrefix: `v${revision}`, source, nightlyRates, roomSubtotalMinor, taxMinor, feesMinor, totalMinor: totalAmountMinor, currencyCode, taxRateBasisPoints: commercialPricing?.taxRateBasisPoints ?? 0 },
     } });
     testFailure('booking');
     const assignment = booking.roomAssignments[0];

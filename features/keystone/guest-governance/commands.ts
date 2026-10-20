@@ -205,7 +205,9 @@ export function assertHotelApprovalEvidence(request: any, decision: any, input: 
   if (decision.status !== 'approved' || decision.approvedBy === request.requestedBy) throw new Error('An independent approval is required.');
   if (input.parameters !== undefined && hashLifecycleRequest(request.parameters) !== hashLifecycleRequest(input.parameters)) throw new Error('Approval parameters do not match the requested change.');
 }
+const APPROVAL_ACTION_LABELS: Record<HotelApprovalAction, string> = { refund: 'Refund', write_off: 'Write off', rate_publish: 'Rate publish', cash_variance: 'Cash variance', security_capture: 'Security capture', payout_reconcile: 'Payout reconcile' };
 export async function requireHotelApproval(prisma: any, input: { approvalId?: string | null; action: HotelApprovalAction; aggregateId: string; amountMinor: number; actorId: string; operationKey: string; parameters?: unknown }) {
+  if (!String(input.approvalId || '').trim()) throw new Error(`This needs approval from a second staff member. On the Approvals page, request a "${APPROVAL_ACTION_LABELS[input.action]}" approval for ${input.aggregateId}${input.amountMinor ? `, amount ${input.amountMinor} (USD ${(input.amountMinor / 100).toFixed(2)})` : ''}; once another authorized staff member approves it, enter its approval ID here.`);
   const approvalId = text(input.approvalId, 'Independent approval ID', 100);
   await lock(prisma, `approval:${approvalId}`);
   const [request, decision, consumed] = await Promise.all([
@@ -242,7 +244,8 @@ export async function updateHotelApproval(_root: unknown, { payload, idempotency
     let after: any;
     if (decision) {
       const request = await prisma.hotelAuditEvent.findUnique({ where: { eventKey: `hotel-approval:${approvalId}:request` } });
-      if (!request || request.afterSnapshot.requestedBy === context.session.itemId) throw new Error('A different authorized staff member must approve this request.');
+      if (!request) throw new Error('Approval request not found. Refresh the approvals list and try again.');
+      if (request.afterSnapshot.requestedBy === context.session.itemId) throw new Error('You requested this approval, so a different authorized staff member must approve or decline it. It stays awaiting a decision.');
       after = { status: data.status, approvedBy: context.session.itemId, reason: text(data.reason, 'Approval reason') };
     } else {
       if (!['refund', 'write_off', 'rate_publish', 'cash_variance', 'security_capture', 'payout_reconcile'].includes(data.action) || !Number.isSafeInteger(data.amountMinor) || data.amountMinor < 0) throw new Error('Valid approval action and amount are required.');
@@ -253,10 +256,10 @@ export async function updateHotelApproval(_root: unknown, { payload, idempotency
       if (data.action === 'rate_publish') {
         const economics = await loadRateEconomics(prisma, text(data.aggregateId, 'Target ID', 200));
         parameters = { ...parameters, economicsHash: economics.economicsHash };
-        economicReview = { target: rateEconomicsReview(economics.plan, economics.derivedConfig) };
+        economicReview = { target: rateEconomicsReview(economics.plan, economics.derivedConfig, economics.seasons) };
         if (parameters.derivedRate?.enabled) {
           const source = await loadRateEconomics(prisma, text(parameters.derivedRate.sourcePlanId, 'Source rate ID', 200));
-          parameters.sourceEconomicsHash = source.economicsHash; economicReview.source = rateEconomicsReview(source.plan, source.derivedConfig);
+          parameters.sourceEconomicsHash = source.economicsHash; economicReview.source = rateEconomicsReview(source.plan, source.derivedConfig, source.seasons);
         }
       }
       after = { action: data.action, aggregateId: text(data.aggregateId, 'Target ID', 200), amountMinor: data.amountMinor, requestedBy: context.session.itemId, reason: text(data.reason, 'Request reason'), parameters, ...(economicReview ? { economicReview } : {}) };

@@ -672,6 +672,8 @@ model HotelSettings {
   locationImagePath                  String   @default("")
   locationImageAltText               String   @default("")
   locationImageCaption               String   @default("")
+  logoIcon                           String   @default("")
+  logoColor                          String   @default("0")
   createdAt                          DateTime @default(now())
   updatedAt                          DateTime @default(now()) @updatedAt
 }

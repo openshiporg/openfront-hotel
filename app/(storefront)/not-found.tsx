@@ -1,2 +1,9 @@
 import Link from 'next/link';
-export default function StorefrontNotFound(){return <main className="lodging-container hotel-section"><p className="lodging-eyebrow">Page not found</p><h1 className="lodging-headline mt-4">Find your way back to the house.</h1><p className="mt-5">This page may have moved. Your reservation can still be found through secure lookup.</p><div className="flex flex-wrap gap-5 mt-6"><Link href="/rooms" className="lodging-button">Explore rooms</Link><Link href="/bookings/lookup" className="lodging-link">Find a reservation</Link></div></main>}
+import { Compass } from 'lucide-react';
+import { StatePanel } from '@/features/storefront/components/ui';
+export default function StorefrontNotFound() {
+  return <StatePanel icon={Compass} eyebrow="Page not found" title={<>Find your way back <em>to the house.</em></>}
+    actions={<><Link href="/rooms" className="sf-btn">Explore rooms</Link><Link href="/bookings/lookup" className="sf-link">Find a reservation</Link></>}>
+    This page may have moved. Your reservation can still be found through secure lookup.
+  </StatePanel>;
+}

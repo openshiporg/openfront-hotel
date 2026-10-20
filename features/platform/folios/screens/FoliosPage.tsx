@@ -8,18 +8,21 @@ import { formatStayDate } from '@/lib/hotelCalendarDate';
 import React from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ArrowDownLeft, ArrowUpRight, CalendarCheck, RefreshCw, ReceiptText } from 'lucide-react';
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CalendarCheck, CalendarDays, ExternalLink, Lock, ReceiptText, RefreshCw, Undo2 } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { useToast } from '@/components/ui/use-toast';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { DataTable, TBody, Td, Th, THead, Tr } from '@/features/platform/components/DataTable';
+import { FilterTabs } from '@/features/platform/components/FilterTabs';
+import { Field, FieldInput, FieldTextarea, FormNote, NativeSelect } from '@/features/platform/components/Form';
+import { MetaItem, PlatformPage } from '@/features/platform/components/PlatformPage';
+import { StatStrip } from '@/features/platform/components/Stats';
+import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
+import { Callout, CopyId, Panel, PanelBody, PanelHeader, PanelToolbar } from '@/features/platform/components/Surface';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
+import { humanize, previewMinor } from '@/features/platform/lib/format';
 import { applyWorkspaceView, workspaceResultLabel } from '@/features/platform/lib/workspace';
 import {
   closeReconciledFolioAction,
@@ -30,6 +33,7 @@ import {
   reverseFolioEntryAction,
   runNightAuditAction,
 } from '../actions';
+import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
 type FolioEntry = {
   id: string;
@@ -81,11 +85,11 @@ function formatDate(value: string) {
 }
 
 export function FoliosPage() {
-  const { toast } = useToast();
   const searchParams = useSearchParams();
   const requestedBookingId = searchParams?.get('bookingId');
   const [folios, setFolios] = React.useState<Folio[]>([]);
   const [selectedId, setSelectedId] = React.useState<string>('');
+  const [targetMissing, setTargetMissing] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [search, setSearch] = React.useState('');
@@ -118,27 +122,31 @@ export function FoliosPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getFolioWorkspace() as {
-        hotelFolioOperations: { folios: Folio[]; overdueExceptions: any[] };
+      const data = await getFolioWorkspace(requestedBookingId) as {
+        hotelFolioOperations: { folios: Folio[]; overdueExceptions: any[]; targetFolioId: string | null; targetMissing: boolean };
         hotelNightAuditOperations: { currentBusinessDate: string };
       };
-      const folios = data.hotelFolioOperations?.folios || [];
+      const operations = data.hotelFolioOperations;
+      const folios = operations?.folios || [];
       setBusinessDate(data.hotelNightAuditOperations?.currentBusinessDate || '');
-      setOverdue(data.hotelFolioOperations?.overdueExceptions || []);
+      setOverdue(operations?.overdueExceptions || []);
       setFolios(folios);
+      setTargetMissing(Boolean(operations?.targetMissing));
+      // A linked reservation opens exactly its own folio (or its group master folio), never another one.
       setSelectedId((current) => {
-        const requested = requestedBookingId ? folios.find(folio => folio.booking?.id === requestedBookingId)?.id : null;
-        return requested || current || folios[0]?.id || '';
+        if (current && folios.some(folio => folio.id === current)) return current;
+        if (requestedBookingId) return operations?.targetFolioId || '';
+        return folios[0]?.id || '';
       });
     } catch (error) {
       console.error('Failed to load folios:', error);
       const message = error instanceof Error ? error.message : 'Check your payment permissions and try again.';
       setError(message);
-      toast({ title: 'Unable to load folios', description: message, variant: 'destructive' });
+      toast.error('Unable to load folios', { description: message });
     } finally {
       setLoading(false);
     }
-  }, [toast, requestedBookingId]);
+  }, [requestedBookingId]);
 
   React.useEffect(() => {
     fetchFolios();
@@ -146,14 +154,14 @@ export function FoliosPage() {
   }, [fetchFolios, refreshBusinessDateReadiness]);
 
   const runNightAudit = async () => {
-    if (!businessDate || !window.confirm(`Close business date ${businessDate.slice(0, 10)}? This posts due immutable snapshots and advances the property clock.`)) return;
+    if (!businessDate || !window.confirm(`Close business date ${businessDate.slice(0, 10)}? This posts the night's room charges and moves the business date forward one day.`)) return;
     setRunningAudit(true);
     try {
-      await runNightAuditAction(businessDate);
-      toast({ title: 'Night audit completed', description: `Business date ${businessDate.slice(0, 10)} closed.` });
+      unwrapAction(await runNightAuditAction(businessDate));
+      toast.success('Night audit completed', { description: `Business date ${businessDate.slice(0, 10)} closed.` });
       await Promise.all([fetchFolios(), refreshBusinessDateReadiness()]);
     } catch (error) {
-      toast({ title: 'Night audit refused', description: error instanceof Error ? error.message : 'Resolve folio or snapshot exceptions and retry.', variant: 'destructive' });
+      toast.error('Night audit refused', { description: error instanceof Error ? error.message : 'Resolve folio or snapshot exceptions and retry.' });
     } finally {
       setRunningAudit(false);
     }
@@ -166,24 +174,24 @@ export function FoliosPage() {
     try {
       const attempt = await operationAttempt(`folio-${kind}`, { bookingId: settlementBookingId, ...action });
       if (kind === 'payment') {
-        await recordFolioPaymentAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor: Number(action.amount), method: action.method, description: action.description });
+        unwrapAction(await recordFolioPaymentAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor: Number(action.amount), method: action.method, description: action.description }));
       } else {
-        await postFolioEntryAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor: Number(action.amount), direction: action.direction, description: action.description, approvalId: action.approvalId.trim() });
+        unwrapAction(await postFolioEntryAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor: Number(action.amount), direction: action.direction, description: action.description, approvalId: action.approvalId.trim() }));
       }
       attempt.complete();
-      toast({ title: kind === 'payment' ? 'Payment recorded' : 'Folio entry posted' }); setAction({ ...action, amount: '', description: '' }); await fetchFolios();
-    } catch (error) { toast({ title: 'Folio operation refused', description: error instanceof Error ? error.message : 'Invalid operation', variant: 'destructive' }); }
+      toast.success(kind === 'payment' ? 'Payment recorded' : 'Folio entry posted'); setAction({ ...action, amount: '', description: '' }); await fetchFolios();
+    } catch (error) { toast.error('Folio operation refused', { description: error instanceof Error ? error.message : 'Invalid operation' }); }
     finally { setBusy(false); }
   };
   const closeSelectedFolio = async () => {
     if (!selected?.booking?.id || selected.balanceMinor !== 0 || !['checked_out', 'cancelled', 'no_show'].includes(selected.booking.status)) return;
     setBusy(true);
     try {
-      await closeReconciledFolioAction(selected.booking.id);
-      toast({ title: 'Reconciled folio closed', description: 'The zero-balance terminal folio is closed with audit evidence.' });
+      unwrapAction(await closeReconciledFolioAction(selected.booking.id));
+      toast.success('Reconciled folio closed', { description: 'The zero-balance terminal folio is closed with audit evidence.' });
       await fetchFolios();
     } catch (error) {
-      toast({ title: 'Folio close refused', description: error instanceof Error ? error.message : 'The folio is not settled.', variant: 'destructive' });
+      toast.error('Folio close refused', { description: error instanceof Error ? error.message : 'The folio is not settled.' });
     } finally {
       setBusy(false);
     }
@@ -200,7 +208,7 @@ export function FoliosPage() {
       const response = await reverseFolioEntryAction(reversalEntry.id, riskReason.trim(), attempt.key, riskApprovalId.trim());
       if (!response.ok) { setRiskError(response.message); return; }
       attempt.complete();
-      toast({ title: 'Compensating reversal posted' });
+      toast.success('Compensating reversal posted');
       await fetchFolios();
       setReversalEntry(null);
       setRiskReason('');
@@ -212,7 +220,7 @@ export function FoliosPage() {
     event.preventDefault();
     if (!overdueBooking || !riskReason.trim()) { setRiskError('An authorized write-off reason is required.'); return; }
     setRiskBusy(true); setRiskError(null);
-    try { const attempt = await operationAttempt('overdue-resolution', { bookingId: overdueBooking.id, reason: riskReason.trim(), approvalId: riskApprovalId.trim() }); await resolveOverdueStayAction(overdueBooking.id, riskReason.trim(), attempt.key, riskApprovalId.trim()); attempt.complete(); toast({ title: 'Overdue stay resolved with immutable evidence' }); await fetchFolios(); setOverdueBooking(null); setRiskReason(''); }
+    try { const attempt = await operationAttempt('overdue-resolution', { bookingId: overdueBooking.id, reason: riskReason.trim(), approvalId: riskApprovalId.trim() }); unwrapAction(await resolveOverdueStayAction(overdueBooking.id, riskReason.trim(), attempt.key, riskApprovalId.trim())); attempt.complete(); toast.success('Overdue stay resolved'); await fetchFolios(); setOverdueBooking(null); setRiskReason(''); }
     catch (error) { setRiskError(error instanceof Error ? error.message : 'The overdue resolution was refused.'); }
     finally { setRiskBusy(false); }
   };
@@ -225,183 +233,272 @@ export function FoliosPage() {
     sortValue: (folio) => sort === 'balance' ? Math.abs(folio.balanceMinor) : folio.openedAt,
     direction: 'desc',
   }), [folios, search, statusFilter, sort]);
-  const selected = visibleFolios.find((folio) => folio.id === selectedId) || visibleFolios[0];
+  // Filters narrow the list only; they never change which folio is open.
+  const selected = folios.find((folio) => folio.id === selectedId);
+  // After a failed refresh the loaded figures may be out of date, so financial actions wait for a successful read.
+  const stale = Boolean(error);
+  const selectFolio = (id: string) => {
+    if (id === selectedId) return;
+    setSelectedId(id);
+    setAction({ amount: '', description: '', method: 'cash', direction: 'debit', approvalId: '' });
+  };
   const selectedTotals = selected || null;
   const openBalanceMinor = folios
     .filter((folio) => folio.status === 'open')
     .reduce((sum, folio) => sum + folio.balanceMinor, 0);
 
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Folios' },
-  ];
-  const header = (
-    <div className="flex flex-col">
-      <h1 className="text-lg font-semibold md:text-2xl">Folios</h1>
-      <p className="text-muted-foreground">Append-only reservation charges, payments, refunds, and corrections.</p>
-    </div>
+  const settlementBookingId = selected?.settlementBookingId || selected?.booking?.id;
+  const openFolios = folios.filter((folio) => folio.status === 'open');
+  const ledgerEntries = folios.reduce((sum, folio) => sum + folio.entries.length, 0);
+  const statusCount = (value: string) => folios.filter((folio) => folio.status === value).length;
+  const amountPreview = previewMinor(action.amount, selected?.currencyCode || 'USD');
+  const canClose = Boolean(selected && selected.balanceMinor === 0 && selected.booking && ['checked_out', 'cancelled', 'no_show'].includes(selected.booking.status));
+  const approvalTarget = overdueBooking?.id || selected?.booking?.id || selected?.id;
+
+  const riskApprovalField = (
+    <Field
+      label="Approval ID"
+      htmlFor={reversalEntry ? 'reversal-approval' : 'overdue-approval'}
+      optional
+      hint={<>Required when property policy sets a threshold. Target {approvalTarget ? <CopyId value={approvalTarget} className="align-middle" /> : null} · <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Open approvals</Link></>}
+    >
+      <FieldInput id={reversalEntry ? 'reversal-approval' : 'overdue-approval'} value={riskApprovalId} onChange={event => setRiskApprovalId(event.target.value)} disabled={riskBusy} />
+    </Field>
   );
 
   return (
-    <PageContainer title="Folios" header={header} breadcrumbs={breadcrumbs}>
-      <div className="space-y-6 p-4 md:p-6">
-        <div data-qa-layout="folio-metrics-grid" className="grid min-w-0 max-w-full gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Card className="min-w-0 max-w-full">
-            <CardContent className="min-w-0 max-w-full pt-6">
-              <p className="text-sm text-muted-foreground">Open folios</p>
-              <p className="mt-1 text-2xl font-semibold [overflow-wrap:anywhere]">{folios.filter((folio) => folio.status === 'open').length}</p>
-            </CardContent>
-          </Card>
-          <Card className="min-w-0 max-w-full">
-            <CardContent className="min-w-0 max-w-full pt-6">
-              <p className="text-sm text-muted-foreground">Open balance</p>
-              <p className="mt-1 text-2xl font-semibold [overflow-wrap:anywhere]">{formatMoney(openBalanceMinor, 'USD')}</p>
-            </CardContent>
-          </Card>
-          <Card className="min-w-0 max-w-full">
-            <CardContent className="min-w-0 max-w-full pt-6">
-              <p className="text-sm text-muted-foreground">Ledger entries</p>
-              <p className="mt-1 text-2xl font-semibold [overflow-wrap:anywhere]">{folios.reduce((sum, folio) => sum + folio.entries.length, 0)}</p>
-            </CardContent>
-          </Card>
-          <Card className="min-w-0 max-w-full">
-            <CardContent className="min-w-0 max-w-full pt-6">
-              <p className="text-sm text-muted-foreground">Business date</p>
-              <p className="mt-1 font-semibold [overflow-wrap:anywhere]">{businessDate ? businessDate.slice(0, 10) : 'Unavailable'}</p>
-              <Button className="mt-3" size="sm" variant="outline" onClick={runNightAudit} disabled={!businessDate || runningAudit}>
-                <CalendarCheck className="mr-2 h-4 w-4" />{runningAudit ? 'Closing…' : 'Run night audit'}
-              </Button>
-              <p className="mt-2 max-w-xs text-xs text-muted-foreground">
-                Each audit closes only this date and advances one day after the server checks for unsettled departures and folio or snapshot blockers.
-              </p>
-              {businessDateCurrent === false && (
-                <p role="status" className="mt-2 max-w-xs text-xs text-amber-700 dark:text-amber-400">
-                  Readiness reports the business date is not current. Night audit remains available as the guarded one-day progression path; it does not clear other service-readiness checks.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+    <PlatformPage
+      title="Folios"
+      description="Reservation charges, payments, refunds and corrections."
+      meta={(
+        <>
+          <MetaItem icon={CalendarDays}>Business date {businessDate ? formatDate(businessDate) : 'unavailable'}</MetaItem>
+          {businessDateCurrent === false ? <MetaItem icon={AlertTriangle}><span className="text-amber-700 dark:text-amber-400">Readiness reports the business date is behind</span></MetaItem> : null}
+        </>
+      )}
+      actions={(
+        <>
+          <Button variant="outline" size="sm" onClick={fetchFolios} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : undefined} aria-hidden="true" />Refresh</Button>
+          <Button size="sm" onClick={runNightAudit} disabled={!businessDate || runningAudit || stale}><CalendarCheck aria-hidden="true" />{runningAudit ? 'Closing day…' : 'Run night audit'}</Button>
+        </>
+      )}
+    >
+      <StatStrip
+        loading={loading && !folios.length}
+        items={[
+          { label: 'Open folios', value: openFolios.length, tone: 'info', hint: `${folios.length} loaded`, onSelect: () => setStatusFilter(statusFilter === 'open' ? 'all' : 'open'), active: statusFilter === 'open' },
+          { label: 'Open balance', value: formatMoney(openBalanceMinor, 'USD'), tone: openBalanceMinor > 0 ? 'warning' : 'success', hint: 'Across open folios' },
+          { label: 'Ledger entries', value: ledgerEntries, hint: 'Immutable postings' },
+          { label: 'Overdue stays', value: overdue.length, tone: overdue.length ? 'danger' : 'neutral', hint: overdue.length ? 'Need an explicit resolution' : 'None past departure' },
+        ]}
+      />
 
-        {(selected?.settlementBookingId || selected?.booking?.id) && <SecurityAuthorizationOperations key={selected.id} bookingId={(selected.settlementBookingId || selected.booking?.id)!} />}
-        {selected && <FolioReceiptPanel key={selected.id} folioId={selected.id} />}
-        <WorkspaceControls search={search} onSearchChange={setSearch} searchLabel="Search guest, confirmation, or folio number" resultLabel={workspaceResultLabel(visibleFolios.length, folios.length, 'folios')}><WorkspaceSelect label="Filter folio status" value={statusFilter} onChange={setStatusFilter}><option value="all">All statuses</option><option value="open">Open</option><option value="closed">Closed</option></WorkspaceSelect><WorkspaceSelect label="Sort folios" value={sort} onChange={setSort}><option value="recent">Recently opened</option><option value="balance">Largest balance</option></WorkspaceSelect></WorkspaceControls>
-        {error ? <WorkspaceError message={error} onRetry={fetchFolios} /> : null}
-        {loading && folios.length === 0 ? <WorkspaceLoading label="Loading folio ledgers" /> : null}
+      {businessDateCurrent === false ? (
+        <Callout tone="warning" title="The business date is not current">
+          Run the night audit to close the current date. Each audit closes one day, after checking for unsettled departures and folio problems.
+        </Callout>
+      ) : null}
 
-        {overdue.length > 0 && <Card className="border-amber-300"><CardHeader><CardTitle>Overdue checked-in exceptions</CardTitle></CardHeader><CardContent className="space-y-3">{overdue.map((booking) => <div key={booking.id} className="flex flex-col gap-3 border p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{booking.guestName} · {booking.confirmationNumber}</p><p className="text-sm text-muted-foreground">Due {booking.checkOutDate.slice(0,10)} · lifecycle resolution requires an explicit write-off reason</p></div><Button variant="destructive" size="sm" onClick={() => openOverdueResolution(booking)}>Resolve exception</Button></div>)}</CardContent></Card>}
+      {error ? <WorkspaceError message={`${error} Figures below are from the last successful load; posting and payments are paused until a refresh succeeds.`} onRetry={fetchFolios} title="Folio ledgers unavailable" /> : null}
+      {targetMissing ? (
+        <Callout tone="warning" title="This reservation’s folio is not available">
+          No folio was found for the linked reservation, or you can’t view it. Choose a folio from the list instead.
+        </Callout>
+      ) : null}
 
-        {(selected?.settlementBookingId || selected?.booking?.id) && selected.status === 'open' && <Card><CardHeader><CardTitle>Operator settlement & correction</CardTitle></CardHeader><CardContent className="grid gap-3 md:grid-cols-7"><Input aria-label="Amount in minor units" className="md:col-span-1" type="number" min="1" placeholder="Minor units" value={action.amount} onChange={e=>setAction({...action,amount:e.target.value})}/><Input aria-label="Required description or reason" className="md:col-span-2" placeholder="Required description / reason" value={action.description} onChange={e=>setAction({...action,description:e.target.value})}/><select aria-label="Folio entry direction" className="h-10 border bg-background px-3" value={action.direction} onChange={e=>setAction({...action,direction:e.target.value})}><option value="debit">Debit</option><option value="credit">Credit</option></select><select aria-label="Payment method" className="h-10 border bg-background px-3" value={action.method} onChange={e=>setAction({...action,method:e.target.value})}><option value="cash">Cash</option><option value="credit_card">Credit card</option><option value="debit_card">Debit card</option><option value="bank_transfer">Bank transfer</option><option value="check">Check</option></select><div className="flex flex-wrap gap-2 md:col-span-2"><Button disabled={busy} onClick={()=>runFolioAction('payment')}>Record payment</Button><Button disabled={busy} variant="outline" onClick={()=>runFolioAction('entry')}>{action.direction === 'debit' ? 'Post charge' : 'Post credit'}</Button>{selected.balanceMinor === 0 && selected.booking && ['checked_out', 'cancelled', 'no_show'].includes(selected.booking.status) ? <Button disabled={busy} variant="secondary" onClick={closeSelectedFolio}>Close settled folio</Button> : null}</div><div className="md:col-span-7 space-y-2"><Input aria-label="Credit approval ID" placeholder="Approval ID for a policy-controlled credit" value={action.approvalId} onChange={event => setAction({...action, approvalId: event.target.value})}/><p className="text-xs text-muted-foreground">Approval target: {selected.booking?.id || selected.id}. <Link href="/dashboard/platform/approvals" target="_blank" className="underline">Open approvals</Link></p></div><p className="md:col-span-6 text-xs text-muted-foreground">Amounts are entered in integer minor units. Payments create immutable payment and folio evidence; corrections are append-only. A post-stay refund reopens its folio until an authorized zero-balance reconciliation closes it again.</p></CardContent></Card>}
+      {overdue.length > 0 ? (
+        <Panel className="border-rose-500/30">
+          <PanelHeader title="Overdue checked-in stays" description="Guests past their departure date. Resolving writes off the open balance and checks the guest out; no payment is recorded." icon={AlertTriangle} />
+          <ul className="divide-y">
+            {overdue.map((booking) => (
+              <li key={booking.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                <div className="min-w-0">
+                  <p className="font-medium">{booking.guestName} <span className="font-mono text-xs font-normal text-muted-foreground">{booking.confirmationNumber}</span></p>
+                  <p className="text-xs text-muted-foreground">Was due to depart {formatDate(booking.checkOutDate)}</p>
+                </div>
+                <Button variant="outline" size="sm" className="text-rose-700 dark:text-rose-400" disabled={stale} onClick={() => openOverdueResolution(booking)}>Resolve exception</Button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
 
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
-          <Card className="h-fit">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Reservation folios</CardTitle>
-              <Button variant="ghost" size="icon" onClick={fetchFolios} disabled={loading} aria-label="Refresh folios">
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {visibleFolios.map((folio) => {
-                const balance = folio.balanceMinor;
-                return (
-                  <button
-                    key={folio.id}
-                    type="button"
-                    onClick={() => setSelectedId(folio.id)}
-                    className={`w-full border p-3 text-left transition-colors hover:bg-muted/50 ${selected?.id === folio.id ? 'border-foreground bg-muted/50' : 'border-border'}`}
-                  >
-                    <span className="flex items-center justify-between gap-3">
-                      <span className="truncate font-medium">{folio.booking?.guestName || folio.groupBlock?.name || folio.folioNumber}</span>
-                      <span className="tabular-nums">{formatMoney(balance, folio.currencyCode)}</span>
-                    </span>
-                    <span className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                      <span>{folio.booking?.confirmationNumber || folio.folioNumber}</span>
-                      <span>{folio.entries.length} entries</span>
-                    </span>
-                  </button>
-                );
-              })}
-              {!loading && visibleFolios.length === 0 && (
-                <WorkspaceEmpty title={folios.length ? 'No folios match this view' : 'No folios opened'} description={folios.length ? 'Clear the search or status filter.' : 'A folio opens through an authoritative reservation workflow; this workspace does not fabricate one.'} onClear={folios.length ? () => { setSearch(''); setStatusFilter('all'); } : undefined} />
-              )}
-            </CardContent>
-          </Card>
+      {loading && folios.length === 0 ? <WorkspaceLoading label="Loading folio ledgers" /> : (
+        <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[22rem_minmax(0,1fr)]">
+          <Panel className="lg:sticky lg:top-4">
+            <div className="border-b px-4">
+              <FilterTabs
+                label="Filter folios by status"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                tabs={[
+                  { value: 'all', label: 'All', count: folios.length },
+                  { value: 'open', label: 'Open', count: statusCount('open') },
+                  { value: 'closed', label: 'Closed', count: statusCount('closed') },
+                ]}
+              />
+            </div>
+            <PanelToolbar className="space-y-2 px-4 sm:px-4">
+              <WorkspaceControls search={search} onSearchChange={setSearch} searchLabel="Guest, confirmation or folio" searchClassName="md:max-w-none" className="md:flex-col md:items-stretch" />
+              <div className="flex items-center justify-between gap-2">
+                <WorkspaceSelect label="Sort folios" value={sort} onChange={setSort}><option value="recent">Recently opened</option><option value="balance">Largest balance</option></WorkspaceSelect>
+                <span className="text-xs tabular-nums text-muted-foreground">{workspaceResultLabel(visibleFolios.length, folios.length, 'folios')}</span>
+              </div>
+            </PanelToolbar>
+            {visibleFolios.length === 0 ? (
+              <WorkspaceEmpty
+                compact
+                icon={ReceiptText}
+                title={folios.length ? 'No folios match this view' : 'No folios opened'}
+                description={folios.length ? 'Clear the search or status filter.' : 'A folio opens when a reservation is confirmed.'}
+                onClear={folios.length ? () => { setSearch(''); setStatusFilter('all'); } : undefined}
+              />
+            ) : (
+              <ul className="max-h-[36rem] divide-y overflow-y-auto">
+                {visibleFolios.map((folio) => {
+                  const active = selected?.id === folio.id;
+                  return (
+                    <li key={folio.id}>
+                      <button
+                        type="button"
+                        onClick={() => selectFolio(folio.id)}
+                        aria-current={active ? 'true' : undefined}
+                        className={cn('relative block w-full px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', active && 'bg-muted/60 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-foreground')}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="truncate text-sm font-medium">{folio.booking?.guestName || folio.groupBlock?.name || folio.folioNumber}</span>
+                          <span className={cn('shrink-0 text-sm font-medium tabular-nums', folio.balanceMinor > 0 && 'text-amber-700 dark:text-amber-400', folio.balanceMinor < 0 && 'text-emerald-700 dark:text-emerald-400')}>{formatMoney(folio.balanceMinor, folio.currencyCode)}</span>
+                        </span>
+                        <span className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                          <span className="truncate font-mono">{folio.booking?.confirmationNumber || folio.folioNumber}</span>
+                          <span className="flex shrink-0 items-center gap-2">{folio.groupBlock ? <Tag>Group</Tag> : null}<StatusPill kind="folio" value={folio.status} /></span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Panel>
 
-          <Card className="min-w-0">
+          <div className="min-w-0 space-y-6">
             {selected && selectedTotals ? (
               <>
-                <CardHeader className="gap-4 border-b sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <CardTitle>{selected.booking?.guestName || selected.groupBlock?.name || selected.folioNumber}</CardTitle>
-                      <Badge variant="outline">{selected.status}</Badge>
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {selected.booking?.confirmationNumber} · {selected.folioNumber}
-                    </p>
-                    {selected.booking && (
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {formatDate(selected.booking.checkInDate)} – {formatDate(selected.booking.checkOutDate)}
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-left sm:text-right">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Balance</p>
-                    <p className="text-2xl font-semibold tabular-nums">{formatMoney(selectedTotals.balanceMinor, selected.currencyCode)}</p>
-                    {selected.booking && (
-                      <Button asChild variant="link" className="h-auto p-0 text-sm">
-                        <Link href={`/dashboard/bookings/${selected.booking.id}`}>Open reservation</Link>
-                      </Button>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="grid grid-cols-3 border-b px-4 py-3 text-sm md:px-6">
-                    <div><span className="block text-xs text-muted-foreground">Debits</span>{formatMoney(selectedTotals.debitMinor, selected.currencyCode)}</div>
-                    <div><span className="block text-xs text-muted-foreground">Credits</span>{formatMoney(selectedTotals.creditMinor, selected.currencyCode)}</div>
-                    <div><span className="block text-xs text-muted-foreground">Entries</span>{selected.entries.length}</div>
-                  </div>
-                  <div className="divide-y">
-                    {selected.entries.map((entry) => (
-                      <div key={entry.id} className="grid gap-2 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] md:px-6">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {entry.direction === 'debit'
-                              ? <ArrowUpRight className="h-4 w-4 text-amber-600" aria-hidden="true" />
-                              : <ArrowDownLeft className="h-4 w-4 text-emerald-600" aria-hidden="true" />}
-                            <p className="font-medium">{entry.description}</p>
-                            <Badge variant="outline">{entry.entryType.replaceAll('_', ' ')}</Badge>
-                            {entry.reversedById && <Badge variant="secondary">reversed</Badge>}
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Service {formatDate(entry.serviceDate)} · {entry.sourceType.replaceAll('_', ' ')}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2"><p className={`font-medium tabular-nums ${entry.direction === 'credit' ? 'text-emerald-700' : ''}`}>
-                          {entry.direction === 'credit' ? '−' : ''}{formatMoney(entry.amountMinor, entry.currencyCode)}
-                        </p>{!entry.reversedById && entry.sourceType !== 'reservation_snapshot' && entry.entryType !== 'transfer' && !['payment','refund','reversal'].includes(entry.entryType) && <Button size="sm" variant="ghost" onClick={()=>openReversal(entry)}>Reverse</Button>}</div>
+                <Panel>
+                  <div className="flex flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+                    <div className="min-w-0 space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="truncate text-lg font-semibold">{selected.booking?.guestName || selected.groupBlock?.name || selected.folioNumber}</h2>
+                        <StatusPill kind="folio" value={selected.status} />
+                        {selected.booking ? <StatusPill kind="booking" value={selected.booking.status} /> : null}
                       </div>
-                    ))}
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        {selected.booking ? <span className="font-mono">{selected.booking.confirmationNumber}</span> : null}
+                        <CopyId value={selected.folioNumber} label="Folio" />
+                        {selected.booking ? <span>{formatDate(selected.booking.checkInDate)} – {formatDate(selected.booking.checkOutDate)}</span> : null}
+                        {selected.booking ? <Link href={`/dashboard/bookings/${selected.booking.id}`} className="inline-flex items-center gap-1 underline-offset-2 hover:text-foreground hover:underline">Reservation<ExternalLink className="size-3" aria-hidden="true" /></Link> : null}
+                        {selected.status === 'open' && selected.balanceMinor > 0 ? <Link href={`/dashboard/platform/receivables?folioId=${encodeURIComponent(selected.id)}${selected.groupBlock && selected.settlementBookingId ? `&bookingId=${encodeURIComponent(selected.settlementBookingId)}` : ''}`} className="inline-flex items-center gap-1 underline-offset-2 hover:text-foreground hover:underline">Bill to company account<ExternalLink className="size-3" aria-hidden="true" /></Link> : null}
+                      </div>
+                    </div>
+                    <div className="sm:text-right">
+                      <p className="text-xs text-muted-foreground">Balance</p>
+                      <p className={cn('text-2xl font-semibold tracking-tight tabular-nums', selected.balanceMinor > 0 && 'text-amber-700 dark:text-amber-400')}>{formatMoney(selectedTotals.balanceMinor, selected.currencyCode)}</p>
+                    </div>
                   </div>
-                </CardContent>
+                  <div className="grid grid-cols-3 divide-x border-b text-sm">
+                    <div className="px-4 py-2.5 sm:px-5"><p className="text-xs text-muted-foreground">Charges</p><p className="font-medium tabular-nums">{formatMoney(selectedTotals.debitMinor, selected.currencyCode)}</p></div>
+                    <div className="px-4 py-2.5 sm:px-5"><p className="text-xs text-muted-foreground">Credits & payments</p><p className="font-medium tabular-nums text-emerald-700 dark:text-emerald-400">{formatMoney(selectedTotals.creditMinor, selected.currencyCode)}</p></div>
+                    <div className="px-4 py-2.5 sm:px-5"><p className="text-xs text-muted-foreground">Entries</p><p className="font-medium tabular-nums">{selected.entries.length}</p></div>
+                  </div>
+                  {selected.entries.length ? (
+                    <DataTable minWidth="min-w-[680px]">
+                      <THead>
+                        <tr><Th>Service date</Th><Th>Posting</Th><Th align="right">Charge</Th><Th align="right">Credit</Th><Th><span className="sr-only">Actions</span></Th></tr>
+                      </THead>
+                      <TBody>
+                        {selected.entries.map((entry) => {
+                          const reversible = !entry.reversedById && entry.sourceType !== 'reservation_snapshot' && entry.entryType !== 'transfer' && !['payment', 'refund', 'reversal'].includes(entry.entryType);
+                          return (
+                            <Tr key={entry.id} className={entry.reversedById ? 'text-muted-foreground' : undefined}>
+                              <Td className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(entry.serviceDate)}</Td>
+                              <Td>
+                                <div className="flex min-w-0 items-start gap-2">
+                                  {entry.direction === 'debit'
+                                    ? <ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+                                    : <ArrowDownLeft className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden="true" />}
+                                  <div className="min-w-0">
+                                    <p className={cn('font-medium', entry.reversedById && 'line-through decoration-muted-foreground/60')}>{entry.description}</p>
+                                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                                      <Tag>{humanize(entry.entryType)}</Tag>
+                                      <span>{humanize(entry.sourceType)}</span>
+                                      {entry.reversedById ? <StatusPill tone="neutral" label="Reversed" /> : null}
+                                      {entry.reversesId ? <StatusPill tone="accent" label="Correction" /> : null}
+                                    </p>
+                                  </div>
+                                </div>
+                              </Td>
+                              <Td numeric align="right">{entry.direction === 'debit' ? formatMoney(entry.amountMinor, entry.currencyCode) : ''}</Td>
+                              <Td numeric align="right" className="text-emerald-700 dark:text-emerald-400">{entry.direction === 'credit' ? `−${formatMoney(entry.amountMinor, entry.currencyCode)}` : ''}</Td>
+                              <Td align="right">{reversible && !stale ? <Button size="sm" variant="ghost" className="h-7" onClick={() => openReversal(entry)}><Undo2 aria-hidden="true" />Reverse</Button> : null}</Td>
+                            </Tr>
+                          );
+                        })}
+                      </TBody>
+                    </DataTable>
+                  ) : <WorkspaceEmpty compact icon={ReceiptText} title="No postings yet" description="Charges post as the stay is audited; payments and corrections appear here." />}
+                </Panel>
+
+                {settlementBookingId && selected.status === 'open' && !stale ? (
+                  <Panel>
+                    <PanelHeader title="Settlement & correction" description="Record payments and post charges or credits. Posted entries are never edited; corrections add a new entry." />
+                    <PanelBody className="space-y-4">
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        <Field label="Amount (minor units)" htmlFor="folio-amount" hint={amountPreview ? `= ${amountPreview}` : '100 = $1.00'}>
+                          <FieldInput id="folio-amount" aria-label="Amount in minor units" type="number" min="1" inputMode="numeric" value={action.amount} onChange={e => setAction({ ...action, amount: e.target.value })} />
+                        </Field>
+                        <Field label="Description / reason" htmlFor="folio-description" className="lg:col-span-3">
+                          <FieldInput id="folio-description" aria-label="Required description or reason" placeholder="Shown on the guest statement" value={action.description} onChange={e => setAction({ ...action, description: e.target.value })} />
+                        </Field>
+                        <Field label="Payment method" htmlFor="folio-method">
+                          <NativeSelect id="folio-method" aria-label="Payment method" value={action.method} onChange={e => setAction({ ...action, method: e.target.value })}><option value="cash">Cash</option><option value="credit_card">Credit card</option><option value="debit_card">Debit card</option><option value="bank_transfer">Bank transfer</option><option value="check">Check</option></NativeSelect>
+                        </Field>
+                        <Field label="Correction direction" htmlFor="folio-direction">
+                          <NativeSelect id="folio-direction" aria-label="Folio entry direction" value={action.direction} onChange={e => setAction({ ...action, direction: e.target.value })}><option value="debit">Charge (debit)</option><option value="credit">Credit</option></NativeSelect>
+                        </Field>
+                        <Field label="Credit approval ID" htmlFor="folio-approval" optional className="sm:col-span-2" hint={<>For policy-controlled credits. Target <CopyId value={selected.booking?.id || selected.id} className="align-middle" /></>}>
+                          <FieldInput id="folio-approval" aria-label="Credit approval ID" value={action.approvalId} onChange={event => setAction({ ...action, approvalId: event.target.value })} />
+                        </Field>
+                      </div>
+                      <FormNote>A post-stay refund reopens its folio until an authorized zero-balance reconciliation closes it again.</FormNote>
+                    </PanelBody>
+                    <div className="flex flex-col-reverse gap-2 border-t bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                      <div>{canClose ? <Button size="sm" variant="ghost" disabled={busy} onClick={closeSelectedFolio}><Lock aria-hidden="true" />Close settled folio</Button> : null}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => runFolioAction('entry')}>{action.direction === 'debit' ? 'Post charge' : 'Post credit'}</Button>
+                        <Button size="sm" disabled={busy} onClick={() => runFolioAction('payment')}>Record payment</Button>
+                      </div>
+                    </div>
+                  </Panel>
+                ) : null}
+
+                {settlementBookingId && !stale ? <SecurityAuthorizationOperations key={selected.id} bookingId={settlementBookingId} /> : null}
+                <FolioReceiptPanel key={`receipt:${selected.id}`} folioId={selected.id} ledgerRevision={`${selected.entries.length}:${selected.entries.at(-1)?.id || ''}:${selected.balanceMinor}`} />
               </>
             ) : (
-              <CardContent className="flex min-h-80 flex-col items-center justify-center text-center text-muted-foreground">
-                <ReceiptText className="mb-3 h-8 w-8" />
-                <p>Select a folio to review its ledger.</p>
-              </CardContent>
+              <Panel>
+                <WorkspaceEmpty icon={ReceiptText} title="Select a folio" description="Choose a folio from the list to review its ledger, settle it or post a correction." />
+              </Panel>
             )}
-          </Card>
+          </div>
         </div>
-      </div>
+      )}
 
       <Dialog open={Boolean(reversalEntry)} onOpenChange={(open) => { if (!open) closeRiskDialog(); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Post compensating reversal</DialogTitle><DialogDescription>The original posting remains immutable. This creates a linked compensating entry for {reversalEntry ? `${reversalEntry.description} (${formatMoney(reversalEntry.amountMinor, reversalEntry.currencyCode)})` : 'the selected entry'}.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Post compensating reversal</DialogTitle><DialogDescription>The original entry stays on the folio. This adds an equal and opposite entry for {reversalEntry ? `${reversalEntry.description} (${formatMoney(reversalEntry.amountMinor, reversalEntry.currencyCode)})` : 'the selected entry'}.</DialogDescription></DialogHeader>
           <form className="space-y-4" onSubmit={submitReversal}>
-            <div className="space-y-2"><Label htmlFor="reversal-reason">Required reversal reason</Label><Textarea id="reversal-reason" autoFocus value={riskReason} onChange={(event) => setRiskReason(event.target.value)} maxLength={500} disabled={riskBusy} required /></div>
-            <div className="space-y-2"><Label htmlFor={reversalEntry ? "reversal-approval" : "overdue-approval"}>Approval ID (when required by property policy)</Label><Input id={reversalEntry ? "reversal-approval" : "overdue-approval"} value={riskApprovalId} onChange={event => setRiskApprovalId(event.target.value)} disabled={riskBusy}/><p className="text-xs text-muted-foreground">Approval target: {overdueBooking?.id || selected?.booking?.id || selected?.id}. <Link href="/dashboard/platform/approvals" target="_blank" className="underline">Open approvals</Link></p></div>
+            <Field label="Reversal reason" htmlFor="reversal-reason"><FieldTextarea id="reversal-reason" autoFocus value={riskReason} onChange={(event) => setRiskReason(event.target.value)} maxLength={500} disabled={riskBusy} required /></Field>
+            {riskApprovalField}
             {riskError ? <p className="text-sm text-destructive" role="alert">{riskError}</p> : null}
             <DialogFooter><Button type="button" variant="outline" onClick={closeRiskDialog} disabled={riskBusy}>Cancel</Button><Button type="submit" variant="destructive" disabled={riskBusy || !riskReason.trim()}>{riskBusy ? 'Posting…' : 'Post reversal'}</Button></DialogFooter>
           </form>
@@ -410,17 +507,17 @@ export function FoliosPage() {
 
       <Dialog open={Boolean(overdueBooking)} onOpenChange={(open) => { if (!open) closeRiskDialog(); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Resolve overdue checked-in stay</DialogTitle><DialogDescription>This writes off the exact open balance and checks out {overdueBooking?.guestName || 'the selected guest'}. No payment is fabricated. The reason becomes immutable lifecycle evidence.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Resolve overdue checked-in stay</DialogTitle><DialogDescription>This writes off the exact open balance and checks out {overdueBooking?.guestName || 'the selected guest'}. No payment is recorded. The reason is kept with the folio history.</DialogDescription></DialogHeader>
           <form className="space-y-4" onSubmit={submitOverdueResolution}>
-            <div className="rounded-md bg-muted p-3 text-sm"><p className="font-medium">{overdueBooking?.confirmationNumber}</p><p className="text-muted-foreground">Due {overdueBooking?.checkOutDate?.slice(0, 10)}</p></div>
-            <div className="space-y-2"><Label htmlFor="overdue-reason">Authorized write-off reason</Label><Textarea id="overdue-reason" autoFocus value={riskReason} onChange={(event) => setRiskReason(event.target.value)} maxLength={500} disabled={riskBusy} required /></div>
-            <div className="space-y-2"><Label htmlFor={reversalEntry ? "reversal-approval" : "overdue-approval"}>Approval ID (when required by property policy)</Label><Input id={reversalEntry ? "reversal-approval" : "overdue-approval"} value={riskApprovalId} onChange={event => setRiskApprovalId(event.target.value)} disabled={riskBusy}/><p className="text-xs text-muted-foreground">Approval target: {overdueBooking?.id || selected?.booking?.id || selected?.id}. <Link href="/dashboard/platform/approvals" target="_blank" className="underline">Open approvals</Link></p></div>
+            <div className="rounded-md border bg-muted/40 p-3 text-sm"><p className="font-mono font-medium">{overdueBooking?.confirmationNumber}</p><p className="text-muted-foreground">Was due {overdueBooking?.checkOutDate ? formatDate(overdueBooking.checkOutDate) : '—'}</p></div>
+            <Field label="Authorized write-off reason" htmlFor="overdue-reason"><FieldTextarea id="overdue-reason" autoFocus value={riskReason} onChange={(event) => setRiskReason(event.target.value)} maxLength={500} disabled={riskBusy} required /></Field>
+            {riskApprovalField}
             {riskError ? <p className="text-sm text-destructive" role="alert">{riskError}</p> : null}
             <DialogFooter><Button type="button" variant="outline" onClick={closeRiskDialog} disabled={riskBusy}>Cancel</Button><Button type="submit" variant="destructive" disabled={riskBusy || !riskReason.trim()}>{riskBusy ? 'Resolving…' : 'Write off and check out'}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-    </PageContainer>
+    </PlatformPage>
   );
 }
 

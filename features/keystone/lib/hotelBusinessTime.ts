@@ -47,12 +47,20 @@ export function assertCheckInOnOpenBusinessDate(arrivalDate: string | Date, curr
   }
 }
 
+/**
+ * Check-out is due on the departure business date. A guest may also leave early on the
+ * day of their last booked night (including an arrival-day departure): that night stays
+ * charged, as the room was occupied. Further unused nights are removed first through the
+ * in-house stay change, with its waiver reason and approval rules. Returns true for an early departure.
+ */
 export function assertCheckoutDateReached(checkOutDate: string | Date, currentBusinessDate: string | Date) {
   const departureDay = businessDayKey(checkOutDate);
   const businessDay = businessDayKey(currentBusinessDate);
-  if (departureDay > businessDay) {
-    throw new Error(`Check-out cannot precede reservation departure business date ${departureDay}. For an early departure, amend the in-house stay first so future reservation snapshots are superseded or reconciled.`);
+  const lastNightDeparture = businessDayKey(new Date(new Date(currentBusinessDate).getTime() + 86_400_000));
+  if (departureDay > lastNightDeparture) {
+    throw new Error(`This guest is booked to depart on ${departureDay}. To check out early, first set New departure to ${lastNightDeparture} under Departure date and choose Reprice remaining stay (tonight stays charged; removing later nights needs a waiver reason), then check out.`);
   }
+  return departureDay > businessDay;
 }
 
 /** Resolve arrival policy once at booking. Reject nonexistent local times; repeated times use the earlier instant. */

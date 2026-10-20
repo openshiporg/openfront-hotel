@@ -44,8 +44,8 @@ export const INITIATE_BOOKING_PAYMENT_SESSION = gql`
 `;
 
 export const GET_ACTIVE_BOOKING_PAYMENT_SESSION = gql`
-  query GetActiveBookingPaymentSession($bookingId: ID!) {
-    activeBookingPaymentSession(bookingId: $bookingId) {
+  query GetActiveBookingPaymentSession($bookingId: ID!, $providerPaymentId: String) {
+    activeBookingPaymentSession(bookingId: $bookingId, providerPaymentId: $providerPaymentId) {
       id
       isSelected
       isInitiated
@@ -142,6 +142,16 @@ export const GET_AVAILABLE_ROOMS = gql`
   }
 `;
 
+// Open or sold-out per night for the stay date picker; no room counts.
+export const GET_STAY_CALENDAR = gql`
+  query GetStayCalendar($roomTypeId: ID, $fromDate: DateTime!, $toDate: DateTime!) {
+    storefrontStayCalendar(roomTypeId: $roomTypeId, fromDate: $fromDate, toDate: $toDate) {
+      date
+      available
+    }
+  }
+`;
+
 export const GET_STOREFRONT_QUOTE = gql`
   query GetStorefrontQuote(
     $roomTypeId: ID!
@@ -164,6 +174,8 @@ export const GET_STOREFRONT_QUOTE = gql`
       roomTypeId roomTypeName ratePlanId ratePlanName cancellationPolicy mealPlan
       checkInDate checkOutDate nights numberOfGuests ratePerNight roomSubtotal taxAmount feesAmount totalAmount
       roomSubtotalMinor taxAmountMinor feesAmountMinor totalAmountMinor currencyCode pricingVersion depositPercent securityDepositMinor quoteToken
+      promoCodeApplied
+      nightlyRates { date amountMinor }
     }
   }
 `;
@@ -335,6 +347,16 @@ export const GET_GUEST_BOOKING = gql`
       confirmationDeliveryStatus
       updateDeliveryStatus
       cancellationDeliveryStatus
+      changeRequest {
+        id
+        status
+        requestedCheckInDate
+        requestedCheckOutDate
+        guestMessage
+        propertyNote
+        createdAt
+        resolvedAt
+      }
       roomAssignments {
         id
         roomType {

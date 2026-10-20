@@ -1,4 +1,5 @@
 import { assertHousekeepingStaffEligible } from './housekeepingCapabilities';
+import { INSPECTION_CHECKLIST_NOTE, requiresInspectionChecklist } from './inspectionChecklist';
 import { safeRoomCondition } from '../operations/roomSafety';
 import { permissions } from '../access';
 import {
@@ -73,7 +74,7 @@ export default async function updateHousekeepingTaskStatus(
       throw new Error(`Housekeeping status cannot transition from ${task.status} to ${status}.`);
     }
 
-    if (task.taskType === 'inspection' && status === 'completed' && !normalizedNotes?.includes('Inspection: cleanliness, room safety and repair completion checked.')) throw new Error('Record the inspection checklist in the dispatch panel before completing inspection.');
+    if (requiresInspectionChecklist(task) && status === 'completed' && !normalizedNotes?.includes(INSPECTION_CHECKLIST_NOTE)) throw new Error('Confirm the inspection checklist before completing inspection.');
 
     const now = new Date();
     const nextNotes = normalizedNotes
@@ -137,5 +138,67 @@ export default async function updateHousekeepingTaskStatus(
     });
   });
 
+  return context.prisma.housekeepingTask.findUnique({ where: { id: taskId } });
+}
+
+// Tasks staff schedule by hand. Checkout and stayover cleans, inspections and maintenance are
+// created by their own lifecycle (checkout, night audit, maintenance completion).
+export const SCHEDULABLE_HOUSEKEEPING_TASK_TYPES = ['deep_clean', 'turn_down'] as const;
+
+/**
+ * Schedule a deep clean or turn-down for one room. Room-locked, idempotent and audited; at
+ * most one open task of the same type per room; an assignee must be active and qualified.
+ */
+export async function scheduleHousekeepingTask(
+  _root: unknown,
+  { roomId, taskType, priority, assignedToId, notes, idempotencyKey }: {
+    roomId: string;
+    taskType: string;
+    priority?: number | null;
+    assignedToId?: string | null;
+    notes?: string | null;
+    idempotencyKey: string;
+  },
+  context: any,
+) {
+  if (!permissions.canManageHousekeeping({ session: context.session })) {
+    throw new Error('Not authorized to schedule housekeeping tasks.');
+  }
+  const eventKey = String(idempotencyKey || '').trim();
+  if (!eventKey || eventKey.length > 200) throw new Error('A stable idempotencyKey is required.');
+  if (!(SCHEDULABLE_HOUSEKEEPING_TASK_TYPES as readonly string[]).includes(taskType)) throw new Error('Choose a deep clean or turn-down.');
+  const taskPriority = priority ?? 2;
+  if (!Number.isInteger(taskPriority) || taskPriority < 1 || taskPriority > 5) throw new Error('Priority must be from 1 (highest) to 5.');
+  const normalizedNotes = String(notes || '').trim();
+  if (normalizedNotes.length > 2_000) throw new Error('Notes must be 2000 characters or fewer.');
+  const request = { roomId, taskType, priority: taskPriority, assignedToId: assignedToId || null, notes: normalizedNotes };
+  const identity = { request, aggregateType: 'housekeeping_task', aggregateId: `room:${roomId}`, action: 'scheduled' };
+
+  let taskId = '';
+  await runSerializableTransaction(context, async (transactionContext: any) => {
+    const prisma = transactionContext.prisma;
+    await lockHotelLifecycle(prisma, eventKey);
+    await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-room:${roomId}`);
+    const replay = await findHotelLifecycleReplay(prisma, eventKey, identity);
+    if (replay) { taskId = replay.afterSnapshot.taskId; return; }
+    const room = await prisma.room.findUnique({ where: { id: roomId }, select: { id: true, floor: true } });
+    if (!room) throw new Error('Room not found.');
+    const open = await prisma.housekeepingTask.findFirst({ where: { roomId, taskType, status: { not: 'completed' } }, select: { id: true } });
+    if (open) throw new Error('This room already has an open task of this type.');
+    if (assignedToId) await assertHousekeepingStaffEligible(prisma, assignedToId, { taskType, roomId, room });
+    const created = await prisma.housekeepingTask.create({
+      data: {
+        roomId, taskType, priority: taskPriority, status: 'pending',
+        assignedToId: assignedToId || null,
+        notes: normalizedNotes ? `[${new Date().toISOString()}] ${normalizedNotes}` : '',
+      },
+    });
+    taskId = created.id;
+    await recordHotelLifecycleEvent({
+      prisma, eventKey, actorId: context.session.itemId, identity,
+      beforeSnapshot: null,
+      afterSnapshot: { taskId: created.id, roomId, taskType, priority: taskPriority, assignedToId: created.assignedToId, status: 'pending' },
+    });
+  });
   return context.prisma.housekeepingTask.findUnique({ where: { id: taskId } });
 }

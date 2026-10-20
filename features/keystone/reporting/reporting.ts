@@ -71,10 +71,13 @@ export function hotelAvailableRoomNights(type: any, inventory: any, date: Date, 
 }
 
 export function buildHotelReportingDay(input: {
-  date: Date; businessDate: Date; currencyCode: string; roomTypes: any[]; inventories: any[]; bookings: any[]; entries: any[]; closing?: boolean; outages?: RoomOutage[];
+  date: Date; businessDate: Date; currencyCode: string; roomTypes: any[]; inventories: any[]; bookings: any[]; entries: any[]; closing?: boolean; outages?: RoomOutage[]; settings?: { timeZone?: string | null } | null;
 }) {
   const { date, businessDate, currencyCode, roomTypes, inventories, bookings, entries } = input;
   const key = hotelReportingDayKey(date);
+  // Reservations made or cancelled are moments, so they count on the property's local date.
+  const timeZone = input.settings?.timeZone || 'UTC';
+  const localDayKey = (instant: string | Date) => hotelReportingDayKey(propertyCalendarDate(new Date(instant), timeZone));
   const next = new Date(date.getTime() + DAY_MS);
   const beforeClose = !input.closing && key >= hotelReportingDayKey(businessDate);
   const active = bookings.filter(booking => ACTIVE_RESERVATIONS.has(booking.status));
@@ -127,8 +130,8 @@ export function buildHotelReportingDay(input: {
       revparMinor: availableRoomNights ? Math.round(revenue.roomRevenueMinor / availableRoomNights) : 0,
       arrivals: active.filter(booking => hotelReportingDayKey(booking.checkInDate) === key).length,
       departures: active.filter(booking => hotelReportingDayKey(booking.checkOutDate) === key).length,
-      newReservations: bookings.filter(booking => hotelReportingDayKey(booking.createdAt) === key).length,
-      cancellations: bookings.filter(booking => booking.status !== 'no_show' && booking.cancelledAt && hotelReportingDayKey(booking.cancelledAt) === key).length,
+      newReservations: bookings.filter(booking => localDayKey(booking.createdAt) === key).length,
+      cancellations: bookings.filter(booking => booking.status !== 'no_show' && booking.cancelledAt && localDayKey(booking.cancelledAt) === key).length,
       noShows: bookings.filter(booking => booking.status === 'no_show' && hotelReportingDayKey(booking.checkInDate) === key).length,
     },
     roomTypes: [...typeMap.values()], channels: [...channelMap.values()],
@@ -142,7 +145,8 @@ export async function loadHotelReportingFacts(prisma: any, start: Date, end: Dat
     prisma.roomType.findMany({ orderBy: { name: 'asc' }, include: { rooms: true } }),
     prisma.roomInventory.findMany({ where: { date: { gte: start, lt: end } }, orderBy: [{ date: 'asc' }, { roomTypeId: 'asc' }], take: 20_001 }),
     prisma.booking.findMany({
-      where: { OR: [{ checkOutDate: { gt: start }, checkInDate: { lt: end } }, { createdAt: { gte: start, lt: end } }, { cancelledAt: { gte: start, lt: end } }, { folio: { entries: { some: { serviceDate: { gte: start, lt: end } } } } }] },
+      // A local day can start or end up to a day apart from UTC midnight; bucketing is local.
+      where: { OR: [{ checkOutDate: { gt: start }, checkInDate: { lt: end } }, { createdAt: { gte: new Date(start.getTime() - DAY_MS), lt: new Date(end.getTime() + DAY_MS) } }, { cancelledAt: { gte: new Date(start.getTime() - DAY_MS), lt: new Date(end.getTime() + DAY_MS) } }, { folio: { entries: { some: { serviceDate: { gte: start, lt: end } } } } }] },
       orderBy: [{ checkInDate: 'asc' }, { id: 'asc' }], take: 5_001,
       include: { roomAssignments: true, lineItems: true },
     }),

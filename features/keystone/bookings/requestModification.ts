@@ -50,8 +50,8 @@ export default async function requestBookingModification(
         existing.requestedCheckInDate?.getTime() === nextIn.getTime() &&
         existing.requestedCheckOutDate?.getTime() === nextOut.getTime() &&
         String(existing.guestMessage || '') === guestMessage
-      ) return booking;
-      throw new Error('This booking already has a pending modification request.');
+      ) return { booking, request: existing };
+      throw new Error('This reservation already has a change request waiting for the property to review.');
     }
     const createdAt = new Date();
     const request = await tx.prisma.bookingModificationRequest.create({ data: {
@@ -68,6 +68,6 @@ export default async function requestBookingModification(
     await tx.prisma.booking.update({ where: { id: bookingId }, data: {
       internalNotes: [booking.internalNotes, `Guest modification request ${request.id} is pending staff review.`].filter(Boolean).join('\n\n'),
     } });
-    return booking;
+    return { booking, request };
   }, { maxWait: 5_000, timeout: 30_000, isolationLevel: 'Serializable' });
 }

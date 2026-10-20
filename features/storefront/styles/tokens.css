@@ -1,52 +1,48 @@
-/* Hallmark · macrostructure: Split Arrival · tone: luxury · theme: custom (vibe: limestone brass editorial)
- * nav: N7 minimal split · footer: Ft5 statement · genre: editorial
- */
+/* Storefront tokens. Accent tokens are overridden per property by the
+ * storefront layout from the selected accent preset (brass by default). */
 
 :root {
-  --lodging-paper: oklch(96.5% 0.01 85);
-  --lodging-paper-2: oklch(93.5% 0.014 82);
-  --lodging-paper-3: oklch(90% 0.016 78);
-  --lodging-night: oklch(17% 0.018 75);
-  --lodging-night-soft: oklch(24% 0.02 75);
-  --lodging-ink: oklch(22% 0.02 75);
-  --lodging-ink-muted: oklch(46% 0.02 75);
-  --lodging-ink-faint: oklch(58% 0.015 78);
+  --lodging-paper: oklch(97.4% 0.007 84);
+  --lodging-paper-2: oklch(94.6% 0.011 80);
+  --lodging-paper-3: oklch(91.4% 0.014 78);
+  --lodging-card: oklch(99.3% 0.004 85);
+  --lodging-night: oklch(19.5% 0.014 62);
+  --lodging-night-soft: oklch(26% 0.016 62);
+  --lodging-ink: oklch(21.5% 0.016 62);
+  --lodging-ink-muted: oklch(44% 0.017 66);
+  --lodging-ink-faint: oklch(58% 0.014 70);
   --lodging-accent: oklch(58% 0.09 65);
   --lodging-accent-deep: oklch(44% 0.085 58);
   --lodging-accent-pale: oklch(92% 0.03 78);
-  --lodging-rule: oklch(86% 0.012 80);
-  --lodging-rule-strong: oklch(78% 0.015 78);
+  --lodging-rule: oklch(88.5% 0.011 78);
+  --lodging-rule-strong: oklch(79% 0.015 74);
   --lodging-focus: oklch(52% 0.11 62);
   --lodging-danger: oklch(48% 0.16 25);
+  --lodging-success: oklch(46% 0.09 150);
+  --lodging-warn: oklch(52% 0.11 70);
 
-  --font-display: var(--font-lodging-display);
-  --font-body: var(--font-lodging-body);
+  --sf-shadow-sm: 0 1px 2px oklch(25% 0.02 60 / 0.05), 0 2px 8px -2px oklch(25% 0.02 60 / 0.06);
+  --sf-shadow-md: 0 1px 2px oklch(25% 0.02 60 / 0.05), 0 10px 30px -12px oklch(25% 0.02 60 / 0.18);
+  --sf-shadow-lg: 0 2px 4px oklch(25% 0.02 60 / 0.04), 0 18px 48px -16px oklch(25% 0.02 60 / 0.22), 0 40px 80px -40px oklch(25% 0.02 60 / 0.25);
 
-  --space-xs: 0.25rem;
-  --space-sm: 0.5rem;
-  --space-md: 1rem;
-  --space-lg: 1.5rem;
-  --space-xl: 2.5rem;
-  --space-2xl: 4rem;
-  --space-3xl: 6rem;
+  --sf-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --sf-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --sf-fast: 160ms;
+  --sf-mid: 260ms;
+  --sf-slow: 420ms;
 
-  --text-eyebrow: 0.6875rem;
-  --text-body: 1rem;
-  --text-lead: 1.125rem;
-  --text-title: clamp(1.75rem, 3vw, 2.5rem);
-  --text-headline: clamp(2.25rem, 4.5vw, 3.75rem);
-  --text-display: clamp(2.75rem, 7vw, 5.5rem);
+  --sf-radius-xs: 6px;
+  --sf-radius-sm: 10px;
+  --sf-radius-md: 16px;
+  --sf-radius-lg: 22px;
+  --sf-radius-xl: 28px;
 
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
-  --dur-fast: 150ms;
-  --dur-mid: 280ms;
-
-  --radius-sm: 2px;
-  --radius-md: 4px;
+  --sf-header-h: 72px;
+  /* Page side gutter: 20px on phones (the Oil stay layout), growing to 48px. */
+  --sf-gutter: clamp(20px, 4.2vw, 48px);
 }
 
-html,
-body {
+/* Clip horizontal overflow on the storefront shell only. */
+.sf {
   overflow-x: clip;
 }

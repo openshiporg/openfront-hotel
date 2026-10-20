@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { Printer, ReceiptText, RefreshCw } from 'lucide-react';
 import { graphqlClient } from '@/lib/graphql-client';
 import { money } from '../lib/stay-context';
+import { Notice, Skeleton } from './ui';
 interface GuestStatement {
   managedByProperty?: boolean;
   message?: string;
@@ -26,54 +28,43 @@ export function GuestFolioPanel({ bookingId, refreshKey = 0 }: { bookingId: stri
     graphqlClient.request<{ guestFolio: GuestStatement; }>('query($bookingId:ID!){guestFolio(bookingId:$bookingId)}', { bookingId }).then(result => { if (current) setLoaded({ key, data: result.guestFolio || null, error: result.guestFolio ? '' : 'Your statement is unavailable.' }); }).catch(() => { if (current) setLoaded({ key, data: null, error: 'Your statement could not be loaded. Try again or contact the property.' }); });
     return () => { current = false; };
   }, [bookingId, key]);
-  return <section id="statement" className="border-t border-[var(--lodging-rule)] py-10 scroll-mt-28">
-    <p className="lodging-eyebrow mb-3">Your account with the house</p>
-    <h2 className="lodging-headline mb-6">{data?.documentKind || 'Stay statement'}</h2>
-    {error ? <div className="hotel-notice">
-      <p role="alert">{error}</p>
-      <button type="button" onClick={() => setAttempt(value => value + 1)} className="lodging-button-ghost mt-4">Retry statement</button>
-    </div> : !data ? <p role="status">Loading your private statement…</p> : data.managedByProperty ? <p className="lodging-lead">{data.message || 'Contact the property for your statement.'}</p> : <>
-      <p className="mb-6 text-sm">{data.folioNumber} · {data.status?.replaceAll('_', ' ')}</p>
-      <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Scrollable statement entries">
-        <table className="w-full text-left text-sm">
-          <caption className="sr-only">Recorded charges and credits in {data.currencyCode}</caption>
-          <thead>
-            <tr>
-              <th scope="col" className="p-3 pl-0">Date</th>
-              <th scope="col" className="p-3">Description</th>
-              <th scope="col" className="p-3 text-right">Charge</th>
-              <th scope="col" className="p-3 pr-0 text-right">Credit</th>
-            </tr>
-          </thead>
-          <tbody>{data.entries.map((entry, index) => <tr key={index} className="border-t border-[var(--lodging-rule)]">
-            <td className="p-3 pl-0 whitespace-nowrap">{entry.date}</td>
-            <th scope="row" className="p-3 font-normal">{entry.description}</th>
-            <td className="p-3 text-right whitespace-nowrap">{entry.direction === 'debit' ? money(entry.amountMinor, data.currencyCode) : '—'}</td>
-            <td className="p-3 pr-0 text-right whitespace-nowrap">{entry.direction === 'credit' ? money(entry.amountMinor, data.currencyCode) : '—'}</td>
-          </tr>)}</tbody>
-        </table>
-      </div>
-      {!data.entries.length && <p className="hotel-notice my-4">No statement entries have been posted yet.</p>}
-      <dl className="lodging-surface mt-6 space-y-4 p-6">
-        {data.unpostedContractMinor > 0 && <div className="flex flex-wrap justify-between gap-2">
-          <dt>Reserved nights awaiting posting</dt>
-          <dd>{money(data.unpostedContractMinor, data.currencyCode)}</dd>
-        </div>}
-        <div className="flex flex-wrap justify-between gap-2 font-medium">
-          <dt>Remaining reservation balance</dt>
-          <dd>{money(data.balanceDueMinor, data.currencyCode)}</dd>
-        </div>
-        {data.creditMinor > 0 && <div className="flex flex-wrap justify-between gap-2">
-          <dt>Account credit</dt>
-          <dd>{money(data.creditMinor, data.currencyCode)}</dd>
-        </div>}
-        {data.pendingRefundMinor > 0 && <div className="flex flex-wrap justify-between gap-2">
-          <dt>Refund awaiting settlement</dt>
-          <dd>{money(data.pendingRefundMinor, data.currencyCode)}</dd>
-        </div>}
-      </dl>
-      <p className="mt-5 text-sm leading-6 text-[var(--lodging-ink-muted)]">Credits may be payments, adjustments or billing transfers. Pending refunds are not completed refunds. Ask the property about an entry or a final receipt.</p>
-      <button type="button" className="lodging-button-ghost mt-6 print:hidden" onClick={() => window.print()}>Print reservation and statement</button>
-    </>}
+  return <section id="statement" className="sf-block" aria-labelledby="statement-title">
+    <div className="sf-block__head">
+      <p className="sf-eyebrow">Your account with the house</p>
+      <h2 id="statement-title" className="sf-h2">{data?.documentKind || 'Stay statement'}</h2>
+    </div>
+    {error ? <Notice tone="danger" role="alert">{error}<div className="sf-row"><button type="button" onClick={() => setAttempt(value => value + 1)} className="sf-btn sf-btn--ghost sf-btn--sm"><RefreshCw aria-hidden="true" />Retry statement</button></div></Notice>
+      : !data ? <div role="status" aria-label="Loading your private statement" className="sf-stack"><Skeleton height={18} width="40%" /><Skeleton height={140} radius={16} /></div>
+        : data.managedByProperty ? <Notice tone="info">{data.message || 'Contact the property for your statement.'}</Notice> : <>
+          <p className="sf-row sf-small sf-muted" style={{ gap: 8, marginBottom: 14 }}><ReceiptText aria-hidden="true" style={{ width: 16 }} />{data.folioNumber} · <span className="sf-badge">{data.status?.replaceAll('_', ' ')}</span></p>
+          <div className="sf-card" style={{ padding: '6px 20px', overflowX: 'auto' }} tabIndex={0} role="region" aria-label="Scrollable statement entries">
+            <table className="sf-table" style={{ minWidth: 520 }}>
+              <caption className="sf-sr">Recorded charges and credits in {data.currencyCode}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Date</th>
+                  <th scope="col">Description</th>
+                  <th scope="col" className="sf-r">Charge</th>
+                  <th scope="col" className="sf-r">Credit</th>
+                </tr>
+              </thead>
+              <tbody>{data.entries.map((entry, index) => <tr key={index}>
+                <td style={{ whiteSpace: 'nowrap' }} className="sf-muted">{entry.date}</td>
+                <th scope="row">{entry.description}</th>
+                <td className="sf-r">{entry.direction === 'debit' ? money(entry.amountMinor, data.currencyCode) : '—'}</td>
+                <td className="sf-r">{entry.direction === 'credit' ? money(entry.amountMinor, data.currencyCode) : '—'}</td>
+              </tr>)}</tbody>
+            </table>
+            {!data.entries.length && <p className="sf-muted sf-small" style={{ padding: '14px 0' }}>No statement entries have been posted yet.</p>}
+          </div>
+          <dl className="sf-dl sf-panel" style={{ padding: '6px 20px', marginTop: 14 }}>
+            {data.unpostedContractMinor > 0 && <div><dt>Reserved nights awaiting posting</dt><dd>{money(data.unpostedContractMinor, data.currencyCode)}</dd></div>}
+            <div><dt style={{ color: 'var(--ink)', fontWeight: 600 }}>Remaining reservation balance</dt><dd className="sf-amount" style={{ fontSize: '1.5rem' }}>{money(data.balanceDueMinor, data.currencyCode)}</dd></div>
+            {data.creditMinor > 0 && <div><dt>Account credit</dt><dd>{money(data.creditMinor, data.currencyCode)}</dd></div>}
+            {data.pendingRefundMinor > 0 && <div><dt>Refund awaiting settlement</dt><dd>{money(data.pendingRefundMinor, data.currencyCode)}</dd></div>}
+          </dl>
+          <p className="sf-fine" style={{ marginTop: 14 }}>Credits may be payments, adjustments or billing transfers. Pending refunds are not completed refunds. Ask the property about an entry or a final receipt.</p>
+          <button type="button" className="sf-btn sf-btn--ghost sf-btn--sm sf-noprint" style={{ marginTop: 16 }} onClick={() => window.print()}><Printer aria-hidden="true" />Print reservation and statement</button>
+        </>}
   </section>;
 }

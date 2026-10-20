@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
 import { HotelOutboxReceiptConflictError, persistAuthenticatedHotelOutboxReceipt } from '@/features/keystone/communications/outbox';
+import { readBoundedRequestText, RequestBodyRejectedError } from '@/features/keystone/lib/boundedRequestBody';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,19 +20,18 @@ export async function POST(request: Request) {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
     return Response.json({ accepted: false, error: 'Invalid receiver request.' }, { status: 415 });
   }
-  const declaredLength = Number(request.headers.get('content-length') || 0);
-  if (declaredLength > MAX_BODY_BYTES) {
-    return Response.json({ accepted: false, error: 'Invalid receiver request.' }, { status: 413 });
-  }
-  const body = await request.text();
-  if (!body || Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) {
-    return Response.json({ accepted: false, error: 'Invalid receiver request.' }, { status: 413 });
-  }
-
+  // Configuration is checked before any body is read.
   const expectedCredentialKeyId = process.env.HOTEL_OUTBOX_RECEIVER_CREDENTIAL_KEY_ID || '';
   const secret = process.env.HOTEL_OUTBOX_RECEIVER_SECRET || '';
   if (!expectedCredentialKeyId || !secret) {
     return Response.json({ accepted: false, error: 'Receiver unavailable.' }, { status: 503 });
+  }
+  let body: string;
+  try {
+    body = await readBoundedRequestText(request, MAX_BODY_BYTES);
+  } catch (error) {
+    const status = error instanceof RequestBodyRejectedError ? error.status : 400;
+    return Response.json({ accepted: false, error: 'Invalid receiver request.' }, { status });
   }
 
   try {

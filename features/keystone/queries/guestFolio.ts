@@ -2,6 +2,7 @@ import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
 import { calculateCollectibleBalance } from '../folios/bookingFolio';
 import { calculateFolioBalance } from '../folios/ledger';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { propertyCalendarDate } from '../lib/hotelBusinessTime';
 
 export default async function guestFolio(_root: unknown, { bookingId }: { bookingId: string }, context: any) {
   await assertGuestBookingAccess(context, bookingId);
@@ -16,10 +17,19 @@ export default async function guestFolio(_root: unknown, { bookingId }: { bookin
     const collectible = calculateCollectibleBalance(entries, [booking], intents, booking.folio.currencyCode);
     const ledger = calculateFolioBalance(entries);
     const directBilled = entries.some((entry: any) => entry.entryType === 'transfer' && entry.direction === 'credit');
+    // Ledger postings keep the property's business date. Guests see payments and
+    // refunds on the local day they happened, and nights on the night they cover.
+    const settings = await tx.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { timeZone: true } });
+    const guestDate = (entry: any) => {
+      if ((entry.sourceType === 'payment' || entry.sourceType === 'refund') && entry.postedAt) {
+        try { return propertyCalendarDate(new Date(entry.postedAt), settings?.timeZone || 'UTC').toISOString().slice(0, 10); } catch { /* fall back to the posting date */ }
+      }
+      return entry.serviceDate.toISOString().slice(0, 10);
+    };
     return { managedByProperty: false, folioNumber: booking.folio.folioNumber, currencyCode: booking.folio.currencyCode, status: booking.folio.status,
       documentKind: booking.folio.status === 'closed' && ledger.balanceMinor === 0 && collectible.balanceDueMinor === 0 && intents.length === 0 ? directBilled ? 'Final statement — direct billed' : 'Final receipt' : 'Reservation statement',
       confirmationNumber: booking.confirmationNumber, ...collectible, pendingRefundMinor: intents.reduce((sum: number, intent: any) => sum + intent.amountMinor, 0),
       unpostedContractMinor: collectible.balanceMinor - ledger.balanceMinor - intents.reduce((sum: number, intent: any) => sum + intent.amountMinor, 0),
-      entries: entries.map((entry: any) => ({ date: entry.serviceDate.toISOString().slice(0, 10), type: entry.entryType, direction: entry.direction, amountMinor: entry.amountMinor, description: entry.description })) };
+      entries: entries.map((entry: any) => ({ date: guestDate(entry), type: entry.entryType, direction: entry.direction, amountMinor: entry.amountMinor, description: entry.description })) };
   });
 }

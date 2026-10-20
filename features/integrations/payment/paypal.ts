@@ -16,10 +16,20 @@ const formatPayPalAmount = (amount: number, currency: string): string =>
     ? Math.round(amount).toString()
     : (Math.round(amount) / 100).toFixed(2);
 
-const parsePayPalAmount = (value: string, currency: string): number =>
-  NO_DIVISION_CURRENCIES.includes(currency.toUpperCase())
-    ? parseInt(value, 10)
-    : Math.round(parseFloat(value) * 100);
+/**
+ * Exact decimal to minor units: the whole string must be a plain decimal, with no more
+ * fractional digits than the currency has (trailing zeros allowed), within the safe range.
+ */
+const parsePayPalAmount = (value: string, currency: string): number => {
+  const normalized = String(value ?? '').trim();
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) throw new Error('PayPal returned an invalid decimal amount.');
+  const digits = NO_DIVISION_CURRENCIES.includes(currency.toUpperCase()) ? 0 : 2;
+  const [whole, fraction = ''] = normalized.split('.');
+  if (/[1-9]/.test(fraction.slice(digits))) throw new Error('PayPal amount has more decimal places than the currency allows.');
+  const amount = Number(`${whole}${fraction.slice(0, digits).padEnd(digits, '0')}`);
+  if (!Number.isSafeInteger(amount)) throw new Error('PayPal amount exceeds the supported range.');
+  return amount;
+};
 
 function paypalFetch(input: string, init: RequestInit = {}) {
   return fetch(input, { ...init, redirect: 'error', signal: AbortSignal.timeout(20_000) });
@@ -97,6 +107,32 @@ export async function handleWebhookFunction({ rawBody, headers, providerCredenti
   const verification = await response.json();
   if (verification.verification_status !== 'SUCCESS') {
     throw new Error('Invalid webhook signature');
+  }
+
+  // A refund issued anywhere (including the PayPal dashboard) arrives as a refund resource
+  // that points back to its capture.
+  if (event.event_type === 'PAYMENT.CAPTURE.REFUNDED') {
+    const resource = event.resource || {};
+    const captureLink = (resource.links || []).find((link: any) => link?.rel === 'up' && /\/v2\/payments\/captures\//.test(String(link.href || '')));
+    const captureId = captureLink ? decodeURIComponent(String(captureLink.href).split('/v2/payments/captures/')[1]?.split(/[/?#]/)[0] || '') : '';
+    const currencyCode = String(resource.amount?.currency_code || '').toUpperCase();
+    return {
+      isValid: true,
+      event,
+      eventId: event.id,
+      type: event.event_type,
+      resource,
+      settlement: {},
+      refund: {
+        id: String(resource.id || ''),
+        providerPaymentId: captureId,
+        amountMinor: parsePayPalAmount(resource.amount?.value, currencyCode),
+        currencyCode,
+        status: resource.status === 'COMPLETED' ? 'succeeded' : ['FAILED', 'CANCELLED'].includes(resource.status) ? 'failed' : 'pending',
+        requestKey: null,
+        data: resource,
+      },
+    };
   }
 
   const settlement = settlementFromCapture(event.resource);

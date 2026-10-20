@@ -56,6 +56,27 @@ function requiredText(value: unknown, path: string, errors: string[], max = 320)
   }
 }
 
+const MAX_MINOR_UNITS = 2_147_483_647;
+const OCCUPYING_BOOKING_STATUSES = new Set(['pending', 'confirmed', 'checked_in', 'cancellation_pending']);
+
+/** Whole cents within the stored Int32 range, or null. */
+function exactMinorUnits(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  const minor = Math.round(value * 100);
+  return Math.abs(value * 100 - minor) < 1e-6 && minor <= MAX_MINOR_UNITS ? minor : null;
+}
+
+function wholeCents(value: unknown, path: string, errors: string[]) {
+  const minor = exactMinorUnits(value);
+  if (minor === null) errors.push(`${path} must be an amount in whole cents, no more than 21474836.47.`);
+  return minor;
+}
+
+function calendarDay(value: unknown) {
+  const time = Date.parse(String(value));
+  return Number.isFinite(time) ? new Date(time).toISOString().slice(0, 10) : '';
+}
+
 function finiteNumber(value: unknown, path: string, errors: string[], options: { min?: number; integer?: boolean } = {}) {
   if (typeof value !== 'number' || !Number.isFinite(value) || (options.integer && !Number.isInteger(value)) || (options.min !== undefined && value < options.min)) {
     errors.push(`${path} must be ${options.integer ? 'an integer' : 'a finite number'}${options.min !== undefined ? ` of at least ${options.min}` : ''}.`);
@@ -112,7 +133,10 @@ export function validateHotelOnboardingData(value: unknown): HotelOnboardingVali
 
   const data = value as Record<string, any>;
   const settings = data.hotelSettings;
-  rejectUnknownKeys(settings, ['propertyName', 'tagline', 'contactEmail', 'contactPhone', 'addressLine1', 'addressLine2', 'frontDeskCopy', 'checkInTime', 'checkOutTime', 'timeZone', 'currencyCode', 'taxRateBasisPoints', 'serviceFeeMinor', 'storefrontAccentPreset', 'heroImagePath', 'heroImageAltText', 'heroImageCaption', 'amenityImagePath', 'amenityImageAltText', 'amenityImageCaption', 'locationImagePath', 'locationImageAltText', 'locationImageCaption'], 'hotelSettings', errors);
+  rejectUnknownKeys(settings, ['propertyName', 'tagline', 'contactEmail', 'contactPhone', 'addressLine1', 'addressLine2', 'frontDeskCopy', 'checkInTime', 'checkOutTime', 'timeZone', 'currencyCode', 'taxRateBasisPoints', 'serviceFeeMinor', 'storefrontAccentPreset', 'heroImagePath', 'heroImageAltText', 'heroImageCaption', 'amenityImagePath', 'amenityImageAltText', 'amenityImageCaption', 'locationImagePath', 'locationImageAltText', 'locationImageCaption', 'logoIcon', 'logoColor'], 'hotelSettings', errors);
+  // Logo: a library icon id (resolved and sanitized at setup) and a hue rotation in degrees.
+  if (settings.logoIcon !== undefined && (typeof settings.logoIcon !== 'string' || settings.logoIcon.length > 100_000)) errors.push('hotelSettings.logoIcon must be a logo library id or SVG document.');
+  if (settings.logoColor !== undefined && !Number.isFinite(Number.parseFloat(String(settings.logoColor)))) errors.push('hotelSettings.logoColor must be a hue in degrees.');
   requiredText(settings.propertyName, 'hotelSettings.propertyName', errors, 200);
   requiredText(settings.contactEmail, 'hotelSettings.contactEmail', errors, 320);
   if (typeof settings.contactEmail === 'string' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(settings.contactEmail)) errors.push('hotelSettings.contactEmail must be a valid email address.');
@@ -148,7 +172,8 @@ export function validateHotelOnboardingData(value: unknown): HotelOnboardingVali
   data.roomTypes.forEach((row: any, index: number) => {
     rejectUnknownKeys(row, ['name', 'description', 'shortDescription', 'eyebrow', 'viewDescription', 'baseRate', 'currencyCode', 'maxOccupancy', 'bedConfiguration', 'amenities', 'squareFeet', 'roomImages'], `roomTypes[${index}]`, errors);
     requiredText(row.name, `roomTypes[${index}].name`, errors, 200);
-    finiteNumber(row.baseRate, `roomTypes[${index}].baseRate`, errors, { min: 0 });
+    if (row.description !== undefined && (typeof row.description !== 'string' || row.description.length > 5_000)) errors.push(`roomTypes[${index}].description must be plain text of at most 5000 characters.`);
+    wholeCents(row.baseRate, `roomTypes[${index}].baseRate`, errors);
     finiteNumber(row.maxOccupancy, `roomTypes[${index}].maxOccupancy`, errors, { min: 1, integer: true });
     enumValue(row.bedConfiguration, `roomTypes[${index}].bedConfiguration`, BED_CONFIGURATIONS, errors);
     if (!Array.isArray(row.amenities) || row.amenities.some((amenity: unknown) => typeof amenity !== 'string' || !ALLOWED_AMENITIES.has(amenity))) errors.push(`roomTypes[${index}].amenities contains an unsupported amenity.`);
@@ -172,7 +197,7 @@ export function validateHotelOnboardingData(value: unknown): HotelOnboardingVali
     rejectUnknownKeys(row, ['key', 'name', 'description', 'roomType', 'baseRate', 'currencyCode', 'seasonalAdjustments', 'minimumStay', 'maximumStay', 'advanceBookingMin', 'advanceBookingMax', 'cancellationPolicy', 'mealPlan', 'validFrom', 'validTo', 'applicableDays', 'status', 'isPublic', 'isPromotional', 'promoCode', 'priority'], `ratePlans[${index}]`, errors);
     requiredText(row.name, `ratePlans[${index}].name`, errors, 200);
     assertReference(row.roomType, roomTypes, `ratePlans[${index}].roomType`, errors);
-    finiteNumber(row.baseRate, `ratePlans[${index}].baseRate`, errors, { min: 0 });
+    wholeCents(row.baseRate, `ratePlans[${index}].baseRate`, errors);
     finiteNumber(row.minimumStay, `ratePlans[${index}].minimumStay`, errors, { min: 1, integer: true });
     if (row.maximumStay !== undefined) finiteNumber(row.maximumStay, `ratePlans[${index}].maximumStay`, errors, { min: row.minimumStay || 1, integer: true });
     enumValue(row.cancellationPolicy, `ratePlans[${index}].cancellationPolicy`, CANCELLATION_POLICIES, errors);
@@ -211,10 +236,15 @@ export function validateHotelOnboardingData(value: unknown): HotelOnboardingVali
     enumValue(row.status, `bookings[${index}].status`, BOOKING_STATUSES, errors);
     enumValue(row.paymentStatus, `bookings[${index}].paymentStatus`, PAYMENT_STATUSES, errors);
     enumValue(row.source, `bookings[${index}].source`, BOOKING_SOURCES, errors);
-    for (const amount of ['roomRate', 'taxAmount', 'feesAmount', 'totalAmount', 'depositAmount', 'balanceDue']) finiteNumber(row[amount], `bookings[${index}].${amount}`, errors, { min: 0 });
-    if (Math.abs(Number(row.totalAmount) - Number(row.roomRate) - Number(row.taxAmount) - Number(row.feesAmount)) > 0.001) errors.push(`bookings[${index}] total does not equal room rate, tax, and fees.`);
-    if (Math.abs(Number(row.balanceDue) - (Number(row.totalAmount) - Number(row.depositAmount))) > 0.001) errors.push(`bookings[${index}] balance does not equal total less deposit.`);
+    const [room, tax, fees, total, deposit, balance] = ['roomRate', 'taxAmount', 'feesAmount', 'totalAmount', 'depositAmount', 'balanceDue']
+      .map((amount) => wholeCents(row[amount], `bookings[${index}].${amount}`, errors));
+    if (room !== null && tax !== null && fees !== null && total !== null && room + tax + fees !== total) errors.push(`bookings[${index}] total does not equal room rate, tax, and fees.`);
+    if (total !== null && deposit !== null && balance !== null && (deposit > total || total - deposit !== balance)) errors.push(`bookings[${index}] balance does not equal total less deposit.`);
+    finiteNumber(row.numberOfAdults, `bookings[${index}].numberOfAdults`, errors, { min: 1, integer: true });
+    finiteNumber(row.numberOfChildren, `bookings[${index}].numberOfChildren`, errors, { min: 0, integer: true });
     if (Number(row.numberOfGuests) !== Number(row.numberOfAdults) + Number(row.numberOfChildren)) errors.push(`bookings[${index}] guest counts are inconsistent.`);
+    const roomType = data.roomTypes.find((type: any) => type.name === row.roomType);
+    if (roomType && Number(row.numberOfGuests) > Number(roomType.maxOccupancy)) errors.push(`bookings[${index}] has more guests than ${row.roomType} sleeps.`);
   });
 
   data.bookingPayments.forEach((row: any, index: number) => {
@@ -222,7 +252,7 @@ export function validateHotelOnboardingData(value: unknown): HotelOnboardingVali
     assertReference(row.bookingKey, bookings, `bookingPayments[${index}].bookingKey`, errors);
     requiredText(row.providerCode, `bookingPayments[${index}].providerCode`, errors, 100);
     if (row.providerCode !== 'pp_manual_manual') errors.push(`bookingPayments[${index}].providerCode must use the operator-recorded demo provider.`);
-    finiteNumber(row.amount, `bookingPayments[${index}].amount`, errors, { min: 0 });
+    wholeCents(row.amount, `bookingPayments[${index}].amount`, errors);
     if (row.currency !== 'USD') errors.push(`bookingPayments[${index}].currency must be USD.`);
   });
 
@@ -269,6 +299,29 @@ export function validateHotelOnboardingData(value: unknown): HotelOnboardingVali
     if (Number(row.bookedRooms) + Number(row.blockedRooms) > Number(row.totalRooms)) errors.push(`inventory[${index}] books or blocks more rooms than exist.`);
   });
   if (data.dailyMetrics.length) errors.push('dailyMetrics is derived operational reporting and must remain empty.');
+
+  // One physical room cannot hold two stays on the same night.
+  const occupying = data.bookings.filter((row: any) => OCCUPYING_BOOKING_STATUSES.has(row.status));
+  occupying.forEach((row: any, index: number) => {
+    for (const other of occupying.slice(index + 1)) {
+      if (other.roomNumber !== row.roomNumber) continue;
+      if (calendarDay(row.checkInDate) < calendarDay(other.checkOutDate) && calendarDay(other.checkInDate) < calendarDay(row.checkOutDate)) {
+        errors.push(`Bookings ${row.key} and ${other.key} overlap in room ${row.roomNumber}.`);
+      }
+    }
+    const room = data.rooms.find((candidate: any) => candidate.roomNumber === row.roomNumber);
+    if (room?.status === 'out_of_order') errors.push(`Booking ${row.key} is assigned to room ${row.roomNumber}, which is out of order.`);
+  });
+
+  // Setup only completes for a property guests can book.
+  const sellable = data.ratePlans.some((rate: any) => {
+    if (rate.status !== 'active') return false;
+    const type = data.roomTypes.find((candidate: any) => candidate.name === rate.roomType);
+    const hasPhoto = Array.isArray(type?.roomImages) && type.roomImages.some((image: any) => typeof image?.imagePath === 'string' && image.imagePath.trim());
+    const hasRoom = data.rooms.some((room: any) => room.roomType === rate.roomType && room.status !== 'out_of_order');
+    return hasPhoto && hasRoom;
+  });
+  if (!sellable) errors.push('Add at least one room type with a photo, a room that is not out of order, and an active rate plan.');
 
   return errors.length ? { success: false, errors } : { success: true, data };
 }

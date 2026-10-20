@@ -18,8 +18,12 @@ import {
 import { assertHotelOnboardingData } from '../../platform/onboarding/lib/hotelOnboardingSchema';
 import { HOTEL_SETUP_COMPLETION_KEY, inspectHotelSetup, prepareHotelSeed } from '../../platform/onboarding/lib/hotelSeedSafety';
 import { hashLifecycleRequest } from '../lib/hotelLifecycle';
-import { lockHotelBusinessDate, propertyArrivalInstant } from '../lib/hotelBusinessTime';
+import { lockHotelBusinessDate, propertyArrivalInstant, propertyCalendarDate } from '../lib/hotelBusinessTime';
+import { LOGO_ICONS } from '../../platform/property/lib/icon-registry';
+import { normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
+import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { guestBookedStayTerms } from '../lib/storefrontBooking';
 import { encryptChannelCredentials } from '../lib/channelCredentials';
 
 export type HotelOnboardingTemplate = 'full' | 'minimal' | 'custom';
@@ -80,6 +84,26 @@ export function canonicalSeedForTemplate(template: HotelOnboardingTemplate, cust
       : rows;
   }
   return assertHotelOnboardingData(result);
+}
+
+/** Plain-text import becomes one document paragraph per blank-line-separated block. */
+function plainTextDocument(text: string) {
+  const paragraphs = String(text).split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  return (paragraphs.length ? paragraphs : ['']).map((block) => ({ type: 'paragraph', children: [{ text: block }] }));
+}
+
+/** Persist the saved logo exactly as Property settings would: a sanitized SVG plus a normalized hue. */
+function seedLogoBranding(settings: Record<string, any> | undefined) {
+  const branding: { logoIcon?: string; logoColor?: string } = {};
+  const submitted = String(settings?.logoIcon || '').trim();
+  if (submitted) {
+    const library = LOGO_ICONS.find(icon => icon.id === submitted);
+    const logoIcon = sanitizeStoreLogoSvg(library ? library.lightSvg : submitted);
+    if (!logoIcon) throw new Error('Onboarding logo must be a logo library icon or a valid, safe SVG document.');
+    branding.logoIcon = logoIcon;
+  }
+  if (settings?.logoColor !== undefined) branding.logoColor = normalizeStoreLogoColor(settings.logoColor);
+  return branding;
 }
 
 function confirmationNumber() {
@@ -152,7 +176,15 @@ async function runHotelOnboarding(
     }
     const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
     if (!clock) throw new Error('Property business date is not configured. Complete the reviewed installation before hotel setup.');
-    const seed = prepareHotelSeed(inputSeed, clock.currentBusinessDate, normalizedTemplate !== 'custom');
+    // A new store opens on today's date in its own time zone, not on the UTC day the
+    // database was migrated. inspectHotelSetup proved there are no stays, folios or audits.
+    const propertyToday = propertyCalendarDate(new Date(), String(inputSeed.hotelSettings?.timeZone || 'UTC'));
+    let businessDate = new Date(clock.currentBusinessDate);
+    if (businessDate.getTime() !== propertyToday.getTime()) {
+      await prisma.hotelBusinessDate.update({ where: { id: 1 }, data: { currentBusinessDate: propertyToday } });
+      businessDate = propertyToday;
+    }
+    const seed = prepareHotelSeed(inputSeed, businessDate, normalizedTemplate !== 'custom');
     await prisma.user.update({ where: { id: context.session.itemId }, data: { onboardingStatus: 'in_progress' } });
 
     const results: SeedResult[] = [];
@@ -161,6 +193,7 @@ async function runHotelOnboarding(
       storefrontAccentPreset: parseStorefrontAccentPreset(
         seed.hotelSettings?.storefrontAccentPreset || DEFAULT_STOREFRONT_ACCENT_PRESET,
       ),
+      ...seedLogoBranding(seed.hotelSettings),
     };
     const existingSettings = await prisma.hotelSettings.findUnique({ where: { id: 1 } });
     if (!existingSettings) {
@@ -173,6 +206,8 @@ async function runHotelOnboarding(
       results.push('skipped');
     }
     await bindSeedRecord(prisma, 'hotelSettings:the-alder-house', 'hotelSettings', '1', settings);
+    // Seed stays carry the same booked deposit terms as storefront bookings.
+    const depositPolicy = await prisma.hotelSettings.findUniqueOrThrow({ where: { id: 1 }, select: { securityDepositMinor: true, depositPercent: true } });
 
     const roomTypeIds: Record<string, string> = {};
     for (const [index, roomType] of (seed.roomTypes || []).entries()) {
@@ -181,6 +216,7 @@ async function runHotelOnboarding(
       const existing = (binding ? await prisma.roomType.findUnique({ where: { id: binding.entityId } }) : null)
         || await prisma.roomType.findUnique({ where: { name: roomType.name } });
       const data = {
+        ...(roomType.description ? { description: plainTextDocument(roomType.description) } : {}),
         shortDescription: roomType.shortDescription || roomType.description,
         eyebrow: roomType.eyebrow,
         viewDescription: roomType.viewDescription,
@@ -335,6 +371,7 @@ async function runHotelOnboarding(
             pricingVersion: SEED_VERSION,
             pricingRevision: 1,
             pricingSnapshot: {
+              securityDepositMinor: depositPolicy.securityDepositMinor, depositPercent: depositPolicy.depositPercent,
               snapshotKeyPrefix: 'v1', ratePlanId: ratePlanIds[booking.ratePlan], ratePlanName: ratePlan.name,
               cancellationPolicy: ratePlan.cancellationPolicy, mealPlan: ratePlan.mealPlan,
               arrivalInstant: propertyArrivalInstant(new Date(booking.checkInDate), seed.hotelSettings.checkInTime || '15:00', seed.hotelSettings.timeZone || 'UTC').toISOString(),
@@ -357,6 +394,9 @@ async function runHotelOnboarding(
             confirmedAt: ['confirmed', 'checked_in', 'checked_out'].includes(booking.status) ? new Date() : null,
           },
         });
+        if (!guestBookedStayTerms({ ...record, numberOfNights: nights })) {
+          throw new Error(`Booking ${booking.key} has inconsistent booked terms.`);
+        }
         await prisma.roomAssignment.create({
           data: {
             bookingId: record.id,
@@ -387,7 +427,7 @@ async function runHotelOnboarding(
       results.push(...Array(snapshotResult.created).fill('created' as const));
       results.push(...Array(snapshotResult.existing).fill('skipped' as const));
       const folioResult = await ensureBookingFolio(transactionContext, booking.id, {
-        postSnapshotEntries: booking.status === 'checked_in', serviceDate: clock.currentBusinessDate,
+        postSnapshotEntries: booking.status === 'checked_in', serviceDate: businessDate,
       });
       results.push(...Array(folioResult.created).fill('created' as const));
       results.push(...Array(folioResult.existing).fill('skipped' as const));

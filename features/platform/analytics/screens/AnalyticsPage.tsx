@@ -3,10 +3,14 @@
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
-import { ExecutiveDashboard, type OperationalReport } from '@/features/platform/analytics/components/ExecutiveDashboard';
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { useToast } from '@/components/ui/use-toast';
+import { CalendarDays, Download, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { downloadReport, ExecutiveDashboard, REPORT_PERIODS, type OperationalReport } from '@/features/platform/analytics/components/ExecutiveDashboard';
+import { toast } from 'sonner';
+import { Segmented } from '@/features/platform/components/FilterTabs';
+import { MetaItem, PlatformPage } from '@/features/platform/components/PlatformPage';
 import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';
+import { formatStay } from '@/features/platform/lib/format';
 import { getOperationalReport } from '../actions';
 
 function reportRange(period: string, businessDate: string) {
@@ -25,7 +29,6 @@ function reportRange(period: string, businessDate: string) {
 export function AnalyticsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { toast } = useToast();
   const selectedPeriod = searchParams?.get('period') || '30d';
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -49,11 +52,11 @@ export function AnalyticsPage() {
       setReport(null);
       const message = error instanceof Error ? error.message : 'Source records could not be aggregated.';
       setError(message);
-      toast({ title: 'Report unavailable', description: message, variant: 'destructive' });
+      toast.error('Report unavailable', { description: message });
     } finally {
       setLoading(false);
     }
-  }, [selectedPeriod, businessDate, toast]);
+  }, [selectedPeriod, businessDate]);
 
   React.useEffect(() => { void fetchData(); }, [fetchData]);
 
@@ -64,12 +67,20 @@ export function AnalyticsPage() {
   };
 
   return (
-    <PageContainer
-      title="Operational reports"
-      header={<div><h1 className="text-lg font-semibold md:text-2xl">Operational reports</h1><p className="text-muted-foreground">Occupancy, ADR, RevPAR, revenue, tax, payment, refund, and folio reconciliation.</p></div>}
-      breadcrumbs={[{ type: 'link' as const, label: 'Dashboard', href: '/dashboard' }, { type: 'page' as const, label: 'Reports' }]}
+    <PlatformPage
+      title="Analytics"
+      description="Occupancy, ADR, RevPAR, posted revenue, tax, payments, refunds and folio exposure — derived from source records."
+      meta={<MetaItem icon={CalendarDays}>Business date {formatStay(businessDate)}</MetaItem>}
+      actions={(
+        <>
+          <Segmented label="Reporting period" value={selectedPeriod} onChange={handlePeriodChange} options={REPORT_PERIODS.map((period) => ({ value: period.value, label: period.label }))} />
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : undefined} aria-hidden="true" />Refresh</Button>
+          <Button variant="outline" size="sm" disabled={!report} onClick={() => report && downloadReport(report)}><Download aria-hidden="true" />Export CSV</Button>
+        </>
+      )}
     >
-      <div className="w-full space-y-4 p-4 md:p-6">{error ? <WorkspaceError message={error} onRetry={fetchData} /> : null}<ExecutiveDashboard report={report} selectedPeriod={selectedPeriod} onPeriodChange={handlePeriodChange} onRefresh={fetchData} loading={loading} /></div>
-    </PageContainer>
+      {error ? <WorkspaceError message={error} onRetry={fetchData} title="Report unavailable" /> : null}
+      <ExecutiveDashboard report={report} selectedPeriod={selectedPeriod} onPeriodChange={handlePeriodChange} onRefresh={fetchData} loading={loading} />
+    </PlatformPage>
   );
 }

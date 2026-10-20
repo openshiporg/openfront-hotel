@@ -1,7 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { createPayment } from '../utils/paymentProviderAdapter';
+import { configuredSiteOrigin } from '../lib/productionConfig';
 import { getBookingCollectibleBalance } from '../folios/bookingFolio';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
-import { retireBookingPaymentSession } from '../payments/settlement';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import { assertGuestBookingAccess, canManageBookingRecords } from '../lib/guestBookingAccess';
 import {
@@ -30,7 +31,7 @@ function canonicalHttpOrigin(value: string) {
 }
 
 export function paymentRequestOrigin(context: any, env: NodeJS.ProcessEnv = process.env) {
-  const configured = String(env.NEXT_PUBLIC_SITE_URL || env.NEXTAUTH_URL || '').trim();
+  const configured = configuredSiteOrigin(env);
   if (configured) return canonicalHttpOrigin(configured);
 
   const browserOrigin = requestHeader(context, 'origin');
@@ -58,6 +59,34 @@ export function safePaymentReturnUrl(
   return url.toString();
 }
 
+const SESSION_PROJECTION = `
+  id
+  amount
+  isSelected
+  isInitiated
+  data
+  paymentProvider {
+    id
+    code
+    name
+    metadata
+  }
+`;
+// A reserved attempt whose provider call never reported back may be resumed, with the same
+// provider idempotency key, once this long has passed.
+const RESERVATION_RESUME_MS = 2 * 60_000;
+
+/**
+ * Start or resume the guest's payment for the booking's current obligation.
+ *
+ * 1. Under the booking lock, the obligation (pricing revision, amount, currency, provider) is
+ *    frozen and one payment attempt is reserved durably before any provider call; any other
+ *    selected attempt is retired, so only one attempt is ever unresolved.
+ * 2. The provider is called with the attempt's own idempotency key. If that call fails the
+ *    outcome is unknown: the attempt is kept and a later start resumes it with the same key,
+ *    never a new one.
+ * 3. The provider result is stored only by the request that still holds the reservation.
+ */
 async function initiateBookingPaymentSession(
   root: unknown,
   {
@@ -79,187 +108,131 @@ async function initiateBookingPaymentSession(
   await assertGuestBookingAccess(context, bookingId);
   assertCustomerPaymentProvider(paymentProviderCode);
   await ensureDefaultPaymentProviders(context);
+  const verifiedReturnUrl = safePaymentReturnUrl(returnUrl, context, paymentProviderCode === 'pp_paypal_paypal' ? '/paypal/return' : '/stripe/return');
+  const verifiedCancelUrl = safePaymentReturnUrl(cancelUrl, context, '/book');
+  const managesBookings = canManageBookingRecords(context);
 
-  const booking = await sudoContext.query.Booking.findOne({
-    where: { id: bookingId },
-    query: `
-      id
-      confirmationNumber
-      guestEmail
-      status
-      totalAmount
-      balanceDue
-      totalAmountMinor
-      balanceDueMinor
-      currencyCode
-      holdExpiresAt
-      paymentStatus
-      pricingRevision
-      pricingSnapshot
-      billingFolio { id }
-      paymentSessions {
-        id
-        amount
-        idempotencyKey
-        isSelected
-        isInitiated
-        paymentProvider {
-          id
-          code
-        }
-        payment {
-          id
-        }
-        data
-      }
-    `,
-  });
-
-  if (!booking) {
-    throw new Error('Booking not found');
-  }
-
-  if (booking.billingFolio?.id && !canManageBookingRecords(context)) throw new Error('The group payer manages this master folio. Contact the property for your individual balance.');
-
-  if (!PAYABLE_BOOKING_STATUSES.has(booking.status)) {
-    throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
-  }
-
-  if (booking.status === 'pending' && booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= new Date()) {
-    throw new Error('This reservation hold has expired.');
-  }
-  const collectibleMinor = (await runSerializableTransaction(context, tx => getBookingCollectibleBalance(tx, bookingId))).balanceDueMinor;
-  const amountInCents = bookingPaymentDueNow(booking, collectibleMinor);
-  if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0) {
-    throw new Error('This booking has no outstanding balance.');
-  }
-  if (amountInCents > MAX_PAYMENT_SESSION_MINOR) {
-    throw new Error('Payment session amount exceeds the PostgreSQL Int32 minor-unit limit.');
-  }
-
-  const provider = await context.prisma.paymentProvider.findUnique({ where: { code: paymentProviderCode } });
-
-  if (!provider || !isPaymentProviderConfigured(provider)) {
-    throw new Error('Payment provider is disabled or not completely configured.');
-  }
-
-  const currencyCode = String(booking.currencyCode || 'USD').toUpperCase();
-  const obligationKey = `${booking.id}:${provider.code}:v${booking.pricingRevision || 1}:${amountInCents}:${currencyCode}`;
-  const retiredAttempts = (booking.paymentSessions || []).filter((session: any) => session.idempotencyKey?.startsWith(`${obligationKey}:attempt:`) && session.data?.retiredAt).length;
-  const idempotencyKey = `${obligationKey}:attempt:${retiredAttempts}`;
-  const existingSession = booking.paymentSessions?.find(
-    (session: any) => session.idempotencyKey === idempotencyKey
-  );
-
-  if (existingSession) {
-    if (existingSession.payment?.id) {
-      throw new Error('This booking balance has already been paid.');
-    }
-
-    if (existingSession.isInitiated) {
-      throw new Error('This payment session is already being processed.');
-    }
-
-    for (const session of booking.paymentSessions || []) {
-      if (session.id !== existingSession.id && session.isSelected) {
-        await retireBookingPaymentSession(context, session.id, booking.id);
-      }
-    }
-
-    await sudoContext.query.BookingPaymentSession.updateOne({
-      where: { id: existingSession.id },
-      data: { isSelected: true },
+  const reservation = await runSerializableTransaction(context, async (tx: any) => {
+    const prisma = tx.prisma;
+    await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-booking:${bookingId}`);
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { paymentSessions: { include: { payment: { select: { id: true } }, paymentProvider: { select: { code: true } } } } },
     });
-
-    return await sudoContext.query.BookingPaymentSession.findOne({
-      where: { id: existingSession.id },
-      query: `
-        id
-        amount
-        isSelected
-        isInitiated
-        data
-        paymentProvider {
-          id
-          code
-          name
-          metadata
-        }
-      `,
-    });
-  }
-
-  const sessionData = await createPaymentAdapter({
-    provider,
-    amount: amountInCents,
-    currency: currencyCode,
-    idempotencyKey,
-    metadata: {
-      bookingId: booking.id,
-      confirmationNumber: booking.confirmationNumber,
-      guestEmail: booking.guestEmail,
-      returnUrl: safePaymentReturnUrl(
-        returnUrl,
-        context,
-        paymentProviderCode === 'pp_paypal_paypal' ? '/paypal/return' : '/stripe/return',
-      ),
-      cancelUrl: safePaymentReturnUrl(cancelUrl, context, '/book'),
-      idempotencyKey,
-    },
-  });
-
-  for (const session of booking.paymentSessions || []) {
-    if (session.isSelected) {
-      await retireBookingPaymentSession(context, session.id, booking.id);
+    if (!booking) throw new Error('Booking not found');
+    if (booking.billingFolioId && !managesBookings) throw new Error('The group payer manages this master folio. Contact the property for your individual balance.');
+    if (!PAYABLE_BOOKING_STATUSES.has(booking.status)) throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
+    if (booking.status === 'pending' && booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= new Date()) {
+      throw new Error('This reservation hold has expired.');
     }
-  }
+    const collectibleMinor = (await getBookingCollectibleBalance(tx, bookingId)).balanceDueMinor;
+    const amountInCents = bookingPaymentDueNow(booking, collectibleMinor);
+    if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0) throw new Error('This booking has no outstanding balance.');
+    if (amountInCents > MAX_PAYMENT_SESSION_MINOR) throw new Error('Payment session amount exceeds the PostgreSQL Int32 minor-unit limit.');
+    const provider = await prisma.paymentProvider.findUnique({ where: { code: paymentProviderCode } });
+    if (!provider || !isPaymentProviderConfigured(provider)) throw new Error('Payment provider is disabled or not completely configured.');
 
-  try {
-    return await sudoContext.query.BookingPaymentSession.createOne({
+    const currencyCode = String(booking.currencyCode || 'USD').toUpperCase();
+    const obligationKey = `${booking.id}:${provider.code}:v${booking.pricingRevision || 1}:${amountInCents}:${currencyCode}`;
+    const sessions = booking.paymentSessions || [];
+    const retiredAttempts = sessions.filter((session: any) => session.idempotencyKey?.startsWith(`${obligationKey}:attempt:`) && (session.data as any)?.retiredAt).length;
+    const idempotencyKey = `${obligationKey}:attempt:${retiredAttempts}`;
+    const existing = sessions.find((session: any) => session.idempotencyKey === idempotencyKey);
+    if (existing?.payment?.id) throw new Error('This booking balance has already been paid.');
+    if (existing?.isInitiated) throw new Error('This payment session is already being processed.');
+
+    // One unresolved attempt: every other selected attempt is retired here; the retirement
+    // worker cancels it with the provider, and a late capture is still recovered.
+    const now = new Date();
+    for (const session of sessions) {
+      if (session.id === existing?.id || !session.isSelected) continue;
+      const data: any = session.data || {};
+      const retirement = session.payment
+        ? { status: 'captured' }
+        : data.retirement || { status: session.paymentProvider?.code === 'pp_stripe_stripe' ? 'pending' : 'provider_expiry_required', attempts: 0 };
+      await prisma.bookingPaymentSession.update({ where: { id: session.id }, data: {
+        isSelected: false,
+        data: { ...data, ...(session.payment ? {} : { retiredAt: data.retiredAt || now.toISOString() }), retirement },
+      } });
+    }
+
+    const claimToken = randomUUID();
+    if (existing) {
+      const data: any = existing.data || {};
+      const claim = data.claim;
+      const providerRecorded = !claim || claim.status === 'created';
+      if (providerRecorded) {
+        if (!existing.isSelected) await prisma.bookingPaymentSession.update({ where: { id: existing.id }, data: { isSelected: true } });
+        return { sessionId: existing.id, needsProvider: false as const };
+      }
+      const reservedAt = Date.parse(claim.reservedAt || '');
+      if (claim.status === 'reserved' && Number.isFinite(reservedAt) && now.getTime() - reservedAt < RESERVATION_RESUME_MS) {
+        throw new Error('This payment is being prepared. Try again in a moment.');
+      }
+      await prisma.bookingPaymentSession.update({ where: { id: existing.id }, data: {
+        isSelected: true,
+        data: { ...data, claim: { ...claim, status: 'reserved', token: claimToken, reservedAt: now.toISOString(), resumedFrom: claim.status } },
+      } });
+      return { sessionId: existing.id, needsProvider: true as const, claimToken, provider, idempotencyKey, amountInCents, currencyCode, booking };
+    }
+    const created = await prisma.bookingPaymentSession.create({
       data: {
-        booking: { connect: { id: booking.id } },
-        paymentProvider: { connect: { id: provider.id } },
+        bookingId: booking.id,
+        paymentProviderId: provider.id,
         amount: amountInCents,
         isSelected: true,
         isInitiated: false,
-        data: { ...sessionData, obligation: { depositPercent: booking.pricingSnapshot?.depositPercent ?? 100, pricingRevision: booking.pricingRevision || 1, amountMinor: amountInCents, currencyCode } },
         idempotencyKey,
+        data: {
+          claim: { status: 'reserved', token: claimToken, reservedAt: now.toISOString() },
+          obligation: { depositPercent: (booking.pricingSnapshot as any)?.depositPercent ?? 100, pricingRevision: booking.pricingRevision || 1, amountMinor: amountInCents, currencyCode },
+        },
       },
-      query: `
-        id
-        amount
-        isSelected
-        isInitiated
-        data
-        paymentProvider {
-          id
-          code
-          name
-          metadata
-        }
-      `,
     });
-  } catch (error) {
-    const concurrentSession = await sudoContext.query.BookingPaymentSession.findOne({
-      where: { idempotencyKey },
-      query: `
-        id
-        amount
-        isSelected
-        isInitiated
-        data
-        paymentProvider {
-          id
-          code
-          name
-          metadata
-        }
-      `,
-    });
+    return { sessionId: created.id, needsProvider: true as const, claimToken, provider, idempotencyKey, amountInCents, currencyCode, booking };
+  });
 
-    if (concurrentSession) return concurrentSession;
-    throw error;
+  if (reservation.needsProvider) {
+    // The provider return identifies this exact attempt, so it never depends on which attempt
+    // happens to be unsettled when the guest comes back.
+    const attemptReturnUrl = new URL(verifiedReturnUrl);
+    attemptReturnUrl.searchParams.set('paymentSessionId', reservation.sessionId);
+    let sessionData: any;
+    try {
+      sessionData = await createPaymentAdapter({
+        provider: reservation.provider,
+        amount: reservation.amountInCents,
+        currency: reservation.currencyCode,
+        idempotencyKey: reservation.idempotencyKey,
+        metadata: {
+          bookingId: reservation.booking.id,
+          confirmationNumber: reservation.booking.confirmationNumber,
+          guestEmail: reservation.booking.guestEmail,
+          returnUrl: attemptReturnUrl.toString(),
+          cancelUrl: verifiedCancelUrl,
+          idempotencyKey: reservation.idempotencyKey,
+        },
+      });
+    } catch (error) {
+      await recordClaim(context, bookingId, reservation.sessionId, reservation.claimToken, { status: 'unknown', failedAt: new Date().toISOString() });
+      throw error;
+    }
+    await recordClaim(context, bookingId, reservation.sessionId, reservation.claimToken, { status: 'created', createdAt: new Date().toISOString() }, sessionData);
   }
+
+  return sudoContext.query.BookingPaymentSession.findOne({ where: { id: reservation.sessionId }, query: SESSION_PROJECTION });
+}
+
+/** Store the provider outcome only if this request still holds the attempt's reservation. */
+async function recordClaim(context: any, bookingId: string, sessionId: string, token: string, claim: Record<string, unknown>, providerData?: Record<string, unknown>) {
+  await runSerializableTransaction(context, async (tx: any) => {
+    const prisma = tx.prisma;
+    await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-booking:${bookingId}`);
+    const current = await prisma.bookingPaymentSession.findUnique({ where: { id: sessionId } });
+    const data: any = current?.data || {};
+    if (!current || data.claim?.token !== token) return;
+    await prisma.bookingPaymentSession.update({ where: { id: sessionId }, data: { data: { ...data, ...(providerData || {}), claim: { ...data.claim, ...claim } } } });
+  });
 }
 
 export default initiateBookingPaymentSession;

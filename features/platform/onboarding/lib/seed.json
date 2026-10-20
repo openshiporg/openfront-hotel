@@ -5,7 +5,7 @@
     "contactEmail": "stay@thealderhouse.example",
     "contactPhone": "+1 (212) 555-0148",
     "addressLine1": "18 Alder Street",
-    "addressLine2": "Metropolitan City",
+    "addressLine2": "New York, NY 10013",
     "frontDeskCopy": "Front desk · 24 hours",
     "checkInTime": "3:00 PM",
     "checkOutTime": "11:00 AM",
@@ -22,7 +22,9 @@
     "amenityImageCaption": "Breakfast in The Alder House lounge",
     "locationImagePath": "/images/hotel/the-alder-house-exterior-neighborhood-location.webp",
     "locationImageAltText": "Brick city hotel exterior on the tree-lined Alder Street neighborhood",
-    "locationImageCaption": "The Alder House neighborhood"
+    "locationImageCaption": "The Alder House neighborhood",
+    "logoIcon": "galileo",
+    "logoColor": "159"
   },
   "roomTypes": [
     {

@@ -38,7 +38,7 @@ export async function getListByPath(path: string) {
       fields // Return fields as a record
     }
   } catch (error) {
-    console.error('Error resolving dashboard list path')
+    console.error("Dashboard operation failed (details redacted).")
     return undefined
   }
 }

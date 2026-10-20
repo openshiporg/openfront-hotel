@@ -193,7 +193,16 @@ export async function requestBookingCancellation({
     const stayNights = Math.max(1, Math.round((booking.checkOutDate.getTime() - booking.checkInDate.getTime()) / 86_400_000));
     const bookingTotalMinor = Number(booking.totalAmountMinor || Math.round(Number(booking.totalAmount || 0) * 100));
     const firstNightMinor = Number(firstRoomNight?.totalPrice || 0) || Math.ceil(bookingTotalMinor / stayNights);
-    const cancellationTerms = abandoned ? { policy: 'flexible' as const, refundableMinor: availableCapturedMinor, cancellationFeeMinor: 0, capturedMinor: availableCapturedMinor, summary: 'Unconfirmed reservation released without a cancellation fee. Any received payment is being returned.', fullRefundDeadline: null } : calculateCancellationTerms({
+    // A channel reservation carries the channel's own terms. When none were recorded, Hotel does
+    // not invent a policy: the channel's cancellation applies without a Hotel fee or refund, and
+    // anyone else must cancel it in the channel.
+    const channelTermsUnknown = !policy && booking.source === 'ota';
+    if (channelTermsUnknown && source !== 'channel' && !abandoned) {
+      throw new Error('This channel reservation has no recorded cancellation terms. Cancel it in the booking channel.');
+    }
+    const cancellationTerms = abandoned ? { policy: 'flexible' as const, refundableMinor: availableCapturedMinor, cancellationFeeMinor: 0, capturedMinor: availableCapturedMinor, summary: 'Unconfirmed reservation released without a cancellation fee. Any received payment is being returned.', fullRefundDeadline: null }
+      : channelTermsUnknown ? { policy: 'flexible' as const, refundableMinor: 0, cancellationFeeMinor: 0, capturedMinor: availableCapturedMinor, summary: 'Cancelled by the booking channel. Any refund follows the channel’s own terms.', fullRefundDeadline: null }
+      : calculateCancellationTerms({
       policy,
       checkInDate: (booking.pricingSnapshot as any)?.arrivalInstant || booking.checkInDate,
       cancelledAt: new Date(),

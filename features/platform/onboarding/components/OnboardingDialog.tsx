@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useRouter } from 'next/navigation';
 import { AlertCircle, ArrowLeft, ArrowUpRight, Building2, CircleCheck, Loader2, Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,6 +43,9 @@ const templateIcons = {
 } as const;
 
 const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, onCompleted }) => {
+  // The shared dashboard layout only closes the dialog; refresh here so the sidebar
+  // onboarding card and dashboard counts reflect the finished setup.
+  const router = useRouter();
   const onboardingState = useOnboardingState();
   const {
     step,
@@ -80,7 +84,10 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, on
     setError,
     setIsLoading,
     resetOnboardingState,
-    onCompleted,
+    onCompleted: () => {
+      onCompleted?.();
+      router.refresh();
+    },
   });
 
   if (!isOpen) return null;
@@ -89,6 +96,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, on
     if (!open && !isLoading) {
       resetDialogState();
       onClose();
+      router.refresh();
     }
   };
 
@@ -108,7 +116,7 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, on
       >
         <DialogHeader className="mb-0 border-b px-4 py-4 sm:px-6 shrink-0">
           <DialogTitle>Hotel Setup</DialogTitle>
-          <DialogDescription>Choose a Hotel template or apply validated custom JSON, then create the linked property data in one retry-safe operation.</DialogDescription>
+          <DialogDescription>Choose a template or import your own property configuration. Setup creates your rooms, rates and property details in one step, and is safe to retry.</DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
@@ -125,8 +133,8 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, on
                       {step === 'done'
                         ? 'Your property setup is ready'
                         : selectedTemplate === 'custom'
-                          ? 'Use a custom property JSON seed'
-                          : 'Create linked PMS and booking sample data'}
+                          ? 'Import configuration (JSON)'
+                          : 'Set up rooms, rates and example stays'}
                     </p>
                   </div>
                 </div>

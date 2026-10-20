@@ -2,15 +2,22 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, ClipboardCheck, RefreshCw, Wrench } from 'lucide-react';
+import { Ban, CheckCircle2, ExternalLink, MoreHorizontal, Play, RefreshCw, ShieldCheck, UserCheck, Wrench } from 'lucide-react';
 
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { FilterTabs } from '@/features/platform/components/FilterTabs';
+import { PlatformPage } from '@/features/platform/components/PlatformPage';
+import { StatStrip } from '@/features/platform/components/Stats';
+import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
+import { Panel, PanelToolbar } from '@/features/platform/components/Surface';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
-import { applyWorkspaceView, workspaceResultLabel } from '@/features/platform/lib/workspace';
+import { formatDateTime, humanize } from '@/features/platform/lib/format';
+import { statusMeta, TONE_EDGE } from '@/features/platform/lib/status';
+import { workspaceResultLabel } from '@/features/platform/lib/workspace';
+import { usePagedList } from '@/features/platform/lib/pagedList';
 import { getMaintenanceWorkspace, updateMaintenanceStatusAction } from '../actions';
 import MaintenanceCommercialPanel from '../MaintenanceCommercialPanel';
 
@@ -36,70 +43,23 @@ interface MaintenanceRequestItem {
   createdAt?: string | null;
 }
 
-function priorityBadge(priority: string) {
-  switch (priority) {
-    case 'emergency':
-      return <Badge className="bg-red-100 text-red-700">Emergency</Badge>;
-    case 'high':
-      return <Badge className="bg-orange-100 text-orange-700">High</Badge>;
-    case 'medium':
-      return <Badge className="bg-blue-100 text-blue-700">Medium</Badge>;
-    default:
-      return <Badge variant="outline">{priority}</Badge>;
-  }
-}
-
-function statusBadge(status: string) {
-  switch (status) {
-    case 'reported':
-      return <Badge className="bg-amber-100 text-amber-700">Reported</Badge>;
-    case 'assigned':
-      return <Badge className="bg-blue-100 text-blue-700">Assigned</Badge>;
-    case 'in_progress':
-      return <Badge className="bg-purple-100 text-purple-700">In Progress</Badge>;
-    case 'completed':
-      return <Badge className="bg-green-100 text-green-700">Completed</Badge>;
-    case 'verified':
-      return <Badge className="bg-emerald-100 text-emerald-700">Verified</Badge>;
-    case 'cancelled':
-      return <Badge className="bg-gray-100 text-gray-700">Cancelled</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
-
 export function MaintenancePage() {
-  const { toast } = useToast();
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
   const [updatingId, setUpdatingId] = React.useState<string | null>(null);
-  const [requests, setRequests] = React.useState<MaintenanceRequestItem[]>([]);
+  const [searchText, setSearchText] = React.useState('');
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [sort, setSort] = React.useState('priority');
+  const [priorityFilter, setPriorityFilter] = React.useState('all');
 
-  const fetchRequests = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setRequests(await getMaintenanceWorkspace() as MaintenanceRequestItem[]);
-    } catch (error) {
-      console.error('Failed to load maintenance requests:', error);
-      const message = error instanceof Error ? error.message : 'Unable to load the bounded maintenance projection.';
-      setError(message);
-      toast({
-        title: 'Maintenance workspace unavailable',
-        description: message,
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  React.useEffect(() => {
-    fetchRequests();
-  }, [fetchRequests]);
+  React.useEffect(() => { const timer = window.setTimeout(() => setSearch(searchText.trim()), 300); return () => window.clearTimeout(timer); }, [searchText]);
+  // Search, filters and priority order run on the server over every request; pages load on demand.
+  const list = usePagedList<MaintenanceRequestItem, Record<string, number>>(async (skip) => {
+    const data = await getMaintenanceWorkspace({ search, status: statusFilter, priority: priorityFilter, sort, skip });
+    return { items: data.requests as MaintenanceRequestItem[], total: data.total, extra: data.statusCounts };
+  }, JSON.stringify({ search, statusFilter, priorityFilter, sort }));
+  const { items: requests, total, loading, error } = list;
+  const counts = list.extra || {};
+  const fetchRequests = list.reload;
 
   const updateStatus = async (requestId: string, status: string, notes: string) => {
     setUpdatingId(`${requestId}:${status}`);
@@ -107,210 +67,135 @@ export function MaintenancePage() {
       const response = await updateMaintenanceStatusAction(requestId, status, notes);
       await fetchRequests();
       if (!response.ok) {
-        toast({ title: 'Unable to update request', description: response.message, variant: 'destructive' });
+        toast.error('Unable to update request', { description: response.message });
         return;
       }
-      toast({
-        title: 'Maintenance updated',
-        description: `Request marked ${status.replace('_', ' ')}.`,
-      });
+      toast.success('Maintenance updated', { description: `Request marked ${status.replace('_', ' ')}.` });
     } catch (error) {
       console.error('Failed to update maintenance request:', error);
-      toast({
-        title: 'Unable to update request',
-        description: error instanceof Error ? error.message : 'Maintenance status could not be updated.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to update request', { description: error instanceof Error ? error.message : 'Maintenance status could not be updated.' });
     } finally {
       setUpdatingId(null);
     }
   };
 
-  const openItems = requests.filter((request) => !['completed', 'verified', 'cancelled'].includes(request.status));
-  const emergencies = requests.filter((request) => request.priority === 'emergency' && !['verified', 'cancelled'].includes(request.status));
-  const inProgress = requests.filter((request) => request.status === 'in_progress');
-  const waitingVerification = requests.filter((request) => request.status === 'completed');
-  const visibleRequests = React.useMemo(() => applyWorkspaceView(requests, {
-    search,
-    status: statusFilter,
-    statusOf: (request) => request.status,
-    searchText: (request) => [request.title, request.category, request.room?.roomNumber, request.assignedTo?.name, request.notes],
-    sortValue: (request) => sort === 'recent' ? request.createdAt || '' : maintenancePriorityOrder[request.priority] || 0,
-    direction: 'desc',
-  }), [requests, search, statusFilter, sort]);
+  const statusCount = (value: string) => Number(counts[value] || 0);
+  const openCount = statusCount('reported') + statusCount('assigned') + statusCount('in_progress');
+  const allCount = ['reported', 'assigned', 'in_progress', 'completed', 'verified', 'cancelled'].reduce((sum, value) => sum + statusCount(value), 0);
+  const visibleRequests = requests;
+  const STATUS_TABS = ['reported', 'assigned', 'in_progress', 'completed', 'verified', 'cancelled'];
 
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Maintenance' },
-  ];
-
-  const header = (
-    <div className="flex flex-col">
-      <h1 className="text-lg font-semibold md:text-2xl">Maintenance</h1>
-      <p className="text-muted-foreground">Track active property issues, outages, and repair work.</p>
-    </div>
-  );
+  const nextStep = (request: MaintenanceRequestItem) => {
+    if (request.status === 'reported') return { status: 'assigned', label: 'Accept', icon: UserCheck, note: 'Accepted from maintenance dashboard' };
+    if (request.status === 'assigned') return { status: 'in_progress', label: 'Start work', icon: Play, note: 'Work started from maintenance dashboard' };
+    if (request.status === 'in_progress') return { status: 'completed', label: 'Complete', icon: CheckCircle2, note: 'Maintenance marked complete; room sent to inspection' };
+    if (request.status === 'completed') return { status: 'verified', label: 'Return to service', icon: ShieldCheck, note: 'Verified and returned to service' };
+    return null;
+  };
 
   return (
-    <PageContainer title="Maintenance" header={header} breadcrumbs={breadcrumbs}>
-      <div className="space-y-6 p-4 md:p-6">
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Open Requests</p>
-                  <p className="text-2xl font-semibold">{openItems.length}</p>
-                </div>
-                <Wrench className="h-6 w-6 text-blue-500" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Emergency</p>
-                  <p className="text-2xl font-semibold">{emergencies.length}</p>
-                </div>
-                <AlertTriangle className="h-6 w-6 text-rose-500" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">In Progress</p>
-                  <p className="text-2xl font-semibold">{inProgress.length}</p>
-                </div>
-                <RefreshCw className="h-6 w-6 text-amber-500" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Needs Verification</p>
-                  <p className="text-2xl font-semibold">{waitingVerification.length}</p>
-                </div>
-                <ClipboardCheck className="h-6 w-6 text-emerald-500" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+    <PlatformPage
+      title="Maintenance"
+      description="Property issues from report to repair to a separate return-to-service verification."
+      actions={(
+        <>
+          <Button variant="outline" size="sm" onClick={fetchRequests} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : undefined} aria-hidden="true" />Refresh</Button>
+          <Button size="sm" asChild><Link href="/dashboard/platform/housekeeping"><Wrench aria-hidden="true" />Report from room board</Link></Button>
+        </>
+      )}
+    >
+      <StatStrip
+        loading={loading && !requests.length}
+        items={[
+          { label: 'Open', value: openCount, tone: 'info', hint: 'Reported, assigned or in progress' },
+          { label: 'Emergency', value: statusCount('emergencyOpen'), tone: statusCount('emergencyOpen') ? 'danger' : 'neutral', hint: 'Not yet verified', onSelect: () => setPriorityFilter(priorityFilter === 'emergency' ? 'all' : 'emergency'), active: priorityFilter === 'emergency' },
+          { label: 'In progress', value: statusCount('in_progress'), tone: 'progress', hint: 'Work underway', onSelect: () => setStatusFilter(statusFilter === 'in_progress' ? 'all' : 'in_progress'), active: statusFilter === 'in_progress' },
+          { label: 'Needs verification', value: statusCount('completed'), tone: 'accent', hint: 'Ready to return to service', onSelect: () => setStatusFilter(statusFilter === 'completed' ? 'all' : 'completed'), active: statusFilter === 'completed' },
+        ]}
+      />
 
-        <WorkspaceControls search={search} onSearchChange={setSearch} searchLabel="Search issue, room, category, assignee, or note" resultLabel={workspaceResultLabel(visibleRequests.length, requests.length, 'requests')}>
-          <WorkspaceSelect label="Filter maintenance status" value={statusFilter} onChange={setStatusFilter}><option value="all">All statuses</option><option value="reported">Reported</option><option value="assigned">Assigned</option><option value="in_progress">In progress</option><option value="completed">Needs verification</option><option value="verified">Verified</option><option value="cancelled">Cancelled</option></WorkspaceSelect>
-          <WorkspaceSelect label="Sort maintenance requests" value={sort} onChange={setSort}><option value="priority">Priority</option><option value="recent">Most recent</option></WorkspaceSelect>
-        </WorkspaceControls>
-
-        {error ? <WorkspaceError message={error} onRetry={fetchRequests} /> : null}
-        {loading && requests.length === 0 ? <WorkspaceLoading label="Loading maintenance queue" /> : null}
-
-        {!error && !(loading && requests.length === 0) && <Card>
-          <CardHeader data-qa-layout="operator-card-header" className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle>Maintenance Queue</CardTitle>
-            <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
-              <Button variant="outline" size="sm" onClick={fetchRequests} disabled={loading}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh
-              </Button>
-              <Button asChild size="sm">
-                <Link href="/dashboard/platform/rooms">Report from rooms</Link>
-              </Button>
+      {error && !requests.length ? <WorkspaceError message={error} onRetry={fetchRequests} title="Maintenance workspace unavailable" /> : loading && requests.length === 0 ? <WorkspaceLoading label="Loading maintenance queue" /> : (
+        <Panel>
+          <div className="border-b px-4 sm:px-5">
+            <FilterTabs
+              label="Filter maintenance requests"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              tabs={[{ value: 'all', label: 'All', count: allCount }, ...STATUS_TABS.map((value) => ({ value, label: statusMeta('maintenance', value).label, count: statusCount(value), tone: statusMeta('maintenance', value).tone }))]}
+            />
+          </div>
+          <PanelToolbar>
+            <WorkspaceControls search={searchText} onSearchChange={setSearchText} searchLabel="Search issue, room, category, assignee or note" resultLabel={loading ? 'Searching…' : workspaceResultLabel(requests.length, total, 'requests')}>
+              <WorkspaceSelect label="Filter by priority" value={priorityFilter} onChange={setPriorityFilter}><option value="all">All priorities</option>{Object.keys(maintenancePriorityOrder).map((value) => <option key={value} value={value}>{statusMeta('priority', value).label}</option>)}</WorkspaceSelect>
+              <WorkspaceSelect label="Sort maintenance requests" value={sort} onChange={setSort}><option value="priority">Sort: priority</option><option value="recent">Sort: most recent</option></WorkspaceSelect>
+            </WorkspaceControls>
+          </PanelToolbar>
+          {visibleRequests.length === 0 ? (
+            <WorkspaceEmpty icon={Wrench} title={search || statusFilter !== 'all' || priorityFilter !== 'all' ? 'No requests match this view' : 'No maintenance issues reported'} description={search || statusFilter !== 'all' || priorityFilter !== 'all' ? 'Clear the search or filters.' : 'Reported room issues enter this queue for triage, repair and return-to-service verification.'} onClear={search || statusFilter !== 'all' || priorityFilter !== 'all' ? () => { setSearchText(''); setStatusFilter('all'); setPriorityFilter('all'); } : undefined} />
+          ) : (
+            <ul className="divide-y">
+              {visibleRequests.map((request) => {
+                const step = nextStep(request);
+                const priorityTone = statusMeta('priority', request.priority).tone;
+                const closed = ['verified', 'cancelled'].includes(request.status);
+                return (
+                  <li key={request.id} className={cn('border-l-[3px] px-4 py-4 sm:px-5', TONE_EDGE[priorityTone], closed && 'opacity-75')}>
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium">{request.title}</p>
+                          <StatusPill kind="priority" value={request.priority} />
+                          <StatusPill kind="maintenance" value={request.status} />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">{request.room?.roomNumber ? `Room ${request.room.roomNumber}` : 'No room'}</span>
+                          {request.room?.status ? <StatusPill kind="room" value={request.room.status} /> : null}
+                          <Tag>{humanize(request.category)}</Tag>
+                          <span>{request.assignedTo?.name ? `Assigned to ${request.assignedTo.name}` : 'Unassigned'}</span>
+                          {request.createdAt ? <span>Reported {formatDateTime(request.createdAt)}</span> : null}
+                          {request.completedAt ? <span>Completed {formatDateTime(request.completedAt)}</span> : null}
+                        </div>
+                        {request.notes ? <p className="max-w-3xl whitespace-pre-line text-sm text-muted-foreground">{request.notes}</p> : null}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {step ? (
+                          <Button size="sm" variant={step.status === 'verified' ? 'default' : 'outline'} disabled={updatingId === `${request.id}:${step.status}`} onClick={() => updateStatus(request.id, step.status, step.note)}>
+                            <step.icon aria-hidden="true" />{step.label}
+                          </Button>
+                        ) : null}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild><Button size="icon" variant="ghost" className="size-8" aria-label={`More actions for ${request.title}`}><MoreHorizontal aria-hidden="true" /></Button></DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-52 [&_svg]:size-4">
+                            {request.status === 'reported' ? (
+                              <DropdownMenuItem disabled={updatingId === `${request.id}:in_progress`} onSelect={() => updateStatus(request.id, 'in_progress', 'Work started from maintenance dashboard')}><Play aria-hidden="true" />Start work now</DropdownMenuItem>
+                            ) : null}
+                            <DropdownMenuItem asChild><Link href={`/dashboard/maintenance-requests/${request.id}`}><ExternalLink aria-hidden="true" />Request record</Link></DropdownMenuItem>
+                            {!['completed', 'verified', 'cancelled'].includes(request.status) ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem disabled={updatingId === `${request.id}:cancelled`} className="text-rose-700 focus:text-rose-700 dark:text-rose-400" onSelect={() => updateStatus(request.id, 'cancelled', 'Cancelled from maintenance dashboard')}><Ban aria-hidden="true" />Cancel request</DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </div>
+                    <div className="mt-3"><MaintenanceCommercialPanel requestId={request.id} /></div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {error && requests.length ? <div className="border-t p-4"><WorkspaceError message={error} onRetry={fetchRequests} title="Maintenance could not be refreshed" /></div> : null}
+          {list.hasMore ? (
+            <div className="flex items-center justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground">
+              <span role="status">Showing {requests.length} of {total} requests</span>
+              <Button size="sm" variant="outline" disabled={list.loadingMore} onClick={() => void list.loadMore()}>{list.loadingMore ? 'Loading…' : 'Load more'}</Button>
             </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {visibleRequests.map((request) => (
-              <div key={request.id} className="flex flex-col gap-4 rounded-lg border p-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-medium">{request.title}</p>
-                    {priorityBadge(request.priority)}
-                    {statusBadge(request.status)}
-                    {request.room?.status && <Badge variant="outline">Room {request.room.status.replace('_', ' ')}</Badge>}
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Room {request.room?.roomNumber || 'Unassigned'} • {request.category}
-                    {request.createdAt ? ` • Reported ${new Date(request.createdAt).toLocaleString()}` : ''}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Assigned to {request.assignedTo?.name || 'Unassigned'}
-                    {request.completedAt ? ` • Completed ${new Date(request.completedAt).toLocaleString()}` : ''}
-                  </p>
-                  {request.notes && (
-                    <p className="max-w-3xl whitespace-pre-line text-sm text-muted-foreground">{request.notes}</p>
-                  )}
-                  <MaintenanceCommercialPanel requestId={request.id} />
-                </div>
-
-                <div className="flex flex-wrap gap-2 lg:justify-end">
-                  {request.status === 'reported' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={updatingId === `${request.id}:assigned`}
-                      onClick={() => updateStatus(request.id, 'assigned', 'Accepted from maintenance dashboard')}
-                    >
-                      Assign
-                    </Button>
-                  )}
-                  {['reported', 'assigned'].includes(request.status) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={updatingId === `${request.id}:in_progress`}
-                      onClick={() => updateStatus(request.id, 'in_progress', 'Work started from maintenance dashboard')}
-                    >
-                      Start Work
-                    </Button>
-                  )}
-                  {request.status === 'in_progress' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={updatingId === `${request.id}:completed`}
-                      onClick={() => updateStatus(request.id, 'completed', 'Maintenance marked complete; room sent to inspection')}
-                    >
-                      <CheckCircle2 className="mr-2 h-4 w-4" />
-                      Complete
-                    </Button>
-                  )}
-                  {request.status === 'completed' && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={updatingId === `${request.id}:verified`}
-                      onClick={() => updateStatus(request.id, 'verified', 'Verified and returned to service')}
-                    >
-                      Return to Service
-                    </Button>
-                  )}
-                  {!['completed', 'verified', 'cancelled'].includes(request.status) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={updatingId === `${request.id}:cancelled`}
-                      onClick={() => updateStatus(request.id, 'cancelled', 'Cancelled from maintenance dashboard')}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                  <Button asChild size="sm" variant="outline">
-                    <Link href={`/dashboard/maintenance-requests/${request.id}`}>Details</Link>
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {!loading && visibleRequests.length === 0 && (
-              <WorkspaceEmpty title={requests.length ? 'No requests match this view' : 'No maintenance issues reported'} description={requests.length ? 'Clear the search or status filter.' : 'Reported room issues will enter this queue for triage, repair, and separate return-to-service verification.'} onClear={requests.length ? () => { setSearch(''); setStatusFilter('all'); } : undefined} />
-            )}
-          </CardContent>
-        </Card>}
-      </div>
-    </PageContainer>
+          ) : null}
+        </Panel>
+      )}
+    </PlatformPage>
   );
 }
 

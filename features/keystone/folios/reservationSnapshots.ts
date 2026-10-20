@@ -212,11 +212,21 @@ export async function ensureReservationSnapshots(context: any, bookingId: string
   const roomType = assignment?.roomType;
   if (!roomType) throw new Error('Booking must have a room type before snapshots can be created.');
   const primaryImage = roomType.roomImages?.find((image: any) => image.isPrimary) || roomType.roomImages?.[0];
-  const ratePlan = await getRatePlanSnapshot(context, booking.ratePlan?.id);
+  const currentRatePlan = await getRatePlanSnapshot(context, booking.ratePlan?.id);
   const roomTotalCents = Number.isSafeInteger(booking.roomRateMinor) ? booking.roomRateMinor : toMinorUnits(booking.roomRate);
   const taxTotalCents = Number.isSafeInteger(booking.taxAmountMinor) ? booking.taxAmountMinor : toMinorUnits(booking.taxAmount);
   const feesTotalCents = Number.isSafeInteger(booking.feesAmountMinor) ? booking.feesAmountMinor : toMinorUnits(booking.feesAmount);
   const pricingSnapshot = booking.pricingSnapshot && typeof booking.pricingSnapshot === 'object' ? booking.pricingSnapshot : {};
+  // Line snapshots carry the booked contract: policy, meal plan and rate name come from the
+  // reservation's own pricing snapshot. The live rate plan is only a fallback for older
+  // reservations that never recorded them.
+  const ratePlan = (currentRatePlan || pricingSnapshot.ratePlanId) ? {
+    ...(currentRatePlan || {}),
+    id: pricingSnapshot.ratePlanId || currentRatePlan?.id,
+    name: pricingSnapshot.ratePlanName || currentRatePlan?.name,
+    cancellationPolicy: pricingSnapshot.cancellationPolicy || currentRatePlan?.cancellationPolicy,
+    mealPlan: pricingSnapshot.mealPlan || currentRatePlan?.mealPlan,
+  } : null;
   const nightlyRoomAmounts = Array.isArray(pricingSnapshot.nightlyRates)
     ? pricingSnapshot.nightlyRates.map((night: any) => Number(night.amountMinor))
     : null;
@@ -244,12 +254,19 @@ export async function ensureReservationSnapshots(context: any, bookingId: string
     snapshotKeyPrefix: typeof pricingSnapshot.snapshotKeyPrefix === 'string' ? pricingSnapshot.snapshotKeyPrefix : null,
   });
 
+  // An in-house amendment keeps the nights before `preservesBefore` (and the stay fee) as
+  // earlier-revision lines. Repair only the current revision's open and future lines, so the
+  // preserved history is never copied under the new revision prefix.
+  const preservesBefore = typeof pricingSnapshot.preservesBefore === 'string' ? new Date(pricingSnapshot.preservesBefore) : null;
+  const revisionLines = preservesBefore && !Number.isNaN(preservesBefore.getTime())
+    ? lines.filter((line) => new Date(line.date) >= preservesBefore)
+    : lines;
   const existing = await sudo.query.ReservationLineItem.findMany({
     where: { reservation: { id: { equals: bookingId } }, snapshotStatus: { equals: 'active' } },
     query: 'id snapshotKey',
   });
   const existingKeys = new Set(existing.map((line: any) => line.snapshotKey).filter(Boolean));
-  const missing = lines.filter((line) => !existingKeys.has(line.snapshotKey));
+  const missing = revisionLines.filter((line) => !existingKeys.has(line.snapshotKey));
   for (const line of missing) {
     await sudo.query.ReservationLineItem.createOne({ data: line });
   }
@@ -257,7 +274,7 @@ export async function ensureReservationSnapshots(context: any, bookingId: string
   return {
     bookingId,
     created: missing.length,
-    existing: lines.length - missing.length,
-    total: lines.length,
+    existing: revisionLines.length - missing.length,
+    total: revisionLines.length,
   };
 }

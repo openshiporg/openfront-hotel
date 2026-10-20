@@ -17,18 +17,33 @@ const LEGACY_FUNCTION_FIELDS = {
   handleWebhookFunction: 'static-registry',
 };
 
-async function ensureProvider(context: any, code: string, data: Record<string, any>) {
+async function findProvider(context: any, code: string) {
   const existing = await context.sudo().query.PaymentProvider.findMany({
     where: { code: { equals: code } },
     query: 'id name code isInstalled metadata',
     take: 1,
   });
-  if (existing[0]) return existing[0] as ProviderRecord;
+  return (existing[0] as ProviderRecord | undefined) || null;
+}
 
-  return context.sudo().query.PaymentProvider.createOne({
-    data: { ...data, ...LEGACY_FUNCTION_FIELDS, credentials: {} },
-    query: 'id name code isInstalled metadata',
-  }) as Promise<ProviderRecord>;
+/**
+ * Register a default provider once. Two first requests can both see an empty table; the loser
+ * of the unique-code insert reads the winner's row instead of failing, and an existing row
+ * (with its credentials and settings) is never overwritten.
+ */
+async function ensureProvider(context: any, code: string, data: Record<string, any>) {
+  const existing = await findProvider(context, code);
+  if (existing) return existing;
+  try {
+    return await context.sudo().query.PaymentProvider.createOne({
+      data: { ...data, ...LEGACY_FUNCTION_FIELDS, credentials: {} },
+      query: 'id name code isInstalled metadata',
+    }) as ProviderRecord;
+  } catch (error) {
+    const winner = await findProvider(context, code);
+    if (winner) return winner;
+    throw error;
+  }
 }
 
 export async function ensureDefaultPaymentProviders(context: any) {

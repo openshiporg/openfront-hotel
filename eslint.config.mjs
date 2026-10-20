@@ -1,31 +1,45 @@
-import nextConfig from 'eslint-config-next/core-web-vitals';
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
 
-export default [
-  ...nextConfig,
+export default defineConfig([
+  ...nextVitals,
+  ...nextTs,
   {
-    ignores: [
-      '.next/**',
-      '.keystone/**',
-      'node_modules/**',
-      'public/**',
-      '.runtime/**',
-      'tsconfig.tsbuildinfo',
-    ],
-  },
-  {
-    // These are retained NKS/Keystone UI dependencies. Keep ownership with the
-    // upstream surface instead of rewriting framework internals in the vertical.
-    files: ['features/dashboard/**/*.{js,jsx,ts,tsx}', 'components/ui/**/*.{js,jsx,ts,tsx}'],
+    // NKS carries inherited dynamic dashboard/storefront surfaces and predates
+    // the React Compiler lint rules bundled with Next 16. Keep lint executable
+    // and visible without treating that inherited debt as a release blocker.
     rules: {
-      'react-hooks/immutability': 'off',
-      'react-hooks/preserve-manual-memoization': 'off',
-      'react-hooks/purity': 'off',
-      'react-hooks/refs': 'off',
-      'react-hooks/rules-of-hooks': 'off',
-      'react-hooks/set-state-in-effect': 'off',
-      'react-hooks/static-components': 'off',
-      'react/no-children-prop': 'off',
-      'react/no-unescaped-entities': 'off',
+      "@next/next/no-img-element": "warn",
+      "@typescript-eslint/ban-ts-comment": "warn",
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-non-null-asserted-optional-chain": "warn",
+      "@typescript-eslint/no-require-imports": "warn",
+      "@typescript-eslint/no-unused-expressions": "warn",
+      "@typescript-eslint/no-unused-vars": "warn",
+      "jsx-a11y/alt-text": "warn",
+      "prefer-const": "warn",
+      "react-hooks/error-boundaries": "warn",
+      "react-hooks/exhaustive-deps": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/incompatible-library": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/rules-of-hooks": "warn",
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/static-components": "warn",
+      "react/no-children-prop": "warn",
+      "react/no-unescaped-entities": "warn",
     },
   },
-];
+  globalIgnores([
+    ".next/**",
+    ".keystone/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    // Local acceptance evidence (gitignored); not application source.
+    ".runtime/**",
+  ]),
+]);

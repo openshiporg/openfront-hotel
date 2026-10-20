@@ -1,27 +1,10 @@
-import { safeGraphQLError, safeGraphQLLog } from './safeGraphQLError';
-import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
-
-const boundedGraphqlFetch = createBoundedGraphqlFetch(30_000);
-
-export function createDashboardGraphQLClient(
-  endpoint: string,
-  headers: Record<string, string>,
-  timeoutMs = 30_000,
-  fetcher: typeof fetch = fetch,
-): GraphQLClient {
-  return new GraphQLClient(endpoint, {
-    credentials: 'include',
-    headers,
-    fetch: createBoundedGraphqlFetch(timeoutMs, fetcher),
-  });
-}
-
 /**
  * GraphQL utilities for data fetching with SWR
  */
 
 import { getAuthHeaders } from '@/features/dashboard/lib/cookies';
-import { GraphQLClient, ClientError } from 'graphql-request';
+import { GraphQLClient } from 'graphql-request';
+import { PUBLIC_REQUEST_ERROR, safeErrorSummary } from './security';
 import { getGraphQLEndpoint } from '@/features/dashboard/lib/getBaseUrl';
 
 // Define response type for keystoneClient
@@ -35,23 +18,26 @@ export type KeystoneResponse<T = any> =
 async function createGraphQLClient(): Promise<GraphQLClient> {
   const endpoint = await getGraphQLEndpoint();
   const authHeaders = await getAuthHeaders();
-  return createDashboardGraphQLClient(endpoint, authHeaders || {}, 30_000);
+  return new GraphQLClient(endpoint, {
+    credentials: 'include',
+    redirect: 'error',
+    headers: authHeaders || {},
+  });
 }
-
-/**
- * Format GraphQL error messages in a more readable way
- */
 
 /**
  * Fetch data from the GraphQL API
  * Automatically handles file uploads by detecting File/Blob objects in variables
  * @param query GraphQL query or mutation
  * @param variables Variables for the query
+ * @param cacheOptions Optional cache configuration for the fetch request
  * @returns Structured response with success/error information
  */
 export async function keystoneClient<T = any>(
   query: string,
   variables: Record<string, unknown> = {},
+  // Allow passing standard RequestInit options, including 'cache'
+  requestOptions?: RequestInit
 ): Promise<KeystoneResponse<T>> {
   try {
     // Check if we have any file uploads in the variables
@@ -74,21 +60,8 @@ export async function keystoneClient<T = any>(
     };
 
   } catch (error) {
-    console.error("GraphQL request failed:", safeGraphQLLog(error));
-
-    if (error instanceof ClientError) {
-      const { message, errors } = safeGraphQLError(error);
-      return {
-        success: false,
-        error: message,
-        errors
-      };
-    }
-
-    return {
-      success: false,
-      error: safeGraphQLError(error).message
-    };
+    console.error("Error fetching GraphQL data:", safeErrorSummary(error));
+    return { success: false, error: PUBLIC_REQUEST_ERROR };
   }
 }
 
@@ -142,28 +115,26 @@ async function _fetchGraphQLWithFiles(
     }
 
     // Send the multipart request
-    const response = await boundedGraphqlFetch(endpoint, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers,
       credentials: "include",
+      redirect: "error",
       body: formData,
     });
 
     if (!response.ok) {
-      console.error('GraphQL upload request failed:', { status: response.status, errorCount: 0 });
       return {
         success: false,
-        error: 'Request could not be completed. Check the affected record and operation status before taking further action, or contact the property administrator.'
+        error: PUBLIC_REQUEST_ERROR
       };
     }
 
     const json = await response.json();
 
     if (json.errors) {
-      const failure = { response: { status: response.status, errors: json.errors } };
-      console.error('GraphQL upload request failed:', safeGraphQLLog(failure));
-      const safe = safeGraphQLError(failure);
-      return { success: false, error: safe.message, errors: safe.errors };
+      console.error("GraphQL Errors:", safeErrorSummary({ response: { errors: json.errors } }));
+      return { success: false, error: PUBLIC_REQUEST_ERROR };
     }
 
     return {
@@ -171,11 +142,8 @@ async function _fetchGraphQLWithFiles(
       data: json.data
     };
   } catch (error) {
-    console.error("GraphQL upload request failed:", safeGraphQLLog(error));
-    return {
-      success: false,
-      error: safeGraphQLError(error).message
-    };
+    console.error("Error uploading files:", safeErrorSummary(error));
+    return { success: false, error: PUBLIC_REQUEST_ERROR };
   }
 }
 

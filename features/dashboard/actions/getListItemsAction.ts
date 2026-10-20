@@ -5,7 +5,6 @@
 'use server'
 
 import { keystoneClient } from '../lib/keystoneClient'
-import { safeGraphQLError, safeGraphQLLog } from '../lib/safeGraphQLError'
 import { getList } from './getList'
 import { getFieldTypeFromViewsIndex } from '../views/getFieldTypeFromViewsIndex'
 
@@ -19,6 +18,13 @@ interface ListItemsVariables extends Record<string, unknown> {
 interface ListItemsResponse {
   items: any[]
   count: number
+}
+
+interface CacheOptions {
+  next?: {
+    tags?: string[]
+    revalidate?: number
+  }
 }
 
 // Server-side GraphQL selections for different field types - copied from getItemAction.ts
@@ -63,7 +69,7 @@ function getFieldGraphQLSelection(field: any): string {
         return selectionFn(field.path, field.fieldMeta)
       }
     } catch (error) {
-      console.warn(`Could not get field type for viewsIndex ${field.viewsIndex}`)
+      console.warn("Dashboard operation failed (details redacted).")
     }
   }
   
@@ -74,7 +80,8 @@ function getFieldGraphQLSelection(field: any): string {
 export async function getListItemsAction(
   listKey: string,
   variables: ListItemsVariables,
-  selectedFields: string[] | string = ['id']
+  selectedFields: string[] | string = ['id'],
+  cacheOptions?: CacheOptions
 ): Promise<{ success: true; data: ListItemsResponse } | { success: false; error: string }> {
   try {
     // Get list metadata by KEY (not path)
@@ -125,11 +132,11 @@ export async function getListItemsAction(
     `
     
     // Execute the query
-    const response = await keystoneClient(query, variables)
+    const response = await keystoneClient(query, variables, cacheOptions)
     
     if (!response.success) {
-      console.error('GraphQL query failed:', safeGraphQLLog(response.error))
-      return { success: false, error: safeGraphQLError(response.error).message }
+      console.error(`❌ GraphQL query failed:`, response.error)
+      return { success: false, error: response.error }
     }
     
     return {
@@ -141,10 +148,10 @@ export async function getListItemsAction(
     }
     
   } catch (error) {
-    console.error(`Error fetching list items for ${listKey}:`, safeGraphQLLog(error))
-    return {
-      success: false,
-      error: safeGraphQLError(error).message
+    console.error("Dashboard operation failed (details redacted).")
+    return { 
+      success: false, 
+      error: "Unknown error occurred"
     }
   }
 }

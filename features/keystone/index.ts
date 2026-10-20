@@ -41,10 +41,12 @@ function revocableStatelessSessions(): SessionStrategy<any> {
       where: { id: session.itemId },
       include: { role: true },
     });
-    if (!user?.isActive || !user.role) return undefined;
+    // Staff carry a role. Storefront guest accounts have none (as in E-commerce and
+    // Restaurant), so every permission, including dashboard access, stays false.
+    if (!user?.isActive) return undefined;
     if (!allowInitialIdentity && Number(user.authVersion || 0) !== Number(session.data?.authVersion || 0)) return undefined;
     const embeddedRole = session.data?.role || {};
-    if (!allowInitialIdentity && permissionKeys.some(key => Boolean(user.role[key]) !== Boolean(embeddedRole[key]))) return undefined;
+    if (!allowInitialIdentity && (Boolean(user.role) !== Boolean(session.data?.role) || permissionKeys.some(key => Boolean(user.role?.[key]) !== Boolean(embeddedRole[key])))) return undefined;
     return {
       ...session,
       data: {
@@ -54,7 +56,7 @@ function revocableStatelessSessions(): SessionStrategy<any> {
         isActive: true,
         authVersion: user.authVersion,
         mfaEnabled: Boolean(user.mfaEnabled),
-        role: Object.fromEntries(['id', 'name', ...permissionKeys].map(key => [key, user.role[key]])),
+        role: user.role ? Object.fromEntries(['id', 'name', ...permissionKeys].map(key => [key, user.role[key]])) : null,
       },
     };
   };
@@ -101,7 +103,9 @@ const { withAuth } = createAuth({
       if (!settings?.contactEmail || !capabilities.mailInfrastructureConfigured) {
         throw new Error('Password reset email is currently unconfigured.');
       }
-      await sendPasswordResetEmail(args.token, args.identity);
+      // Guest accounts (no staff role) reset on the storefront; staff use the dashboard.
+      const user = await args.context.prisma.user.findUnique({ where: { id: String(args.itemId) }, select: { roleId: true } });
+      await sendPasswordResetEmail(args.token, args.identity, undefined, user?.roleId ? 'staff' : 'guest');
     },
   },
   sessionData: `

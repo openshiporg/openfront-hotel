@@ -5,6 +5,7 @@ import { cookies, headers } from 'next/headers';
 import { getServerBaseUrl } from '@/lib/graphql-client';
 import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
 import { GET_BOOKINGS_BY_EMAIL, VERIFY_GUEST_BOOKING } from '@/lib/queries';
+import { storefrontServerGraphql } from '../lib/storefront-server-graphql';
 
 export type BookingLookupActionState = {
   status: 'idle' | 'matched' | 'no_match' | 'error';
@@ -47,10 +48,10 @@ async function incomingRequestHeaders() {
   }
 }
 
-async function relayGuestAccessCookie(response: Response) {
+async function relayGuestAccessCookie(response: Response): Promise<string | null> {
   const setCookie = response.headers.get('set-cookie') || '';
   const match = setCookie.match(/(?:^|,\s*)hotel-guest-access=([^;]+)/i);
-  if (!match) return;
+  if (!match) return null;
   try {
     const store = await cookies();
     store.set('hotel-guest-access', decodeURIComponent(match[1]), {
@@ -63,9 +64,14 @@ async function relayGuestAccessCookie(response: Response) {
   } catch {
     // Unit calls have no Next request scope. Runtime actions do.
   }
+  return decodeURIComponent(match[1]);
 }
 
 async function publicGraphql<T>(query: string, variables: Record<string, string>): Promise<T> {
+  return (await publicGraphqlWithAccess<T>(query, variables)).data;
+}
+
+async function publicGraphqlWithAccess<T>(query: string, variables: Record<string, string>): Promise<{ data: T; guestAccess: string | null }> {
   const response = await boundedGraphqlFetch(`${getServerBaseUrl()}/api/graphql`, {
     method: 'POST',
     headers: await incomingRequestHeaders(),
@@ -80,8 +86,8 @@ async function publicGraphql<T>(query: string, variables: Record<string, string>
   if (!response.ok || !payload?.data || errorMessage) {
     throw new PublicGraphqlBoundaryError(errorMessage || SEARCH_ERROR);
   }
-  await relayGuestAccessCookie(response);
-  return payload.data;
+  const guestAccess = await relayGuestAccessCookie(response);
+  return { data: payload.data, guestAccess };
 }
 
 function publicFailure(error: unknown) {
@@ -101,16 +107,19 @@ export async function lookupBookingAction(
   }
 
   try {
-    const data = await publicGraphql<{ booking?: Record<string, any> | null }>(
+    const { data, guestAccess } = await publicGraphqlWithAccess<{ booking?: Record<string, any> | null }>(
       VERIFY_GUEST_BOOKING,
       submitted,
     );
     if (!data.booking) {
       return { status: 'no_match', message: NO_MATCH, booking: null, formData: submitted };
     }
+    // Signed-in guests keep a verified reservation that uses their account email.
+    const claimed = guestAccess ? await storefrontServerGraphql<{ claimGuestAccountStays: number }>('mutation { claimGuestAccountStays }', {}, { cookies: { 'hotel-guest-access': guestAccess } })
+      .then(result => Number(result.data?.claimGuestAccountStays || 0)).catch(() => 0) : 0;
     return {
       status: 'matched',
-      message: 'Reservation matched. Open the booking below.',
+      message: claimed ? 'Reservation matched and added to your account.' : 'Reservation matched. Open the booking below.',
       booking: data.booking,
       formData: submitted,
     };

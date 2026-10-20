@@ -96,11 +96,15 @@ type ChannelReservationPayload = {
   checkOutDate: string
   roomTypeCode?: string
   roomTypeName?: string
-  totalAmount?: number
-  commission?: number
+  totalAmount?: unknown
+  commission?: unknown
   numberOfGuests?: number
   specialRequests?: string
   roomCount?: number
+  currencyCode?: string
+  adults?: number
+  children?: number
+  cancellationPolicy?: string
   rawData?: Record<string, unknown>
 }
 
@@ -155,11 +159,51 @@ function getDayWindow(date: Date) {
   return { start, end }
 }
 
-function toCents(amount?: number | null) {
-  if (typeof amount !== 'number' || Number.isNaN(amount)) {
+const MAX_STORED_MINOR = 2_147_483_647
+const MAX_CHANNEL_RETRY_ATTEMPTS = 5
+
+/**
+ * A channel amount in USD minor units: a number or decimal string in whole cents, within the
+ * stored integer range. Missing or malformed amounts are refused, never read as zero.
+ */
+function channelMinorUnits(value: unknown, label: string, required = true): number {
+  if (value === undefined || value === null || value === '') {
+    if (required) throw new Error(`Channel reservation ${label} is missing.`)
     return 0
   }
-  return Math.round(amount * 100)
+  let minor: number
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`Channel reservation ${label} is invalid.`)
+    minor = Math.round(value * 100)
+    if (Math.abs(value * 100 - minor) > 1e-6) throw new Error(`Channel reservation ${label} has more than two decimal places.`)
+  } else if (typeof value === 'string' && /^\d+(\.\d{1,2})?$/.test(value.trim())) {
+    const [whole, fraction = ''] = value.trim().split('.')
+    minor = Number(`${whole}${fraction.padEnd(2, '0')}`)
+  } else {
+    throw new Error(`Channel reservation ${label} is invalid.`)
+  }
+  if (!Number.isSafeInteger(minor) || minor > MAX_STORED_MINOR) throw new Error(`Channel reservation ${label} is too large.`)
+  return minor
+}
+
+/** Validated commercial facts for a channel stay: USD money and a party the room type sleeps. */
+async function channelStayTerms(context: any, payload: ChannelReservationPayload, roomTypeId: string) {
+  const currencyCode = String(payload.currencyCode || '').trim().toUpperCase()
+  if (currencyCode !== 'USD') throw new Error('Channel reservations must state their currency, and only USD is supported.')
+  const totalMinor = channelMinorUnits(payload.totalAmount, 'total')
+  const commissionMinor = channelMinorUnits(payload.commission, 'commission', false)
+  const guests = Number(payload.numberOfGuests)
+  if (!Number.isInteger(guests) || guests < 1) throw new Error('Channel reservation guest count is invalid.')
+  if (payload.adults !== undefined || payload.children !== undefined) {
+    const adults = Number(payload.adults ?? 0), children = Number(payload.children ?? 0)
+    if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0 || adults + children !== guests) {
+      throw new Error('Channel reservation adult and child counts do not match the guest count.')
+    }
+  }
+  const roomType = await context.prisma.roomType.findUnique({ where: { id: roomTypeId }, select: { maxOccupancy: true, name: true } })
+  if (!roomType) throw new Error('Channel reservation room type was not found.')
+  if (guests > Number(roomType.maxOccupancy)) throw new Error(`${roomType.name} sleeps up to ${roomType.maxOccupancy} guests.`)
+  return { currencyCode, totalMinor, commissionMinor, guests }
 }
 
 function mapReservationPayload(raw: any): ChannelReservationPayload {
@@ -176,9 +220,13 @@ function mapReservationPayload(raw: any): ChannelReservationPayload {
     roomTypeName: reservation?.roomTypeName,
     totalAmount: reservation?.totalAmount ?? reservation?.amount,
     commission: reservation?.commission,
-    numberOfGuests: reservation?.numberOfGuests || reservation?.guests,
+    numberOfGuests: reservation?.numberOfGuests ?? reservation?.guests,
     specialRequests: reservation?.specialRequests,
     roomCount: reservation?.roomCount || reservation?.rooms || 1,
+    currencyCode: reservation?.currencyCode ?? reservation?.currency,
+    adults: reservation?.adults,
+    children: reservation?.children,
+    cancellationPolicy: reservation?.cancellationPolicy,
     rawData: reservation,
   }
 }
@@ -341,63 +389,94 @@ async function adjustBookedRooms(context: any, roomTypeId: string, checkInDate: 
 }
 
 type VerifiedChannelEvent = { eventKey: string; payloadHash: string };
+export type ChannelEventType = 'create' | 'modify' | 'cancel';
 
-async function upsertChannelReservation(context: any, channel: any, payload: ChannelReservationPayload, eventType: string, verifiedEvent: VerifiedChannelEvent) {
+const CANCELLATION_POLICIES = new Set(['flexible', 'moderate', 'strict', 'non_refundable']);
+
+async function upsertChannelReservation(context: any, channel: any, payload: ChannelReservationPayload, eventType: ChannelEventType, verifiedEvent: VerifiedChannelEvent) {
   if (!payload.externalId) {
     throw new Error('Channel reservation payload missing externalId')
   }
 
   await lockHotelBusinessDate(context.prisma);
-  const { checkIn: boundedCheckIn, checkOut: boundedCheckOut } = hotelStayDates(payload.checkInDate, payload.checkOutDate)
   const channelKey = `${channel.id}:${payload.externalId}`
   if (!verifiedEvent.eventKey || !/^[a-f0-9]{64}$/i.test(verifiedEvent.payloadHash)) throw new Error('Verified channel event identity is required')
+  await context.prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `hotel-channel-reservation:${channelKey}`)
   const existing = await context.sudo().query.ChannelReservation.findMany({
     where: {
       externalId: { equals: payload.externalId },
       channel: { id: { equals: channel.id } },
     },
-    query: 'id checkInDate checkOutDate roomType { id name } reservation { id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } } }',
+    query: 'id checkInDate checkOutDate totalAmount channelStatus roomType { id name } reservation { id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } } }',
     take: 1,
   })
-
   const reservation = existing[0]
+  // A cancellation can arrive before the reservation it cancels; it is kept so a delayed
+  // create for the same reservation can never book the room afterwards.
+  const tombstoneKey = `channel-tombstone:${channelKey}`
+  const tombstone = await context.prisma.hotelAuditEvent.findUnique({ where: { eventKey: tombstoneKey }, select: { id: true } })
+
+  if (!reservation) {
+    if (eventType === 'cancel') {
+      if (!tombstone) {
+        await recordHotelLifecycleEvent({
+          prisma: context.prisma, eventKey: tombstoneKey, actorId: null,
+          identity: { request: { channelKey }, aggregateType: 'channel_reservation', aggregateId: channelKey, action: 'cancelled_before_import' },
+          afterSnapshot: { channelKey, cancelledBy: verifiedEvent.eventKey },
+          metadata: { channelId: channel.id, externalId: payload.externalId },
+        })
+      }
+      return { action: 'cancellation_recorded', booking: null }
+    }
+    if (tombstone) return { action: 'ignored_cancelled_reservation', booking: null }
+    if (eventType === 'modify') throw new Error('Channel change for a reservation that was never imported; reconcile it with the channel.')
+  }
+
+  const { checkIn: boundedCheckIn, checkOut: boundedCheckOut } = hotelStayDates(payload.checkInDate, payload.checkOutDate)
   const roomTypeId = await resolveRoomTypeId(context, channel, payload)
   const roomCount = payload.roomCount && payload.roomCount > 0 ? payload.roomCount : 1
   if (!Number.isInteger(roomCount) || roomCount !== 1) throw new Error('Multi-room channel reservations require an explicit group allocation.')
 
   if (!reservation) {
+    if (!roomTypeId) throw new Error('Channel reservation room type is not mapped')
+    const terms = await channelStayTerms(context, payload, roomTypeId)
     const guestProfile = await ensureGuestProfile(context, {
       name: payload.guestName,
       email: payload.guestEmail || `channel-${channel.id}-${payload.externalId}@invalid.local`,
     })
-    if (!roomTypeId) throw new Error('Channel reservation room type is not mapped')
     await lockRoomInventory(context.prisma, roomTypeId, boundedCheckIn, boundedCheckOut)
     await assertHotelAvailability(context, { roomTypeId, checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate })
+    // The channel's own cancellation terms are recorded only when it states them; otherwise the
+    // reservation is cancelled through the channel and Hotel does not assume a policy.
+    const cancellationPolicy = CANCELLATION_POLICIES.has(String(payload.cancellationPolicy)) ? String(payload.cancellationPolicy) : null
     const createdBooking = await context.prisma.booking.create({
       data: {
         confirmationNumber: `BK-OTA-${crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
         guestName: payload.guestName,
         guestEmail: payload.guestEmail || guestProfile.email,
         guestProfileId: guestProfile.id,
-        checkInDate: new Date(payload.checkInDate),
-        checkOutDate: new Date(payload.checkOutDate),
-        numberOfGuests: payload.numberOfGuests || 1,
+        checkInDate: boundedCheckIn,
+        checkOutDate: boundedCheckOut,
+        numberOfGuests: terms.guests,
+        numberOfAdults: payload.adults ?? terms.guests,
+        numberOfChildren: payload.children ?? 0,
         status: 'confirmed',
         source: 'ota',
-        roomRateMinor: toCents(payload.totalAmount), taxAmountMinor: 0, feesAmountMinor: 0,
-        totalAmountMinor: toCents(payload.totalAmount), depositAmountMinor: 0, balanceDueMinor: toCents(payload.totalAmount),
-        currencyCode: 'USD', roomRate: payload.totalAmount || 0,
-        taxAmount: 0, feesAmount: 0, totalAmount: payload.totalAmount || 0, depositAmount: 0,
-        balanceDue: payload.totalAmount || 0, pricingVersion: 'channel-create-v1', pricingRevision: 1,
-        pricingSnapshot: { snapshotKeyPrefix: 'v1', source: 'channel', roomSubtotalMinor: toCents(payload.totalAmount), taxMinor: 0, feesMinor: 0, totalMinor: toCents(payload.totalAmount), currencyCode: 'USD' },
+        roomRateMinor: terms.totalMinor, taxAmountMinor: 0, feesAmountMinor: 0,
+        totalAmountMinor: terms.totalMinor, depositAmountMinor: 0, balanceDueMinor: terms.totalMinor,
+        currencyCode: terms.currencyCode, roomRate: terms.totalMinor / 100,
+        taxAmount: 0, feesAmount: 0, totalAmount: terms.totalMinor / 100, depositAmount: 0,
+        balanceDue: terms.totalMinor / 100, pricingVersion: 'channel-create-v1', pricingRevision: 1,
+        pricingSnapshot: { snapshotKeyPrefix: 'v1', source: 'channel', ...(cancellationPolicy ? { cancellationPolicy } : {}), roomSubtotalMinor: terms.totalMinor, taxMinor: 0, feesMinor: 0, totalMinor: terms.totalMinor, currencyCode: terms.currencyCode },
       },
     })
+    const nights = Math.max(1, Math.round((boundedCheckOut.getTime() - boundedCheckIn.getTime()) / 86_400_000))
     await context.prisma.roomAssignment.create({
       data: {
         bookingId: createdBooking.id,
         roomTypeId,
         guestName: payload.guestName,
-        ratePerNightMinor: Math.round(toCents(payload.totalAmount) / Math.max(1, Math.round((new Date(payload.checkOutDate).getTime() - new Date(payload.checkInDate).getTime()) / 86_400_000))),
+        ratePerNightMinor: Math.round(terms.totalMinor / nights),
       },
     })
     await ensureBookingHasGuestAccess(context, createdBooking.id)
@@ -415,13 +494,13 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
         channelKey,
         externalId: payload.externalId,
         reservation: { connect: { id: booking!.id } },
-        roomType: roomTypeId ? { connect: { id: roomTypeId } } : undefined,
-        checkInDate: new Date(payload.checkInDate).toISOString(),
-        checkOutDate: new Date(payload.checkOutDate).toISOString(),
+        roomType: { connect: { id: roomTypeId } },
+        checkInDate: boundedCheckIn.toISOString(),
+        checkOutDate: boundedCheckOut.toISOString(),
         guestName: payload.guestName,
         guestEmail: payload.guestEmail,
-        totalAmount: toCents(payload.totalAmount),
-        commission: toCents(payload.commission),
+        totalAmount: terms.totalMinor,
+        commission: terms.commissionMinor,
         channelStatus: payload.status,
         rawData: payload.rawData || {},
         lastSyncedAt: new Date().toISOString(),
@@ -429,16 +508,14 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
       query: 'id',
     })
 
-    if (roomTypeId) {
-      await adjustBookedRooms(context, roomTypeId, payload.checkInDate, payload.checkOutDate, roomCount)
-    }
+    await adjustBookedRooms(context, roomTypeId, payload.checkInDate, payload.checkOutDate, roomCount)
 
     await recordHotelLifecycleEvent({
       prisma: context.prisma,
       eventKey: `channel-booking:create:${channelKey}`,
       actorId: null,
-      identity: { request: { channelKey, checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate, totalAmountMinor: toCents(payload.totalAmount) }, aggregateType: 'booking', aggregateId: booking!.id, action: 'created_from_channel' },
-      afterSnapshot: { status: 'confirmed', checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate, totalAmountMinor: toCents(payload.totalAmount) },
+      identity: { request: { channelKey, checkInDate: boundedCheckIn.toISOString(), checkOutDate: boundedCheckOut.toISOString(), totalAmountMinor: terms.totalMinor }, aggregateType: 'booking', aggregateId: booking!.id, action: 'created_from_channel' },
+      afterSnapshot: { status: 'confirmed', checkInDate: boundedCheckIn.toISOString(), checkOutDate: boundedCheckOut.toISOString(), totalAmountMinor: terms.totalMinor, cancellationPolicy },
       metadata: { channelId: channel.id, externalId: payload.externalId },
     })
 
@@ -472,23 +549,36 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
     return { action: 'cancellation_requested', booking: reservation.reservation }
   }
 
-  if (eventType === 'modify') {
+  // A modification, or a confirmed reservation whose stay details changed, goes through the
+  // governed amendment. The same details again only refresh the channel record.
+  if (!roomTypeId) throw new Error('Channel reservation room type is not mapped')
+  const terms = await channelStayTerms(context, payload, roomTypeId)
+  const changed = eventType === 'modify' || (
+    new Date(reservation.checkInDate).getTime() !== boundedCheckIn.getTime() ||
+    new Date(reservation.checkOutDate).getTime() !== boundedCheckOut.getTime() ||
+    reservation.roomType?.id !== roomTypeId ||
+    Number(reservation.totalAmount) !== terms.totalMinor ||
+    Number(reservation.reservation?.numberOfGuests) !== terms.guests
+  )
+
+  if (changed) {
     const guestProfile = await ensureGuestProfile(context, {
       name: payload.guestName,
       email: payload.guestEmail || `channel-${channel.id}-${payload.externalId}@invalid.local`,
     })
-    if (!reservation.reservation?.id || !roomTypeId) throw new Error('Channel modification lacks booking or room-type binding')
+    if (!reservation.reservation?.id) throw new Error('Channel modification lacks booking binding')
     await amendUnpaidBooking({
       context,
       bookingId: reservation.reservation.id,
-      checkInDate: payload.checkInDate,
-      checkOutDate: payload.checkOutDate,
+      checkInDate: boundedCheckIn.toISOString(),
+      checkOutDate: boundedCheckOut.toISOString(),
       roomTypeId,
       guestName: payload.guestName,
       guestEmail: payload.guestEmail || guestProfile.email,
       guestProfileId: guestProfile.id,
-      numberOfGuests: payload.numberOfGuests || 1,
-      totalAmountMinor: toCents(payload.totalAmount),
+      numberOfGuests: terms.guests,
+      totalAmountMinor: terms.totalMinor,
+      currencyCode: terms.currencyCode,
       idempotencyKey: `channel:${channelKey}:modify:${verifiedEvent.eventKey}`,
       source: 'channel',
       withinTransaction: true,
@@ -501,13 +591,13 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
     await context.sudo().query.ChannelReservation.updateOne({
       where: { id: reservation.id },
       data: {
-        roomType: roomTypeId ? { connect: { id: roomTypeId } } : undefined,
-        checkInDate: new Date(payload.checkInDate).toISOString(),
-        checkOutDate: new Date(payload.checkOutDate).toISOString(),
+        roomType: { connect: { id: roomTypeId } },
+        checkInDate: boundedCheckIn.toISOString(),
+        checkOutDate: boundedCheckOut.toISOString(),
         guestName: payload.guestName,
         guestEmail: payload.guestEmail,
-        totalAmount: toCents(payload.totalAmount),
-        commission: toCents(payload.commission),
+        totalAmount: terms.totalMinor,
+        commission: terms.commissionMinor,
         channelStatus: payload.status,
         rawData: payload.rawData || {},
         lastSyncedAt: new Date().toISOString(),
@@ -526,15 +616,20 @@ async function upsertChannelReservation(context: any, channel: any, payload: Cha
     },
   })
 
-  return { action: 'updated', booking: reservation.reservation }
+  return { action: 'unchanged', booking: reservation.reservation }
 }
 
-function resolveEventType(eventType: string) {
-  const normalized = eventType.toLowerCase()
-  if (normalized.includes('cancel')) return 'cancel'
-  if (normalized.includes('modif') || normalized.includes('update')) return 'modify'
-  if (normalized.includes('create') || normalized.includes('new')) return 'create'
-  return 'create'
+const CREATE_EVENTS = new Set(['reservation.created', 'reservation.new', 'create', 'created', 'new', 'confirmed', 'booked'])
+const MODIFY_EVENTS = new Set(['reservation.modified', 'reservation.updated', 'modify', 'modified', 'update', 'updated'])
+const CANCEL_EVENTS = new Set(['reservation.cancelled', 'reservation.canceled', 'cancel', 'cancelled', 'canceled'])
+
+/** Only recognised reservation operations; anything else (status notices, payments, heartbeats) is ignored. */
+export function resolveEventType(eventType: unknown): ChannelEventType | null {
+  const normalized = String(eventType ?? '').trim().toLowerCase()
+  if (CREATE_EVENTS.has(normalized)) return 'create'
+  if (MODIFY_EVENTS.has(normalized)) return 'modify'
+  if (CANCEL_EVENTS.has(normalized)) return 'cancel'
+  return null
 }
 
 export async function postToChannel(
@@ -603,6 +698,7 @@ export async function pushInventoryToChannel(
   dateRange?: DateRangeInput,
   fetchImpl: typeof fetch = fetch,
   renewLease?: () => Promise<boolean>,
+  options: { retryOfEventId?: string } = {},
 ): Promise<ChannelSyncResult> {
   const channel = await context.sudo().query.Channel.findOne({
     where: { id: channelId },
@@ -623,83 +719,103 @@ export async function pushInventoryToChannel(
     }
   }
 
-  const startDate = dateRange?.startDate ? new Date(dateRange.startDate) : new Date()
-  const endDate = dateRange?.endDate ? new Date(dateRange.endDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-
-  const inventoryRecords = await context.sudo().query.RoomInventory.findMany({
-    where: {
-      date: { gte: startDate.toISOString(), lte: endDate.toISOString() },
-    },
-    query: 'id date totalRooms bookedRooms blockedRooms roomType { id name }',
-  })
-
-  const payload = {
-    channelId: channel.id,
-    channelName: channel.name,
-    startDate: startDate.toISOString(),
-    endDate: endDate.toISOString(),
-    inventory: inventoryRecords.map((record: any) => ({
-      date: record.date,
-      roomTypeId: record.roomType?.id,
-      roomTypeName: record.roomType?.name,
-      totalRooms: record.totalRooms,
-      bookedRooms: record.bookedRooms,
-      blockedRooms: record.blockedRooms,
-    })),
+  // Manual, scheduled and retry runs for one channel share one operation lease, so two of
+  // them never talk to the channel at the same time.
+  const lease = await workerChannelOperationLeaseProvider.acquire(context, channel.id, renewLease)
+  if (!lease) {
+    return {
+      channelId: channel.id,
+      status: 'skipped',
+      syncedAt: new Date().toISOString(),
+      details: { message: 'Another operation for this channel is running.' },
+    }
   }
-
   try {
-    const outbound = requireLiveChannelEndpoint(channel, 'inventory')
-    if (renewLease && !(await renewLease())) return {
-      channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
-      details: { message: 'Worker claim expired before channel delivery; no request was sent.' },
-    }
-    await postToChannel(outbound.endpoint, payload, {
-      'X-OpenFront-Channel': channel.id,
-      ...outbound.headers,
-    }, fetchImpl)
-    if (renewLease && !(await renewLease())) return {
-      channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
-      details: { message: 'Worker claim changed after channel delivery; verify the durable sync event.' },
-    }
+    const startDate = dateRange?.startDate ? new Date(dateRange.startDate) : new Date()
+    const endDate = dateRange?.endDate ? new Date(dateRange.endDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
 
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: 'inventory_push',
-      status: 'success',
-      message: 'Inventory pushed to channel',
-      payload,
+    const inventoryRecords = await context.sudo().query.RoomInventory.findMany({
+      where: {
+        date: { gte: startDate.toISOString(), lte: endDate.toISOString() },
+      },
+      query: 'id date totalRooms bookedRooms blockedRooms roomType { id name }',
     })
 
-    await updateChannelSyncStatus(context, channel.id, 'active')
-
-    return {
+    const payload = {
       channelId: channel.id,
-      status: 'success',
-      syncedAt: new Date().toISOString(),
-      details: { inventoryCount: inventoryRecords.length },
+      channelName: channel.name,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      inventory: inventoryRecords.map((record: any) => ({
+        date: record.date,
+        roomTypeId: record.roomType?.id,
+        roomTypeName: record.roomType?.name,
+        totalRooms: record.totalRooms,
+        bookedRooms: record.bookedRooms,
+        blockedRooms: record.blockedRooms,
+      })),
     }
-  } catch (error: any) {
-    const failure = safeOperationalErrorMessage('channel', error)
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: 'inventory_push',
-      status: 'failed',
-      message: 'Inventory push failed',
-      payload,
-      errorMessage: failure,
-      attempts: 1,
-      nextAttemptAt: new Date(Date.now() + DEFAULT_RETRY_DELAY_MS),
-    })
 
-    await appendChannelSyncError(context, channel.id, failure)
+    try {
+      const outbound = requireLiveChannelEndpoint(channel, 'inventory')
+      if (!(await lease.renew())) return {
+        channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
+        details: { message: 'Worker claim expired before channel delivery; no request was sent.' },
+      }
+      await postToChannel(outbound.endpoint, payload, {
+        'X-OpenFront-Channel': channel.id,
+        ...outbound.headers,
+      }, fetchImpl)
+      if (!(await lease.renew())) return {
+        channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
+        details: { message: 'Worker claim changed after channel delivery; verify the durable sync event.' },
+      }
 
-    return {
-      channelId: channel.id,
-      status: 'failed',
-      syncedAt: new Date().toISOString(),
-      details: { error: failure },
+      await logChannelSyncEvent(context, {
+        channelId: channel.id,
+        action: 'inventory_push',
+        status: 'success',
+        message: 'Inventory pushed to channel',
+        payload,
+      })
+
+      await updateChannelSyncStatus(context, channel.id, 'active')
+
+      return {
+        channelId: channel.id,
+        status: 'success',
+        syncedAt: new Date().toISOString(),
+        details: { inventoryCount: inventoryRecords.length },
+      }
+    } catch (error: any) {
+      const failure = safeOperationalErrorMessage('channel', error)
+      // A request that may have reached the channel is never sent again automatically; it waits
+      // for reconciliation. Retries record their result on the original event, not a new one.
+      const outcomeUnknown = error instanceof ChannelOutcomeUnknownError
+      if (!options.retryOfEventId) {
+        await logChannelSyncEvent(context, {
+          channelId: channel.id,
+          action: 'inventory_push',
+          status: 'failed',
+          message: outcomeUnknown ? CHANNEL_OUTCOME_UNKNOWN_MESSAGE : 'Inventory push failed',
+          payload,
+          errorMessage: failure,
+          attempts: 1,
+          nextAttemptAt: outcomeUnknown ? null : new Date(Date.now() + DEFAULT_RETRY_DELAY_MS),
+        })
+      }
+
+      await appendChannelSyncError(context, channel.id, failure)
+
+      return {
+        channelId: channel.id,
+        status: 'failed',
+        syncedAt: new Date().toISOString(),
+        details: { error: failure, outcomeUnknown },
+      }
     }
+  } finally {
+    await lease.release()
   }
 }
 
@@ -708,6 +824,7 @@ export async function pullReservationsFromChannel(
   channelId: string,
   fetchImpl: typeof fetch = fetch,
   renewLease?: () => Promise<boolean>,
+  options: { retryOfEventId?: string } = {},
 ): Promise<ChannelSyncResult> {
   const channel = await context.sudo().query.Channel.findOne({
     where: { id: channelId },
@@ -728,85 +845,107 @@ export async function pullReservationsFromChannel(
     }
   }
 
-  const payload = {
-    channelId: channel.id,
-    channelName: channel.name,
+  // Manual, scheduled and retry runs for one channel share one operation lease, so two of
+  // them never talk to the channel at the same time.
+  const lease = await workerChannelOperationLeaseProvider.acquire(context, channel.id, renewLease)
+  if (!lease) {
+    return {
+      channelId: channel.id,
+      status: 'skipped',
+      syncedAt: new Date().toISOString(),
+      details: { message: 'Another operation for this channel is running.' },
+    }
   }
-
   try {
-    const outbound = requireLiveChannelEndpoint(channel, 'reservations')
-    if (renewLease && !(await renewLease())) return {
-      channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
-      details: { message: 'Worker claim expired before channel request; no request was sent.' },
+    const payload = {
+      channelId: channel.id,
+      channelName: channel.name,
     }
-    const reservationsResponse = await postToChannel(outbound.endpoint, payload, {
-      'X-OpenFront-Channel': channel.id,
-      ...outbound.headers,
-    }, fetchImpl)
 
-    if (!Array.isArray(reservationsResponse?.reservations)) {
-      throw new Error('Channel reservation response did not contain a valid reservation array.')
-    }
-    const reservations = reservationsResponse.reservations
-
-    for (const reservation of reservations) {
-      if (renewLease && !(await renewLease())) return {
+    try {
+      const outbound = requireLiveChannelEndpoint(channel, 'reservations')
+      if (!(await lease.renew())) return {
         channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
-        details: { message: 'Worker claim expired; remaining reservation rows were not applied.' },
+        details: { message: 'Worker claim expired before channel request; no request was sent.' },
       }
-      const mapped = mapReservationPayload(reservation)
-      const eventType = resolveEventType(mapped.status)
-      const canonical = JSON.stringify(reservation);
-      const payloadHash = crypto.createHash('sha256').update(canonical).digest('hex');
-      const providerVersion = String(reservation?.eventId || reservation?.version || reservation?.updatedAt || payloadHash).slice(0, 255);
-      const verifiedEvent = { eventKey: `pull:${channel.id}:${mapped.externalId}:${providerVersion}`, payloadHash };
-      await serializableChannelTransaction(
-        context,
-        (transactionContext: any) => upsertChannelReservation(transactionContext, channel, mapped, eventType, verifiedEvent),
-      )
+      const reservationsResponse = await postToChannel(outbound.endpoint, payload, {
+        'X-OpenFront-Channel': channel.id,
+        ...outbound.headers,
+      }, fetchImpl)
+
+      if (!Array.isArray(reservationsResponse?.reservations)) {
+        throw new Error('Channel reservation response did not contain a valid reservation array.')
+      }
+      const reservations = reservationsResponse.reservations
+
+      for (const reservation of reservations) {
+        if (!(await lease.renew())) return {
+          channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
+          details: { message: 'Worker claim expired; remaining reservation rows were not applied.' },
+        }
+        const mapped = mapReservationPayload(reservation)
+        const eventType = resolveEventType(mapped.status)
+        if (!eventType) continue
+        const canonical = JSON.stringify(reservation);
+        const payloadHash = crypto.createHash('sha256').update(canonical).digest('hex');
+        const providerVersion = String(reservation?.eventId || reservation?.version || reservation?.updatedAt || payloadHash).slice(0, 255);
+        const verifiedEvent = { eventKey: `pull:${channel.id}:${mapped.externalId}:${providerVersion}`, payloadHash };
+        await serializableChannelTransaction(
+          context,
+          (transactionContext: any) => upsertChannelReservation(transactionContext, channel, mapped, eventType, verifiedEvent),
+          lease,
+        )
+      }
+
+      if (!(await lease.renew())) return {
+        channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
+        details: { message: 'Worker claim changed after channel response; verify the durable sync event.' },
+      }
+      await logChannelSyncEvent(context, {
+        channelId: channel.id,
+        action: 'reservation_pull',
+        status: 'success',
+        message: 'Reservations pulled from channel',
+        payload: { reservationCount: reservations.length },
+      })
+
+      await updateChannelSyncStatus(context, channel.id, 'active')
+
+      return {
+        channelId: channel.id,
+        status: 'success',
+        syncedAt: new Date().toISOString(),
+        details: { reservationCount: reservations.length },
+      }
+    } catch (error: any) {
+      const failure = safeOperationalErrorMessage('channel', error)
+      // A request that may have reached the channel is never sent again automatically; it waits
+      // for reconciliation. Retries record their result on the original event, not a new one.
+      const outcomeUnknown = error instanceof ChannelOutcomeUnknownError
+      if (!options.retryOfEventId) {
+        await logChannelSyncEvent(context, {
+          channelId: channel.id,
+          action: 'reservation_pull',
+          status: 'failed',
+          message: outcomeUnknown ? CHANNEL_OUTCOME_UNKNOWN_MESSAGE : 'Reservation pull failed',
+          payload,
+          errorMessage: failure,
+          attempts: 1,
+          nextAttemptAt: outcomeUnknown ? null : new Date(Date.now() + DEFAULT_RETRY_DELAY_MS),
+        })
+      }
+
+      await appendChannelSyncError(context, channel.id, failure)
+
+      return {
+        channelId: channel.id,
+        status: 'failed',
+        syncedAt: new Date().toISOString(),
+        details: { error: failure, outcomeUnknown },
+      }
     }
-
-    if (renewLease && !(await renewLease())) return {
-      channelId: channel.id, status: 'skipped', syncedAt: new Date().toISOString(),
-      details: { message: 'Worker claim changed after channel response; verify the durable sync event.' },
-    }
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: 'reservation_pull',
-      status: 'success',
-      message: 'Reservations pulled from channel',
-      payload: { reservationCount: reservations.length },
-    })
-
-    await updateChannelSyncStatus(context, channel.id, 'active')
-
-    return {
-      channelId: channel.id,
-      status: 'success',
-      syncedAt: new Date().toISOString(),
-      details: { reservationCount: reservations.length },
-    }
-  } catch (error: any) {
-    const failure = safeOperationalErrorMessage('channel', error)
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: 'reservation_pull',
-      status: 'failed',
-      message: 'Reservation pull failed',
-      payload,
-      errorMessage: failure,
-      attempts: 1,
-      nextAttemptAt: new Date(Date.now() + DEFAULT_RETRY_DELAY_MS),
-    })
-
-    await appendChannelSyncError(context, channel.id, failure)
-
-    return {
-      channelId: channel.id,
-      status: 'failed',
-      syncedAt: new Date().toISOString(),
-      details: { error: failure },
-    }
+  } finally {
+    await lease.release()
   }
 }
 
@@ -835,11 +974,14 @@ export async function handleChannelWebhook(
   }
 
   const payload = JSON.parse(rawBody)
-  const providerEventId = String(
-    getStringHeader(headers, 'x-webhook-id') || payload?.eventId || payload?.id || ''
-  ).trim()
+  // The replay identity comes from the signed body. An unsigned header cannot choose it.
+  const providerEventId = String(payload?.eventId || payload?.id || '').trim()
   if (!providerEventId || providerEventId.length > 255) {
     throw new Error('Channel webhook event id is required')
+  }
+  const headerEventId = String(getStringHeader(headers, 'x-webhook-id') || '').trim()
+  if (headerEventId && headerEventId !== providerEventId) {
+    throw new Error('Channel webhook event id header does not match the signed event')
   }
   const replayKey = `${channelId}:${providerEventId}`
   const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex')
@@ -864,9 +1006,20 @@ export async function handleChannelWebhook(
     })
     if (!channel) throw new Error('Channel not found')
 
-    const eventType = payload?.eventType || payload?.event || payload?.type || 'reservation.created'
+    const eventType = payload?.eventType || payload?.event || payload?.type || ''
     const mappedReservation = mapReservationPayload(payload)
     const action = resolveEventType(eventType)
+    if (!action) {
+      await logChannelSyncEvent(transactionContext, {
+        channelId: channel.id,
+        action: 'webhook_event',
+        status: 'success',
+        replayKey,
+        message: 'Webhook ignored: unsupported event type',
+        payload: { eventType: String(eventType).slice(0, 100), providerEventId, payloadHash, action: 'ignored' },
+      })
+      return { success: true, duplicate: false, action: 'ignored' }
+    }
     const reservationResult = await upsertChannelReservation(
       transactionContext,
       channel,
@@ -900,11 +1053,14 @@ export async function retryFailedChannelSyncs(
   fetchImpl: typeof fetch = fetch,
 ) {
   const now = new Date().toISOString()
+  // One retry chain per original operation, due work first, bounded by MAX_CHANNEL_RETRY_ATTEMPTS.
   const failedEvents = await context.sudo().query.ChannelSyncEvent.findMany({
     where: {
       status: { equals: 'failed' },
       nextAttemptAt: { lte: now },
+      attempts: { lt: MAX_CHANNEL_RETRY_ATTEMPTS },
     },
+    orderBy: [{ nextAttemptAt: 'asc' }],
     query: 'id channel { id } action attempts payload',
     take: 25,
   })
@@ -913,39 +1069,45 @@ export async function retryFailedChannelSyncs(
   for (const event of failedEvents) {
     if (renewLease && !(await renewLease())) { leaseLost = true; break; }
     const attempts = (event.attempts || 0) + 1
+    let result: ChannelSyncResult
     try {
-      let result: ChannelSyncResult
       if (event.action === 'inventory_push') {
-        result = await pushInventoryToChannel(context, event.channel.id, event.payload?.dateRange as DateRangeInput, fetchImpl, renewLease)
+        result = await pushInventoryToChannel(context, event.channel.id, event.payload?.dateRange as DateRangeInput, fetchImpl, renewLease, { retryOfEventId: event.id })
       } else if (event.action === 'reservation_pull') {
-        result = await pullReservationsFromChannel(context, event.channel.id, fetchImpl, renewLease)
+        result = await pullReservationsFromChannel(context, event.channel.id, fetchImpl, renewLease, { retryOfEventId: event.id })
       } else {
         throw new Error('Unsupported channel retry operation.')
       }
-      if (result.status !== 'success') throw new Error('Channel retry did not complete successfully.')
-      if (renewLease && !(await renewLease())) { leaseLost = true; break; }
+    } catch (error) {
+      result = { channelId: event.channel.id, status: 'failed', syncedAt: new Date().toISOString(), details: { error: safeOperationalErrorMessage('channel', error) } }
+    }
+    if (renewLease && !(await renewLease())) { leaseLost = true; break; }
+    // Another operation held the channel: nothing was sent, so this does not count as an attempt.
+    if (result.status === 'skipped') continue
 
+    if (result.status === 'success') {
       await context.sudo().query.ChannelSyncEvent.updateOne({
         where: { id: event.id },
         data: { status: 'success', attempts, nextAttemptAt: null, message: 'Retry succeeded' },
       })
       succeeded += 1; processed += 1
-    } catch (error) {
-      if (renewLease && !(await renewLease())) { leaseLost = true; break; }
-      const failure = safeOperationalErrorMessage('channel', error)
-      await context.sudo().query.ChannelSyncEvent.updateOne({
-        where: { id: event.id },
-        data: {
-          status: 'failed',
-          attempts,
-          nextAttemptAt: new Date(Date.now() + Math.pow(2, attempts) * DEFAULT_RETRY_DELAY_MS).toISOString(),
-          errorMessage: failure,
-          message: 'Retry failed',
-        },
-      })
-      await appendChannelSyncError(context, event.channel.id, failure)
-      failed += 1; processed += 1
+      continue
     }
+
+    const outcomeUnknown = Boolean(result.details?.outcomeUnknown)
+    const exhausted = attempts >= MAX_CHANNEL_RETRY_ATTEMPTS
+    const failure = String(result.details?.error || 'Channel retry did not complete successfully.')
+    await context.sudo().query.ChannelSyncEvent.updateOne({
+      where: { id: event.id },
+      data: {
+        status: 'failed',
+        attempts,
+        nextAttemptAt: outcomeUnknown || exhausted ? null : new Date(Date.now() + Math.pow(2, attempts) * DEFAULT_RETRY_DELAY_MS).toISOString(),
+        errorMessage: failure,
+        message: outcomeUnknown ? CHANNEL_OUTCOME_UNKNOWN_MESSAGE : exhausted ? 'Retry limit reached; review the channel before sending again.' : 'Retry failed',
+      },
+    })
+    failed += 1; processed += 1
   }
 
   return { processed, succeeded, failed, leaseLost, retriedAt: new Date().toISOString() }

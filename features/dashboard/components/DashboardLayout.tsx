@@ -6,7 +6,6 @@
 'use client'
 
 import React, { createContext, useContext, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { AdminMetaProvider } from '../hooks/useAdminMeta'
 import { SidebarProvider, SidebarInset, useSidebarWithSide } from '@/components/ui/sidebar'
 import { Sidebar } from './Sidebar'
@@ -83,7 +82,6 @@ function FloatingChatButton() {
 }
 
 function DashboardLayoutContent({ children, adminMeta, authenticatedItem }: DashboardLayoutProps) {
-  const router = useRouter()
   const [isOnboardingDialogOpen, setIsOnboardingDialogOpen] = React.useState(false)
 
   return (
@@ -92,7 +90,7 @@ function DashboardLayoutContent({ children, adminMeta, authenticatedItem }: Dash
         adminMeta={adminMeta}
         user={authenticatedItem}
         onOpenDialog={() => setIsOnboardingDialogOpen(true)}
-      />
+      />      
       <SidebarInset className="min-w-0">
         {children}
       </SidebarInset>
@@ -101,11 +99,7 @@ function DashboardLayoutContent({ children, adminMeta, authenticatedItem }: Dash
       {/* Onboarding Dialog - Now at layout level, not hidden by sidebar */}
       <OnboardingDialog
         isOpen={isOnboardingDialogOpen}
-        onClose={() => {
-          setIsOnboardingDialogOpen(false)
-          router.refresh()
-        }}
-        onCompleted={() => router.refresh()}
+        onClose={() => setIsOnboardingDialogOpen(false)}
       />
     </>
   )

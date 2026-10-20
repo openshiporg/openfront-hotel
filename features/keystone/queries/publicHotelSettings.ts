@@ -2,6 +2,8 @@ import {
   DEFAULT_STOREFRONT_ACCENT_PRESET,
   resolveStorefrontAccentPreset,
 } from '../../storefront/lib/storefront-theme';
+import { normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
+import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
 
 const PUBLIC_HOTEL_SETTINGS_QUERY = `
   propertyName
@@ -13,6 +15,7 @@ const PUBLIC_HOTEL_SETTINGS_QUERY = `
   frontDeskCopy
   checkInTime
   checkOutTime
+  timeZone
   storefrontAccentPreset
   heroImagePath
   heroImageAltText
@@ -23,6 +26,8 @@ const PUBLIC_HOTEL_SETTINGS_QUERY = `
   locationImagePath
   locationImageAltText
   locationImageCaption
+  logoIcon
+  logoColor
 `;
 
 export default async function publicHotelSettings(
@@ -42,10 +47,13 @@ export default async function publicHotelSettings(
     };
   }
 
-  const { storefrontAccentPreset, ...publicSettings } = settings;
+  const { storefrontAccentPreset, logoIcon, logoColor, ...publicSettings } = settings;
   return {
     state: 'configured',
     accentPreset: resolveStorefrontAccentPreset(storefrontAccentPreset).key,
     ...publicSettings,
+    // Re-sanitize on the public boundary; an empty logo keeps the accent mark.
+    logoIcon: logoIcon ? sanitizeStoreLogoSvg(logoIcon) || null : null,
+    logoColor: normalizeStoreLogoColor(logoColor),
   };
 }

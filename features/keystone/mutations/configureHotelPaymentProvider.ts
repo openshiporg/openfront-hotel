@@ -25,7 +25,10 @@ export default async function configureHotelPaymentProvider(
   const existing = await context.prisma.paymentProvider.findUnique({ where: { code } });
   if (!existing) throw new Error('Payment provider record is unavailable.');
 
-  const data: Record<string, unknown> = { isInstalled: false };
+  const data: Record<string, unknown> = {
+    isInstalled: false,
+    metadata: { ...(existing.metadata || {}), stripeEnvironmentDisabled: !enabled },
+  };
   if (enabled) {
     const input = credentials && typeof credentials === 'object' ? credentials : {};
     data.credentials = code === 'pp_stripe_stripe'

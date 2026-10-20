@@ -47,9 +47,6 @@ export function StorefrontAccentPicker({
           );
         })}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Presets change storefront accent surfaces and browser theme color only. Rates, availability, and payment configuration are unaffected.
-      </p>
     </div>
   );
 }

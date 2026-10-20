@@ -12,4 +12,8 @@ node_modules
 *.tsbuildinfo
 .DS_Store
 .hallmark
+# Local agent and acceptance evidence, which may contain disposable credentials.
+.diffui
+.claude
+.pi
 coverage

@@ -1,7 +1,8 @@
 import { getHotelOperationalReport } from '../reporting/reporting';
+import { getHotelAvailability } from '../inventory/roomAvailability';
 import { refundablePaymentMinor } from '../refunds/bookingRefund';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
-import { paymentIntegrationConfigured } from '../lib/integrationConfig';
+import { paymentIntegrationConfigured, paymentProviderEnabled, paymentProviderUsesEnvironment } from '../lib/integrationConfig';
 import { safeOperationalErrorMessage } from '../lib/safeOperationalError';
 
 const HOTEL_PROPERTY_KEY = 'the-alder-house';
@@ -14,6 +15,16 @@ function requireHotelPermission(context: any, permission: string, propertyKey: s
     throw new Error('Not authorized for this hotel workspace.');
   }
 }
+
+// The board reads authoritative availability, which covers at most one 31-night stay window.
+const MAX_RATE_BOARD_DAYS = 31;
+const RATE_PLAN_PAGE_SIZE = 100;
+const GUEST_PAGE_SIZE = 50;
+const ROOM_PAGE_SIZE = 100;
+const PAYMENT_PAGE_SIZE = 50;
+const MAINTENANCE_PAGE_SIZE = 50;
+const OUTBOX_PAGE_SIZE = 100;
+const MAINTENANCE_PRIORITIES = ['emergency', 'high', 'medium', 'low'];
 
 function boundedDateRange(startValue: string, endValue: string, maxDays: number) {
   const start = new Date(startValue);
@@ -93,7 +104,8 @@ export const hotelOperationsTypeDefs = String.raw`
     roomType: HotelRoomTypeRef!
     activeTask: HotelTaskSummary
   }
-  type HotelRoomOperations { rooms: [HotelRoomOperationsItem!]! }
+  type HotelRoomOperations { rooms: [HotelRoomOperationsItem!]!, total: Int!, statusCounts: HotelRoomStatusCounts! }
+  type HotelRoomStatusCounts { all: Int!, vacant: Int!, occupied: Int!, cleaning: Int!, maintenance: Int!, out_of_order: Int! }
 
   type HotelInventoryProjection {
     id: ID!
@@ -127,9 +139,23 @@ export const hotelOperationsTypeDefs = String.raw`
   }
   type HotelRoomTypeCapacity { id: ID!, name: String!, totalRooms: Int!, sellableRooms: Int! }
   type HotelRateOperations {
+    businessDate: DateTime
+    start: DateTime!
+    end: DateTime!
     roomTypes: [HotelRoomTypeCapacity!]!
     inventories: [HotelInventoryProjection!]!
+    availability: [HotelInventoryAvailability!]!
     ratePlans: [HotelRatePlanProjection!]!
+    ratePlanTotal: Int!
+  }
+  type HotelInventoryAvailability {
+    roomTypeId: ID!
+    date: String!
+    total: Int!
+    booked: Int!
+    held: Int!
+    blocked: Int!
+    available: Int!
   }
 
   type HotelHousekeepingTaskProjection {
@@ -167,7 +193,7 @@ export const hotelOperationsTypeDefs = String.raw`
     assignedTo: HotelUserRef
     createdAt: DateTime!
   }
-  type HotelMaintenanceOperations { requests: [HotelMaintenanceProjection!]! }
+  type HotelMaintenanceOperations { requests: [HotelMaintenanceProjection!]!, total: Int!, statusCounts: JSON! }
 
   type HotelFolioEntryProjection {
     id: ID!
@@ -201,6 +227,8 @@ export const hotelOperationsTypeDefs = String.raw`
   type HotelFolioOperations {
     folios: [HotelFolioProjection!]!
     overdueExceptions: [HotelReservationProjection!]!
+    targetFolioId: ID
+    targetMissing: Boolean!
   }
   type HotelFolioGroupRef { id: ID!, name: String! }
 
@@ -248,7 +276,7 @@ export const hotelOperationsTypeDefs = String.raw`
     events: [HotelChannelSyncProjection!]!
   }
 
-  type HotelPaymentProviderProjection { id: ID!, name: String!, code: String!, isInstalled: Boolean!, configured: Boolean! }
+  type HotelPaymentProviderProjection { id: ID!, name: String!, code: String!, isInstalled: Boolean!, configured: Boolean!, credentialSource: String }
   type HotelPaymentProjection {
     id: ID!
     paymentReference: String!
@@ -270,8 +298,9 @@ export const hotelOperationsTypeDefs = String.raw`
     completedCount: Int!
     refundedCount: Int!
     failedCount: Int!
+    pendingCount: Int!
   }
-  type HotelPaymentOperations { payments: [HotelPaymentProjection!]!, summary: HotelPaymentSummary! }
+  type HotelPaymentOperations { payments: [HotelPaymentProjection!]!, summary: HotelPaymentSummary!, total: Int! }
   type HotelRefundQuote { paymentId: ID!, refundableMinor: Int!, currencyCode: String! }
 
   type HotelOperationalReportDay {
@@ -346,7 +375,8 @@ export const hotelOperationsTypeDefs = String.raw`
     totalSpent: String
     createdAt: DateTime!
   }
-  type HotelGuestOperations { guests: [HotelGuestProjection!]! }
+  type HotelGuestOperations { guests: [HotelGuestProjection!]!, total: Int!, segmentCounts: HotelGuestSegmentCounts! }
+  type HotelGuestSegmentCounts { all: Int!, vip: Int!, standard: Int!, restricted: Int! }
   type HotelPaymentProviderOperations { providers: [HotelPaymentProviderProjection!]! }
   type HotelOperatorCapabilities {
     canAccessDashboard: Boolean!
@@ -412,26 +442,26 @@ export const hotelOperationsTypeDefs = String.raw`
     id: ID!, intentKey: String!, amountMinor: Int!, currencyCode: String!, reason: String!, status: String!, attempts: Int!,
     lastError: String, availableAt: DateTime!, completedAt: DateTime, booking: HotelReservationProjection!
   }
-  type HotelOutboxOperations { events: [HotelOutboxEventProjection!]!, refundIntents: [HotelRefundIntentProjection!]! }
+  type HotelOutboxOperations { events: [HotelOutboxEventProjection!]!, refundIntents: [HotelRefundIntentProjection!]!, eventsTotal: Int!, refundIntentsTotal: Int!, statusCounts: JSON! }
 
   extend type Query {
     hotelOperatorCapabilities: HotelOperatorCapabilities!
-    hotelFrontDesk(propertyKey: String!, start: DateTime!, end: DateTime!): HotelReservationBoard!
+    hotelFrontDesk(propertyKey: String!, start: DateTime, end: DateTime): HotelReservationBoard!
     hotelReservationCalendar(propertyKey: String!, start: DateTime!, end: DateTime!): HotelReservationBoard!
-    hotelRoomOperations(propertyKey: String!): HotelRoomOperations!
-    hotelRateOperations(propertyKey: String!, start: DateTime!, end: DateTime!): HotelRateOperations!
+    hotelRoomOperations(propertyKey: String!, search: String, status: String, sort: String, take: Int, skip: Int): HotelRoomOperations!
+    hotelRateOperations(propertyKey: String!, start: DateTime, end: DateTime, ratePlanSkip: Int): HotelRateOperations!
     hotelHousekeepingOperations(propertyKey: String!): HotelHousekeepingOperations!
-    hotelMaintenanceOperations(propertyKey: String!): HotelMaintenanceOperations!
-    hotelFolioOperations(propertyKey: String!): HotelFolioOperations!
+    hotelMaintenanceOperations(propertyKey: String!, search: String, status: String, priority: String, sort: String, take: Int, skip: Int): HotelMaintenanceOperations!
+    hotelFolioOperations(propertyKey: String!, bookingId: ID): HotelFolioOperations!
     hotelChannelOperations(propertyKey: String!): HotelChannelOperations!
-    hotelPaymentOperations(propertyKey: String!): HotelPaymentOperations!
+    hotelPaymentOperations(propertyKey: String!, search: String, status: String, sort: String, take: Int, skip: Int): HotelPaymentOperations!
     hotelRefundQuote(propertyKey: String!, paymentId: ID!): HotelRefundQuote!
     hotelAnalyticsOperations(propertyKey: String!, start: DateTime!, end: DateTime!): HotelAnalyticsOperations!
-    hotelGuestOperations(propertyKey: String!, search: String): HotelGuestOperations!
+    hotelGuestOperations(propertyKey: String!, search: String, segment: String, sort: String, take: Int, skip: Int): HotelGuestOperations!
     hotelPaymentProviderOperations(propertyKey: String!): HotelPaymentProviderOperations!
     hotelNightAuditOperations(propertyKey: String!): HotelNightAuditOperations!
     hotelGroupOperations(propertyKey: String!): HotelGroupOperations!
-    hotelOutboxOperations(propertyKey: String!): HotelOutboxOperations!
+    hotelOutboxOperations(propertyKey: String!, status: String, search: String, eventSkip: Int, refundSkip: Int): HotelOutboxOperations!
   }
 `;
 
@@ -440,7 +470,7 @@ function mapRoom(room: any) {
   return {
     id: room.id,
     roomNumber: room.roomNumber,
-    floor: room.floor || null,
+    floor: room.floor ?? null,
     status: room.status || null,
     roomType: room.roomType ? { id: room.roomType.id, name: room.roomType.name, baseRate: room.roomType.baseRateMinor / 100, baseRateMinor: room.roomType.baseRateMinor } : null,
   };
@@ -499,7 +529,16 @@ async function reservationBoard(
   includePendingModifications = false,
 ) {
   requireHotelPermission(context, permission, args.propertyKey);
-  const { start, end } = boundedDateRange(args.start, args.end, maxDays);
+  let range = args;
+  if (!args.start || !args.end) {
+    // Without explicit dates, read the week either side of the property's business date, which
+    // is what the arrival, departure and in-house queues are counted against.
+    const current = await context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { currentBusinessDate: true } });
+    if (!current) throw new Error('Property business date is not configured.');
+    const anchor = new Date(current.currentBusinessDate).getTime();
+    range = { start: new Date(anchor - 7 * 86_400_000).toISOString(), end: new Date(anchor + 7 * 86_400_000).toISOString() };
+  }
+  const { start, end } = boundedDateRange(range.start, range.end, maxDays);
   const dateOverlap = { checkOutDate: { gt: start }, checkInDate: { lt: end } };
   const [bookings, rooms, clock] = await Promise.all([
     context.prisma.booking.findMany({
@@ -550,9 +589,36 @@ export const hotelOperationsResolvers = {
 
     hotelRoomOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManageRooms', args.propertyKey);
+      const search = String(args.search || '').trim().slice(0, 120);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || ROOM_PAGE_SIZE), 1), 250);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 100_000);
+      const floor = /^-?\d{1,3}$/.test(search) ? Number(search) : null;
+      const searchWhere = search ? { OR: [
+        { roomNumber: { contains: search, mode: 'insensitive' } },
+        { notes: { contains: search, mode: 'insensitive' } },
+        { roomType: { name: { contains: search, mode: 'insensitive' } } },
+        ...(floor !== null ? [{ floor }] : []),
+      ] } : {};
+      const statuses = ['vacant', 'occupied', 'cleaning', 'maintenance', 'out_of_order'];
+      const statusWhere = args.status === 'out_of_service'
+        ? { status: { in: ['maintenance', 'out_of_order'] } }
+        : statuses.includes(String(args.status)) ? { status: String(args.status) } : {};
+      const where = { AND: [searchWhere, statusWhere] };
+      const orderBy = args.sort === 'floor'
+        ? [{ floor: { sort: 'asc', nulls: 'last' } }, { roomNumber: 'asc' }, { id: 'asc' }]
+        : args.sort === 'status'
+          ? [{ status: 'asc' }, { roomNumber: 'asc' }, { id: 'asc' }]
+          : [{ roomNumber: 'asc' }, { id: 'asc' }];
+      const [total, grouped] = await Promise.all([
+        context.prisma.room.count({ where }),
+        context.prisma.room.groupBy({ by: ['status'], where: searchWhere, _count: { _all: true } }),
+      ]);
+      const countOf = (status: string) => Number(grouped.find((row: any) => row.status === status)?._count?._all || 0);
       const rooms = await context.prisma.room.findMany({
-        orderBy: [{ roomNumber: 'asc' }],
-        take: 250,
+        where,
+        orderBy,
+        take,
+        skip,
         include: {
           roomType: true,
           housekeepingTasks: {
@@ -569,39 +635,65 @@ export const hotelOperationsResolvers = {
           lastCleaned: room.lastCleaned,
           activeTask: room.housekeepingTasks[0] || null,
         })),
+        total,
+        statusCounts: {
+          all: grouped.reduce((sum: number, row: any) => sum + Number(row._count?._all || 0), 0),
+          vacant: countOf('vacant'), occupied: countOf('occupied'), cleaning: countOf('cleaning'),
+          maintenance: countOf('maintenance'), out_of_order: countOf('out_of_order'),
+        },
       };
     },
 
     hotelRateOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManageRooms', args.propertyKey);
-      const { start, end } = boundedDateRange(args.start, args.end, 120);
-      const [roomTypes, inventories, ratePlans] = await Promise.all([
-        context.prisma.roomType.findMany({ orderBy: { name: 'asc' }, include: { rooms: true } }),
+      // Without explicit dates the board shows the week starting on the property's open business date.
+      const clock = await context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
+      const anchor = clock?.currentBusinessDate ? new Date(clock.currentBusinessDate) : new Date();
+      anchor.setUTCHours(0, 0, 0, 0);
+      const { start, end } = boundedDateRange(
+        args.start || anchor.toISOString(),
+        args.end || new Date(anchor.getTime() + 7 * 86_400_000).toISOString(),
+        MAX_RATE_BOARD_DAYS,
+      );
+      const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+      const ratePlanSkip = Math.min(Math.max(Math.trunc(Number(args.ratePlanSkip) || 0), 0), 100_000);
+      const roomTypes = await context.prisma.roomType.findMany({ orderBy: [{ name: 'asc' }, { id: 'asc' }], include: { rooms: true } });
+      const [inventories, ratePlans, ratePlanTotal, availability] = await Promise.all([
+        // One override row per room type and day at most, so this bound never truncates the range.
         context.prisma.roomInventory.findMany({
-          where: { date: { gte: start, lte: end } },
+          where: { date: { gte: start, lt: end } },
           orderBy: [{ date: 'asc' }, { id: 'asc' }],
-          take: 500,
+          take: Math.max(1, roomTypes.length * days),
           include: { roomType: true },
         }),
         context.prisma.ratePlan.findMany({
-          orderBy: [{ status: 'asc' }, { priority: 'desc' }, { baseRateMinor: 'asc' }],
-          take: 100,
+          orderBy: [{ status: 'asc' }, { priority: 'desc' }, { baseRateMinor: 'asc' }, { id: 'asc' }],
+          skip: ratePlanSkip,
+          take: RATE_PLAN_PAGE_SIZE,
           include: { roomType: true },
         }),
+        context.prisma.ratePlan.count(),
+        roomTypes.length ? getHotelAvailability(context, { checkInDate: start, checkOutDate: end }) : [],
       ]);
+      const availabilityRows = availability.flatMap((roomType: any) => roomType.availabilityByDay.map((day: any) => ({ roomTypeId: roomType.id, ...day })));
+      const availableByKey = new Map(availabilityRows.map((row: any) => [`${row.roomTypeId}:${row.date}`, row.available]));
       return {
+        businessDate: clock?.currentBusinessDate || null,
+        start,
+        end,
         roomTypes: roomTypes.map((type: any) => ({
           id: type.id,
           name: type.name,
           totalRooms: type.rooms.length,
           sellableRooms: type.rooms.filter((room: any) => !['maintenance', 'out_of_order'].includes(room.status)).length,
         })),
-        inventories: inventories.map((item: any) => ({
-          ...item,
-          availableRooms: Math.max(0, item.totalRooms - item.bookedRooms - item.blockedRooms),
-          isAvailable: item.totalRooms - item.bookedRooms - item.blockedRooms > 0,
-        })),
+        inventories: inventories.map((item: any) => {
+          const available = Number(availableByKey.get(`${item.roomTypeId}:${new Date(item.date).toISOString().slice(0, 10)}`) ?? 0);
+          return { ...item, availableRooms: available, isAvailable: available > 0 };
+        }),
+        availability: availabilityRows,
         ratePlans,
+        ratePlanTotal,
       };
     },
 
@@ -622,10 +714,13 @@ export const hotelOperationsResolvers = {
           take: 250,
           include: { room: { include: { roomType: true } }, assignedTo: true },
         }),
+        // Same eligibility as task assignment: active staff whose role grants housekeeping or
+        // room maintenance, whatever the role is called.
         context.prisma.user.findMany({
-          where: { role: { name: 'Housekeeping' } },
+          where: { isActive: true, role: { OR: [{ canManageHousekeeping: true }, { canManageRooms: true }] } },
           orderBy: { name: 'asc' },
-          take: 100,
+          take: 500,
+          select: { id: true, name: true },
         }),
       ]);
       const completed = tasks.filter((task: any) => task.status === 'completed' && task.completedAt >= completedSince);
@@ -645,34 +740,86 @@ export const hotelOperationsResolvers = {
 
     hotelMaintenanceOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManageRooms', args.propertyKey);
-      const requests = await context.prisma.maintenanceRequest.findMany({
-        orderBy: [{ createdAt: 'desc' }],
-        take: 100,
-        include: { room: { include: { roomType: true } }, assignedTo: true },
-      });
-      return { requests: requests.map((item: any) => ({ ...item, room: mapRoom(item.room) })) };
+      const search = String(args.search || '').trim().slice(0, 160);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || MAINTENANCE_PAGE_SIZE), 1), 100);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 100_000);
+      const searchWhere = search ? { OR: [
+        { title: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } },
+        { notes: { contains: search, mode: 'insensitive' } },
+        { room: { roomNumber: { contains: search, mode: 'insensitive' } } },
+        { assignedTo: { name: { contains: search, mode: 'insensitive' } } },
+      ] } : {};
+      const priority = MAINTENANCE_PRIORITIES.includes(String(args.priority)) ? { priority: String(args.priority) } : {};
+      const status = args.status && args.status !== 'all' ? { status: String(args.status).slice(0, 40) } : {};
+      const where = { AND: [searchWhere, priority, status] };
+      const include = { room: { include: { roomType: true } }, assignedTo: true };
+      const recent = [{ createdAt: 'desc' }, { id: 'desc' }];
+      let total: number;
+      let requests: any[];
+      if (args.sort === 'recent') {
+        [total, requests] = await Promise.all([
+          context.prisma.maintenanceRequest.count({ where }),
+          context.prisma.maintenanceRequest.findMany({ where, orderBy: recent, take, skip, include }),
+        ]);
+      } else {
+        // Priority order (emergency first) across every matching request: walk the priority groups in order.
+        const groups = [...MAINTENANCE_PRIORITIES.map((value) => ({ priority: value })), { priority: { notIn: MAINTENANCE_PRIORITIES } }];
+        const counts = await Promise.all(groups.map((group) => context.prisma.maintenanceRequest.count({ where: { AND: [where, group] } })));
+        total = counts.reduce((sum: number, count: number) => sum + count, 0);
+        requests = [];
+        let groupSkip = skip;
+        for (const [index, group] of groups.entries()) {
+          if (requests.length >= take) break;
+          if (groupSkip >= counts[index]) { groupSkip -= counts[index]; continue; }
+          requests.push(...await context.prisma.maintenanceRequest.findMany({ where: { AND: [where, group] }, orderBy: recent, skip: groupSkip, take: take - requests.length, include }));
+          groupSkip = 0;
+        }
+      }
+      const [byStatus, emergencyOpen] = await Promise.all([
+        context.prisma.maintenanceRequest.groupBy({ by: ['status'], where: { AND: [searchWhere, priority] }, _count: { _all: true } }),
+        context.prisma.maintenanceRequest.count({ where: { AND: [searchWhere, { priority: 'emergency' }, { status: { notIn: ['verified', 'cancelled'] } }] } }),
+      ]);
+      const statusCounts: Record<string, number> = { emergencyOpen };
+      for (const row of byStatus) statusCounts[row.status || 'reported'] = (statusCounts[row.status || 'reported'] || 0) + Number(row._count?._all || 0);
+      return {
+        requests: requests.map((item: any) => ({ ...item, room: mapRoom(item.room) })),
+        total,
+        statusCounts,
+      };
     },
 
     hotelFolioOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManagePayments', args.propertyKey);
-      const [folios, clock] = await Promise.all([context.prisma.folio.findMany({
+      const folioInclude = {
+        booking: { include: reservationInclude },
+        groupBlock: { select: { id: true, name: true } },
+        billedBookings: { take: 1, orderBy: { id: 'asc' }, select: { id: true } },
+        entries: {
+          orderBy: [{ postedAt: 'asc' }, { id: 'asc' }],
+          include: { reversedBy: { select: { id: true } } },
+        },
+      };
+      const requestedBookingId = args.bookingId ? String(args.bookingId).trim().slice(0, 100) : '';
+      const [recentFolios, clock, target] = await Promise.all([context.prisma.folio.findMany({
         orderBy: [{ openedAt: 'desc' }],
         take: 50,
-        include: {
-          booking: { include: reservationInclude },
-          groupBlock: { select: { id: true, name: true } },
-          billedBookings: { take: 1, orderBy: { id: 'asc' }, select: { id: true } },
-          entries: {
-            orderBy: [{ postedAt: 'asc' }, { id: 'asc' }],
-            include: { reversedBy: { select: { id: true } } },
-          },
-        },
-      }), context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } })]);
+        include: folioInclude,
+      }), context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } }),
+      // A deep link names one reservation: its own folio, or the group master folio that bills it.
+      requestedBookingId ? context.prisma.folio.findFirst({
+        where: { OR: [{ bookingId: requestedBookingId }, { billedBookings: { some: { id: requestedBookingId } } }] },
+        orderBy: [{ openedAt: 'desc' }],
+        include: folioInclude,
+      }) : null]);
+      const folios = target && !recentFolios.some((folio: any) => folio.id === target.id) ? [target, ...recentFolios] : recentFolios;
       const overdueExceptions = clock ? await context.prisma.booking.findMany({
         where: { status: 'checked_in', checkOutDate: { lte: clock.currentBusinessDate } },
         orderBy: [{ checkOutDate: 'asc' }, { id: 'asc' }], take: 100, include: reservationInclude,
       }) : [];
       return {
+        targetFolioId: target?.id || null,
+        targetMissing: Boolean(requestedBookingId) && !target,
         overdueExceptions: overdueExceptions.map(mapReservation),
         folios: folios.map((folio: any) => {
           const debitMinor = folio.entries
@@ -754,14 +901,34 @@ export const hotelOperationsResolvers = {
 
     hotelPaymentOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManagePayments', args.propertyKey);
-      const payments = await context.prisma.bookingPayment.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-        include: { booking: { include: reservationInclude }, paymentProvider: true },
-      });
-      const completed = payments.filter((payment: any) => payment.status === 'completed');
-      const refunded = payments.filter((payment: any) => payment.status === 'refunded');
+      const search = String(args.search || '').trim().slice(0, 160);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || PAYMENT_PAGE_SIZE), 1), 100);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 100_000);
+      const searchWhere = search ? { OR: [
+        { paymentReference: { contains: search, mode: 'insensitive' } },
+        { providerPaymentId: { contains: search, mode: 'insensitive' } },
+        { paymentMethod: { contains: search, mode: 'insensitive' } },
+        { booking: { confirmationNumber: { contains: search, mode: 'insensitive' } } },
+        { booking: { guestName: { contains: search, mode: 'insensitive' } } },
+        { paymentProvider: { name: { contains: search, mode: 'insensitive' } } },
+      ] } : {};
+      const status = ['completed', 'pending', 'failed', 'refunded', 'processing', 'cancelled'].includes(String(args.status)) ? String(args.status) : null;
+      const where = { AND: [searchWhere, status ? { status } : {}] };
+      const orderBy = args.sort === 'amount' ? [{ amountMinor: 'desc' }, { id: 'desc' }] : [{ createdAt: 'desc' }, { id: 'desc' }];
+      const [payments, total, byStatus] = await Promise.all([
+        context.prisma.bookingPayment.findMany({
+          where, orderBy, take, skip,
+          include: { booking: { include: reservationInclude }, paymentProvider: true },
+        }),
+        context.prisma.bookingPayment.count({ where }),
+        // Totals cover every payment record, not just the page on screen.
+        context.prisma.bookingPayment.groupBy({ by: ['status'], _count: { _all: true }, _sum: { amountMinor: true } }),
+      ]);
+      const statusTotal = (value: string) => byStatus.find((row: any) => row.status === value);
+      const capturedAmountMinor = Math.max(0, Number(statusTotal('completed')?._sum?.amountMinor || 0));
+      const refundedAmountMinor = Math.abs(Number(statusTotal('refunded')?._sum?.amountMinor || 0));
       return {
+        total,
         payments: payments.map((payment: any) => ({
           ...payment,
           amount: payment.amountMinor / 100,
@@ -774,13 +941,14 @@ export const hotelOperationsResolvers = {
           },
         })),
         summary: {
-          capturedAmountMinor: completed.reduce((sum: number, payment: any) => sum + Math.max(0, Number(payment.amountMinor || 0)), 0),
-          refundedAmountMinor: refunded.reduce((sum: number, payment: any) => sum + Math.abs(Number(payment.amountMinor || 0)), 0),
-          capturedAmount: completed.reduce((sum: number, payment: any) => sum + Math.max(0, Number(payment.amountMinor || 0)), 0) / 100,
-          refundedAmount: refunded.reduce((sum: number, payment: any) => sum + Math.abs(Number(payment.amountMinor || 0)), 0) / 100,
-          completedCount: completed.length,
-          refundedCount: refunded.length,
-          failedCount: payments.filter((payment: any) => payment.status === 'failed').length,
+          capturedAmountMinor,
+          refundedAmountMinor,
+          capturedAmount: capturedAmountMinor / 100,
+          refundedAmount: refundedAmountMinor / 100,
+          completedCount: Number(statusTotal('completed')?._count?._all || 0),
+          refundedCount: Number(statusTotal('refunded')?._count?._all || 0),
+          failedCount: Number(statusTotal('failed')?._count?._all || 0),
+          pendingCount: Number(statusTotal('pending')?._count?._all || 0),
         },
       };
     },
@@ -810,17 +978,44 @@ export const hotelOperationsResolvers = {
 
     hotelGuestOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManageGuests', args.propertyKey);
-      const search = String(args.search || '').trim();
+      const search = String(args.search || '').trim().slice(0, 160);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || GUEST_PAGE_SIZE), 1), 100);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 100_000);
+      // Phone numbers are stored as typed; compare digits only so "+1 (555) 010" finds "15550100".
+      const digits = search.replace(/\D/g, '');
+      const phoneMatches: Array<{ id: string }> = search && digits.length >= 3
+        ? await context.prisma.$queryRaw`SELECT "id" FROM "Guest" WHERE regexp_replace("phone", '\\D', '', 'g') LIKE ${`%${digits}%`} LIMIT 1000`
+        : [];
+      const searchWhere = search ? { OR: [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        ...(phoneMatches.length ? [{ id: { in: phoneMatches.map((row) => row.id) } }] : []),
+      ] } : {};
+      const segmentWhere: Record<string, object> = {
+        vip: { isVip: true, isBlacklisted: false },
+        standard: { isVip: false, isBlacklisted: false },
+        restricted: { isBlacklisted: true },
+      };
+      const segment = segmentWhere[String(args.segment)] ? String(args.segment) : 'all';
+      const where = { AND: [searchWhere, segment === 'all' ? {} : segmentWhere[segment]] };
+      const orderBy = args.sort === 'name'
+        ? [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }]
+        : args.sort === 'reservations'
+          ? [{ bookings: { _count: 'desc' } }, { id: 'asc' }]
+          : [{ updatedAt: 'desc' }, { id: 'desc' }];
+      const [total, all, vip, standard, restricted] = await Promise.all([
+        context.prisma.guest.count({ where }),
+        context.prisma.guest.count({ where: searchWhere }),
+        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.vip] } }),
+        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.standard] } }),
+        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.restricted] } }),
+      ]);
       const guests = await context.prisma.guest.findMany({
-        where: search
-          ? { OR: [
-              { firstName: { contains: search, mode: 'insensitive' } },
-              { lastName: { contains: search, mode: 'insensitive' } },
-              { email: { contains: search, mode: 'insensitive' } },
-            ] }
-          : undefined,
-        orderBy: [{ updatedAt: 'desc' }],
-        take: 100,
+        where,
+        orderBy,
+        take,
+        skip,
         select: {
           id: true, firstName: true, lastName: true, email: true, phone: true,
           loyaltyNumber: true, loyaltyTier: true,
@@ -845,6 +1040,8 @@ export const hotelOperationsResolvers = {
             lastStayAt: facts?._max?.checkOutDate || null,
           };
         }),
+        total,
+        segmentCounts: { all, vip, standard, restricted },
       };
     },
 
@@ -854,14 +1051,15 @@ export const hotelOperationsResolvers = {
       const providers = await context.prisma.paymentProvider.findMany({
         orderBy: { name: 'asc' },
         take: 20,
-        select: { id: true, name: true, code: true, isInstalled: true, credentials: true },
+        select: { id: true, name: true, code: true, isInstalled: true, credentials: true, metadata: true },
       });
       return { providers: providers.map((provider: any) => ({
         id: provider.id,
         name: provider.name,
         code: provider.code,
-        isInstalled: provider.isInstalled,
+        isInstalled: paymentProviderEnabled(provider),
         configured: paymentIntegrationConfigured(provider),
+        credentialSource: paymentProviderUsesEnvironment(provider) ? 'environment' : 'saved',
       })) };
     },
 
@@ -880,17 +1078,51 @@ export const hotelOperationsResolvers = {
 
     hotelOutboxOperations: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManageAudit', args.propertyKey);
-      const [events, refundIntents] = await Promise.all([
+      const search = String(args.search || '').trim().slice(0, 160);
+      const page = (value: unknown) => Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 100_000);
+      // Messages record success as 'delivered' and refunds as 'succeeded'; the screen shows both as 'completed'.
+      const status = ['pending', 'processing', 'failed', 'dead_letter', 'completed'].includes(String(args.status)) ? String(args.status) : null;
+      const eventWhere = { AND: [
+        status ? { status: status === 'completed' ? 'delivered' : status } : {},
+        search ? { OR: [
+          { topic: { contains: search, mode: 'insensitive' } }, { eventKey: { contains: search, mode: 'insensitive' } },
+          { aggregateType: { contains: search, mode: 'insensitive' } }, { aggregateId: { contains: search, mode: 'insensitive' } },
+          { lastError: { contains: search, mode: 'insensitive' } },
+        ] } : {},
+      ] };
+      const refundWhere = { AND: [
+        status ? { status: status === 'completed' ? 'succeeded' : status } : {},
+        search ? { OR: [
+          { reason: { contains: search, mode: 'insensitive' } }, { lastError: { contains: search, mode: 'insensitive' } },
+          { booking: { confirmationNumber: { contains: search, mode: 'insensitive' } } },
+        ] } : {},
+      ] };
+      const [events, refundIntents, eventsTotal, refundIntentsTotal, eventStatuses, refundStatuses] = await Promise.all([
         context.prisma.hotelOutboxEvent.findMany({
-          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 100,
+          where: eventWhere, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: page(args.eventSkip), take: OUTBOX_PAGE_SIZE,
           include: { attemptsEvidence: { orderBy: { attemptNumber: 'asc' }, take: 20 } },
         }),
         context.prisma.refundIntent.findMany({
-          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 100,
+          where: refundWhere, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: page(args.refundSkip), take: OUTBOX_PAGE_SIZE,
           include: { booking: { include: reservationInclude } },
         }),
+        context.prisma.hotelOutboxEvent.count({ where: eventWhere }),
+        context.prisma.refundIntent.count({ where: refundWhere }),
+        context.prisma.hotelOutboxEvent.groupBy({ by: ['status'], _count: { _all: true } }),
+        context.prisma.refundIntent.groupBy({ by: ['status'], _count: { _all: true } }),
       ]);
-      return { events, refundIntents: refundIntents.map((item: any) => ({ ...item, booking: mapReservation(item.booking) })) };
+      const statusCounts: Record<string, number> = {};
+      for (const row of [...eventStatuses, ...refundStatuses]) {
+        const key = row.status === 'delivered' || row.status === 'succeeded' ? 'completed' : row.status;
+        statusCounts[key] = (statusCounts[key] || 0) + Number(row._count?._all || 0);
+      }
+      return {
+        events,
+        refundIntents: refundIntents.map((item: any) => ({ ...item, booking: mapReservation(item.booking) })),
+        eventsTotal,
+        refundIntentsTotal,
+        statusCounts,
+      };
     },
 
     hotelGroupOperations: async (_root: unknown, args: any, context: any) => {

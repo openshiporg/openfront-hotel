@@ -1,37 +1,49 @@
 'use client';
 
 import React from 'react';
-import { format, parseISO, differenceInMinutes } from 'date-fns';
-import {
-  Bed,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
-  Wrench,
-  Sparkles,
-  User,
-  RefreshCw,
-  Filter,
-  ChevronRight,
-  Play,
-  Pause,
-  Check,
-  Flag,
-  Loader2
-} from 'lucide-react';
+import { differenceInMinutes, parseISO } from 'date-fns';
+import { Check, Clock3, Flag, Moon, Pause, Play, Sparkles, UserRound, Wrench } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { FilterTabs } from '@/features/platform/components/FilterTabs';
+import { Meter, StatStrip } from '@/features/platform/components/Stats';
+import { StatusPill } from '@/features/platform/components/StatusPill';
+import { InitialsAvatar, Panel, PanelHeader, SectionLabel } from '@/features/platform/components/Surface';
+import { WorkspaceEmpty, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
+import { formatTime, humanize } from '@/features/platform/lib/format';
+import { statusMeta, TONE_DOT, TONE_SURFACE } from '@/features/platform/lib/status';
+import { INSPECTION_CHECKLIST_NOTE, requiresInspectionChecklist } from '@/features/keystone/workforce/inspectionChecklist';
+
+const floorKey = (floor: number | null) => (floor === null ? 'none' : String(floor));
+const floorLabel = (floor: number | null) => (floor === null ? 'No floor set' : `Floor ${floor}`);
+// Numbered floors in order, rooms without a floor last.
+const compareFloors = (a: number | null, b: number | null) => (a === null ? 1 : b === null ? -1 : a - b);
 
 export interface HousekeepingRoom {
   id: string;
   roomNumber: string;
-  floor: number;
+  /** Null when the room has no floor recorded; 0 is a real ground floor. */
+  floor: number | null;
   status: 'vacant' | 'occupied' | 'cleaning' | 'maintenance' | 'out_of_order';
   roomType?: string;
   guestName?: string;
@@ -51,6 +63,7 @@ export interface HousekeepingTask {
   };
   startedAt?: string;
   completedAt?: string;
+  updatedAt?: string;
   notes?: string;
 }
 
@@ -80,8 +93,9 @@ interface HousekeepingDashboardProps {
   staff: StaffMember[];
   metrics: HousekeepingMetrics;
   onAssignTask?: (taskId: string, staffId: string) => void;
-  onUpdateTaskStatus?: (taskId: string, status: string) => void;
+  onUpdateTaskStatus?: (taskId: string, status: string, notes?: string) => void;
   onReportIssue?: (roomId: string) => void;
+  onScheduleTask?: (roomId: string, taskType: 'deep_clean' | 'turn_down') => void;
   onRefresh?: () => void;
   loading?: boolean;
   selectedFloor?: string;
@@ -92,76 +106,26 @@ interface HousekeepingDashboardProps {
   onStaffChange?: (staff: string) => void;
 }
 
-function getRoomStatusColor(status: string) {
-  switch (status) {
-    case 'vacant':
-      return 'bg-green-500';
-    case 'occupied':
-      return 'bg-blue-500';
-    case 'cleaning':
-      return 'bg-yellow-500';
-    case 'maintenance':
-      return 'bg-orange-500';
-    case 'out_of_order':
-      return 'bg-red-500';
-    default:
-      return 'bg-gray-400';
-  }
-}
+const TASK_TYPE_LABELS: Record<string, string> = {
+  checkout_clean: 'Checkout clean',
+  stayover_clean: 'Stayover clean',
+  deep_clean: 'Deep clean',
+  maintenance: 'Maintenance',
+  inspection: 'Inspection',
+  turn_down: 'Turn-down',
+};
 
-function getRoomStatusBadge(status: string) {
-  switch (status) {
-    case 'vacant':
-      return <Badge className="bg-green-100 text-green-700">Vacant</Badge>;
-    case 'occupied':
-      return <Badge className="bg-blue-100 text-blue-700">Occupied</Badge>;
-    case 'cleaning':
-      return <Badge className="bg-yellow-100 text-yellow-700">Cleaning</Badge>;
-    case 'maintenance':
-      return <Badge className="bg-orange-100 text-orange-700">Maintenance</Badge>;
-    case 'out_of_order':
-      return <Badge className="bg-red-100 text-red-700">Out of Order</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
+const ROOM_STATUSES = ['vacant', 'occupied', 'cleaning', 'maintenance', 'out_of_order'] as const;
+const TASK_VIEWS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'inspection_needed', label: 'Inspection' },
+  { value: 'on_hold', label: 'On hold' },
+  { value: 'completed', label: 'Completed' },
+] as const;
 
-function getTaskStatusBadge(status: string) {
-  switch (status) {
-    case 'pending':
-      return <Badge className="bg-gray-100 text-gray-700">Pending</Badge>;
-    case 'in_progress':
-      return <Badge className="bg-blue-100 text-blue-700">In Progress</Badge>;
-    case 'completed':
-      return <Badge className="bg-green-100 text-green-700">Completed</Badge>;
-    case 'inspection_needed':
-      return <Badge className="bg-purple-100 text-purple-700">Inspection</Badge>;
-    case 'on_hold':
-      return <Badge className="bg-orange-100 text-orange-700">On Hold</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
-}
-
-function getTaskTypeLabel(type: string) {
-  const labels: Record<string, string> = {
-    checkout_clean: 'Checkout Clean',
-    stayover_clean: 'Stayover Clean',
-    deep_clean: 'Deep Clean',
-    maintenance: 'Maintenance',
-    inspection: 'Inspection',
-    turn_down: 'Turn Down',
-  };
-  return labels[type] || type;
-}
-
-function getPriorityBadge(priority: number) {
-  if (priority === 1) {
-    return <Badge variant="destructive">Urgent</Badge>;
-  } else if (priority === 2) {
-    return <Badge className="bg-orange-100 text-orange-700">High</Badge>;
-  }
-  return null;
+function taskTypeLabel(type: string) {
+  return TASK_TYPE_LABELS[type] || humanize(type);
 }
 
 export function HousekeepingDashboard({
@@ -169,10 +133,9 @@ export function HousekeepingDashboard({
   tasks,
   staff,
   metrics,
-  onAssignTask,
   onUpdateTaskStatus,
   onReportIssue,
-  onRefresh,
+  onScheduleTask,
   loading = false,
   selectedFloor = 'all',
   onFloorChange,
@@ -181,450 +144,269 @@ export function HousekeepingDashboard({
   selectedStaff = 'all',
   onStaffChange,
 }: HousekeepingDashboardProps) {
-  const floors = React.useMemo(() => {
-    const uniqueFloors = [...new Set(rooms.map((r) => r.floor))].sort((a, b) => a - b);
-    return uniqueFloors;
-  }, [rooms]);
+  const [taskView, setTaskView] = React.useState<string>('pending');
 
-  const filteredRooms = React.useMemo(() => {
-    return rooms.filter((room) => {
-      if (selectedFloor !== 'all' && room.floor !== parseInt(selectedFloor)) return false;
-      if (selectedStatus !== 'all' && room.status !== selectedStatus) return false;
-      return true;
+  const floors = React.useMemo(() => [...new Set(rooms.map((room) => room.floor))].sort(compareFloors), [rooms]);
+
+  const floorRooms = React.useMemo(
+    () => rooms.filter((room) => selectedFloor === 'all' || floorKey(room.floor) === selectedFloor),
+    [rooms, selectedFloor],
+  );
+  const filteredRooms = React.useMemo(
+    () => floorRooms.filter((room) => selectedStatus === 'all' || room.status === selectedStatus),
+    [floorRooms, selectedStatus],
+  );
+  const roomsByFloor = React.useMemo(() => {
+    const groups = new Map<number | null, HousekeepingRoom[]>();
+    filteredRooms.forEach((room) => groups.set(room.floor, [...(groups.get(room.floor) || []), room]));
+    return [...groups.entries()].sort(([a], [b]) => compareFloors(a, b)).map(([floor, list]) => ({
+      floor,
+      rooms: [...list].sort((a, b) => String(a.roomNumber).localeCompare(String(b.roomNumber), undefined, { numeric: true })),
+    }));
+  }, [filteredRooms]);
+
+  const activeTaskByRoom = React.useMemo(() => {
+    const map = new Map<string, HousekeepingTask>();
+    tasks.filter((task) => task.status !== 'completed').forEach((task) => {
+      const existing = map.get(task.room.id);
+      if (!existing || task.priority < existing.priority) map.set(task.room.id, task);
     });
-  }, [rooms, selectedFloor, selectedStatus]);
+    return map;
+  }, [tasks]);
 
-  const pendingTasks = tasks.filter((t) => t.status === 'pending');
-  const inProgressTasks = tasks.filter((t) => t.status === 'in_progress');
-  const inspectionTasks = tasks.filter((t) => t.status === 'inspection_needed');
-  const onHoldTasks = tasks.filter((t) => t.status === 'on_hold');
-  const completedTasks = tasks.filter((t) => t.status === 'completed');
+  const staffTasks = selectedStaff === 'all' ? tasks : tasks.filter((task) => task.assignedTo?.id === selectedStaff);
+  const tasksByView = (status: string) => staffTasks.filter((task) => task.status === status).sort((a, b) => a.priority - b.priority);
+  const visibleTasks = tasksByView(taskView);
+  const selectedStaffName = staff.find((member) => member.id === selectedStaff)?.name;
 
-  const cleanlinessPercentage = metrics.totalRooms > 0 
-    ? Math.round((metrics.cleanRooms / metrics.totalRooms) * 100) 
-    : 0;
+  const readyPercent = metrics.totalRooms > 0 ? Math.round((metrics.cleanRooms / metrics.totalRooms) * 100) : 0;
+  const statusCount = (status: string) => floorRooms.filter((room) => room.status === status).length;
 
   return (
     <div className="min-w-0 space-y-6">
-      {/* Header with Metrics */}
-      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Housekeeping Dashboard</h2>
-          <p className="text-muted-foreground">Real-time room status and task management</p>
-        </div>
-        <Button variant="outline" onClick={onRefresh} disabled={loading}>
-          {loading ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4 mr-2" />
-          )}
-          Refresh
-        </Button>
-      </div>
+      <StatStrip
+        loading={loading && !rooms.length}
+        items={[
+          { label: 'Vacant', value: metrics.cleanRooms, tone: 'success', hint: `${readyPercent}% of ${metrics.totalRooms} rooms`, onSelect: () => onStatusChange?.(selectedStatus === 'vacant' ? 'all' : 'vacant'), active: selectedStatus === 'vacant' },
+          { label: 'Cleaning', value: metrics.dirtyRooms, tone: 'warning', hint: `${metrics.pendingTasks} tasks pending`, onSelect: () => onStatusChange?.(selectedStatus === 'cleaning' ? 'all' : 'cleaning'), active: selectedStatus === 'cleaning' },
+          { label: 'In progress', value: metrics.inProgress, tone: 'progress', hint: 'Tasks being worked', onSelect: () => setTaskView('in_progress'), active: taskView === 'in_progress' },
+          { label: 'Inspection', value: metrics.inspectionNeeded, tone: 'accent', hint: 'Awaiting sign-off', onSelect: () => setTaskView('inspection_needed'), active: taskView === 'inspection_needed' },
+          { label: 'Maintenance', value: metrics.maintenance, tone: 'danger', hint: 'Rooms out of service', onSelect: () => onStatusChange?.(selectedStatus === 'maintenance' ? 'all' : 'maintenance'), active: selectedStatus === 'maintenance' },
+          { label: 'Done today', value: metrics.completedToday, tone: 'neutral', hint: metrics.averageCleanTime ? `Avg ${Math.round(metrics.averageCleanTime)} min clean` : 'No timed cleans yet' },
+        ]}
+      />
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 gap-4 min-[360px]:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{metrics.cleanRooms}</p>
-                <p className="text-xs text-muted-foreground">Clean</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
-                <Sparkles className="h-5 w-5 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{metrics.dirtyRooms}</p>
-                <p className="text-xs text-muted-foreground">To Clean</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                <Clock className="h-5 w-5 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{metrics.inProgress}</p>
-                <p className="text-xs text-muted-foreground">In Progress</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
-                <AlertCircle className="h-5 w-5 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{metrics.inspectionNeeded}</p>
-                <p className="text-xs text-muted-foreground">Inspection</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
-                <Wrench className="h-5 w-5 text-orange-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{metrics.maintenance}</p>
-                <p className="text-xs text-muted-foreground">Maintenance</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
-                <Bed className="h-5 w-5 text-gray-600" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{metrics.completedToday}</p>
-                <p className="text-xs text-muted-foreground">Done Today</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Progress Bar */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium">Overall Cleanliness</span>
-            <span className="text-sm font-medium">{cleanlinessPercentage}%</span>
+      <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <Panel>
+          <PanelHeader
+            title="Room board"
+            description={`${metrics.cleanRooms} of ${metrics.totalRooms} rooms vacant. Select a room for details or to escalate an issue.`}
+            actions={(
+              <WorkspaceSelect label="Filter rooms by floor" value={selectedFloor} onChange={(floor) => onFloorChange?.(floor)}>
+                <option value="all">All floors</option>
+                {floors.map((floor) => <option key={floorKey(floor)} value={floorKey(floor)}>{floorLabel(floor)}</option>)}
+              </WorkspaceSelect>
+            )}
+          >
+            <Meter value={metrics.cleanRooms} max={metrics.totalRooms} label="Vacant rooms" className="mt-3" />
+          </PanelHeader>
+          <div className="border-b px-4 sm:px-5">
+            <FilterTabs
+              label="Filter rooms by status"
+              value={selectedStatus}
+              onChange={(status) => onStatusChange?.(status)}
+              tabs={[
+                { value: 'all', label: 'All', count: floorRooms.length },
+                ...ROOM_STATUSES.map((status) => ({ value: status, label: statusMeta('room', status).label, count: statusCount(status), tone: statusMeta('room', status).tone })),
+              ]}
+            />
           </div>
-          <Progress
-            value={cleanlinessPercentage}
-            className="h-3"
-            aria-label="Overall room cleanliness"
-          />
-          <p className="text-xs text-muted-foreground mt-2">
-            {metrics.cleanRooms} of {metrics.totalRooms} rooms are clean and ready
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Main Content */}
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-3">
-        {/* Room Grid / Floor Plan */}
-        <div className="min-w-0 lg:col-span-2">
-          <Card className="min-w-0">
-            <CardHeader>
-              <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle>Room Status</CardTitle>
-                <div className="grid w-full grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:w-auto">
-                  <Select value={selectedFloor} onValueChange={onFloorChange}>
-                    <SelectTrigger
-                      className="w-full sm:w-[120px]"
-                      aria-label="Filter rooms by floor"
-                    >
-                      <SelectValue placeholder="Floor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Floors</SelectItem>
-                      {floors.map((floor) => (
-                        <SelectItem key={floor} value={String(floor)}>
-                          Floor {floor}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={selectedStatus} onValueChange={onStatusChange}>
-                    <SelectTrigger
-                      className="w-full sm:w-[130px]"
-                      aria-label="Filter rooms by status"
-                    >
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="vacant">Vacant</SelectItem>
-                      <SelectItem value="occupied">Occupied</SelectItem>
-                      <SelectItem value="cleaning">Cleaning</SelectItem>
-                      <SelectItem value="maintenance">Maintenance</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-2 min-[360px]:grid-cols-4 sm:grid-cols-6 md:grid-cols-8">
-                {filteredRooms.map((room) => (
-                  <button
-                    key={room.id}
-                    className={cn(
-                      'relative p-2 rounded-lg border text-center transition-all hover:scale-105',
-                      room.status === 'vacant' && 'bg-green-50 border-green-200 hover:bg-green-100',
-                      room.status === 'occupied' && 'bg-blue-50 border-blue-200 hover:bg-blue-100',
-                      room.status === 'cleaning' && 'bg-yellow-50 border-yellow-200 hover:bg-yellow-100',
-                      room.status === 'maintenance' && 'bg-orange-50 border-orange-200 hover:bg-orange-100',
-                      room.status === 'out_of_order' && 'bg-red-50 border-red-200 hover:bg-red-100'
-                    )}
-                    onClick={() => onReportIssue?.(room.id)}
-                  >
-                    <div className={cn(
-                      'absolute top-1 right-1 w-2 h-2 rounded-full',
-                      getRoomStatusColor(room.status)
-                    )} />
-                    <p className="font-semibold text-sm">{room.roomNumber}</p>
-                    {room.guestName && (
-                      <p className="text-[10px] text-muted-foreground truncate">
-                        {room.guestName.split(' ')[0]}
-                      </p>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* Legend */}
-              <div className="flex flex-wrap gap-4 mt-6 pt-4 border-t">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-xs">Vacant</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <span className="text-xs">Occupied</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-yellow-500" />
-                  <span className="text-xs">Cleaning</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-orange-500" />
-                  <span className="text-xs">Maintenance</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500" />
-                  <span className="text-xs">Out of Order</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Staff Assignment */}
-        <div className="min-w-0">
-          <Card className="min-w-0">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <User className="h-5 w-5" />
-                Staff
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {staff.map((member) => (
-                <div
-                  key={member.id}
-                  className={cn(
-                    'p-3 rounded-lg border',
-                    member.status === 'available' && 'bg-green-50 border-green-200',
-                    member.status === 'busy' && 'bg-blue-50 border-blue-200',
-                    member.status === 'break' && 'bg-yellow-50 border-yellow-200',
-                    member.status === 'offline' && 'bg-gray-50 border-gray-200'
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">{member.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {member.assignedRooms} assigned • {member.completedToday} done
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="text-xs">
-                      {member.status}
-                    </Badge>
+          {roomsByFloor.length === 0 ? (
+            <WorkspaceEmpty
+              compact
+              title={rooms.length ? 'No rooms match this view' : 'No rooms configured'}
+              description={rooms.length ? 'Choose another floor or status.' : 'Rooms appear here after property onboarding.'}
+              onClear={rooms.length ? () => { onFloorChange?.('all'); onStatusChange?.('all'); } : undefined}
+            />
+          ) : (
+            <div className="space-y-5 p-4 sm:p-5">
+              {roomsByFloor.map(({ floor, rooms: list }) => (
+                <div key={floorKey(floor)} className="space-y-2">
+                  <SectionLabel>{floorLabel(floor)} <span className="normal-case tracking-normal text-muted-foreground/70">· {list.length}</span></SectionLabel>
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(5.75rem,1fr))] gap-2">
+                    {list.map((room) => {
+                      const meta = statusMeta('room', room.status);
+                      const task = activeTaskByRoom.get(room.id);
+                      return (
+                        <DropdownMenu key={room.id}>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className={cn('relative flex min-h-[4.25rem] flex-col items-start justify-between rounded-md border px-2.5 py-2 text-left transition-[transform,box-shadow] hover:-translate-y-px hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', TONE_SURFACE[meta.tone])}
+                              aria-label={`Room ${room.roomNumber}, ${meta.label}${task ? `, ${taskTypeLabel(task.taskType)} ${statusMeta('task', task.status).label}` : ''}`}
+                            >
+                              <span className="flex w-full items-center justify-between gap-1">
+                                <span className="text-sm font-semibold tabular-nums">{room.roomNumber}</span>
+                                <span className={cn('size-1.5 rounded-full', TONE_DOT[meta.tone])} aria-hidden="true" />
+                              </span>
+                              <span className="w-full truncate text-[11px] opacity-80">{task ? taskTypeLabel(task.taskType) : meta.label}</span>
+                              {task ? <span className={cn('absolute bottom-1.5 right-2 size-1.5 rounded-full', TONE_DOT[statusMeta('task', task.status).tone])} title={statusMeta('task', task.status).label} aria-hidden="true" /> : null}
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="start" className="w-60 [&_svg]:size-4">
+                            <DropdownMenuLabel className="space-y-1">
+                              <span className="block">Room {room.roomNumber}</span>
+                              <span className="block text-xs font-normal text-muted-foreground">{room.roomType || 'Room type not set'} · {floorLabel(room.floor)}</span>
+                            </DropdownMenuLabel>
+                            <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+                              <StatusPill kind="room" value={room.status} />
+                              {task ? <StatusPill kind="task" value={task.status} label={`${taskTypeLabel(task.taskType)} · ${statusMeta('task', task.status).label}`} /> : null}
+                            </div>
+                            {task?.assignedTo ? <p className="px-2 pb-2 text-xs text-muted-foreground">Assigned to {task.assignedTo.name}</p> : null}
+                            <DropdownMenuSeparator />
+                            {onScheduleTask ? <>
+                              <DropdownMenuItem onSelect={() => onScheduleTask(room.id, 'deep_clean')}><Sparkles aria-hidden="true" />Schedule deep clean</DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => onScheduleTask(room.id, 'turn_down')}><Moon aria-hidden="true" />Schedule turn-down</DropdownMenuItem>
+                            </> : null}
+                            {onReportIssue ? (
+                              <DropdownMenuItem onSelect={() => onReportIssue(room.id)}><Wrench aria-hidden="true" />Report maintenance issue</DropdownMenuItem>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          )}
+        </Panel>
+
+        <Panel className="h-fit">
+          <PanelHeader
+            title="Team"
+            description={selectedStaffName ? `Task queue filtered to ${selectedStaffName}.` : 'Select a person to filter the task queue.'}
+            actions={selectedStaff !== 'all' ? <Button size="sm" variant="ghost" onClick={() => onStaffChange?.('all')}>Show all</Button> : null}
+          />
+          {staff.length ? (
+            <ul className="divide-y">
+              {staff.map((member) => {
+                const active = selectedStaff === member.id;
+                return (
+                  <li key={member.id}>
+                    <button
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => onStaffChange?.(active ? 'all' : member.id)}
+                      className={cn('flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-5', active && 'bg-muted/60')}
+                    >
+                      <InitialsAvatar name={member.name} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{member.name}</span>
+                        <span className="block text-xs text-muted-foreground tabular-nums">{member.assignedRooms} active · {member.completedToday} done</span>
+                      </span>
+                      <StatusPill tone={member.status === 'busy' ? 'progress' : member.status === 'available' ? 'success' : 'neutral'} label={humanize(member.status)} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <WorkspaceEmpty compact icon={UserRound} title="No housekeeping staff" description="People with housekeeping roles appear here." />
+          )}
+        </Panel>
       </div>
 
-      {/* Task Queue */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Task Queue</CardTitle>
-          <CardDescription>Tasks sorted by priority and checkout time</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="pending">
-            <TabsList data-qa-layout="housekeeping-tabs" className="grid h-auto w-full grid-cols-1 gap-1 min-[360px]:grid-cols-2 lg:grid-cols-5">
-              <TabsTrigger className="min-w-0 whitespace-normal" value="pending">
-                Pending ({pendingTasks.length})
-              </TabsTrigger>
-              <TabsTrigger className="min-w-0 whitespace-normal" value="in_progress">
-                In Progress ({inProgressTasks.length})
-              </TabsTrigger>
-              <TabsTrigger className="min-w-0 whitespace-normal" value="inspection">
-                Inspection ({inspectionTasks.length})
-              </TabsTrigger>
-              <TabsTrigger className="min-w-0 whitespace-normal" value="on_hold">
-                On hold ({onHoldTasks.length})
-              </TabsTrigger>
-              <TabsTrigger className="min-w-0 whitespace-normal" value="completed">
-                Completed ({completedTasks.length})
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="pending" className="space-y-2 mt-4">
-              {pendingTasks.length === 0 ? (
-                <p className="text-center py-8 text-muted-foreground">No pending tasks</p>
-              ) : (
-                pendingTasks.slice(0, 10).map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onStart={() => onUpdateTaskStatus?.(task.id, 'in_progress')}
-                  />
-                ))
-              )}
-            </TabsContent>
-
-            <TabsContent value="in_progress" className="space-y-2 mt-4">
-              {inProgressTasks.length === 0 ? (
-                <p className="text-center py-8 text-muted-foreground">No tasks in progress</p>
-              ) : (
-                inProgressTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    onComplete={() => onUpdateTaskStatus?.(task.id, 'completed')}
-                    onPause={() => onUpdateTaskStatus?.(task.id, 'on_hold')}
-                  />
-                ))
-              )}
-            </TabsContent>
-
-            <TabsContent value="inspection" className="space-y-2 mt-4">
-              {inspectionTasks.length === 0 ? <p className="text-center py-8 text-muted-foreground">No inspections waiting</p> : inspectionTasks.map(task => <TaskCard key={task.id} task={task} onComplete={() => onUpdateTaskStatus?.(task.id, 'completed')} onStart={() => onUpdateTaskStatus?.(task.id, 'in_progress')} />)}
-            </TabsContent>
-
-            <TabsContent value="on_hold" className="space-y-2 mt-4">
-              {onHoldTasks.length === 0 ? <p className="text-center py-8 text-muted-foreground">No tasks on hold</p> : onHoldTasks.map(task => <TaskCard key={task.id} task={task} onStart={() => onUpdateTaskStatus?.(task.id, 'in_progress')} />)}
-            </TabsContent>
-
-            <TabsContent value="completed" className="space-y-2 mt-4">
-              {completedTasks.length === 0 ? (
-                <p className="text-center py-8 text-muted-foreground">No completed tasks today</p>
-              ) : (
-                completedTasks.slice(0, 10).map((task) => (
-                  <TaskCard key={task.id} task={task} />
-                ))
-              )}
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+      <Panel>
+        <PanelHeader
+          title="Task queue"
+          description="Highest priority first. Starting, pausing and completing tasks updates room readiness."
+          actions={selectedStaffName ? <StatusPill tone="info" label={`Assigned to ${selectedStaffName}`} /> : null}
+        />
+        <div className="border-b px-4 sm:px-5">
+          <FilterTabs
+            label="Filter tasks by status"
+            value={taskView}
+            onChange={setTaskView}
+            tabs={TASK_VIEWS.map((view) => ({ value: view.value, label: view.label, count: tasksByView(view.value).length }))}
+          />
+        </div>
+        {visibleTasks.length === 0 ? (
+          <WorkspaceEmpty compact icon={Sparkles} title={`No ${TASK_VIEWS.find((view) => view.value === taskView)?.label.toLowerCase()} tasks`} description={selectedStaffName ? `Nothing in this state for ${selectedStaffName}.` : 'The queue is clear for this state.'} />
+        ) : (
+          <ul className="divide-y">
+            {visibleTasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                onStart={['pending', 'inspection_needed', 'on_hold'].includes(task.status) ? () => onUpdateTaskStatus?.(task.id, 'in_progress') : undefined}
+                onPause={task.status === 'in_progress' ? () => onUpdateTaskStatus?.(task.id, 'on_hold') : undefined}
+                onComplete={['in_progress', 'inspection_needed'].includes(task.status) ? (notes) => onUpdateTaskStatus?.(task.id, 'completed', notes) : undefined}
+              />
+            ))}
+          </ul>
+        )}
+      </Panel>
     </div>
   );
 }
 
-function TaskCard({ 
-  task, 
-  onStart, 
-  onComplete, 
-  onPause 
-}: { 
-  task: HousekeepingTask; 
-  onStart?: () => void; 
-  onComplete?: () => void;
-  onPause?: () => void;
-}) {
+function TaskRow({ task, onStart, onComplete, onPause }: { task: HousekeepingTask; onStart?: () => void; onComplete?: (notes?: string) => void; onPause?: () => void }) {
+  const [checklistOpen, setChecklistOpen] = React.useState(false);
+  const [checked, setChecked] = React.useState(false);
+  const needsChecklist = requiresInspectionChecklist(task);
   const duration = task.startedAt && task.completedAt
     ? differenceInMinutes(parseISO(task.completedAt), parseISO(task.startedAt))
     : task.startedAt
-    ? differenceInMinutes(new Date(), parseISO(task.startedAt))
-    : null;
+      ? differenceInMinutes(new Date(), parseISO(task.startedAt))
+      : null;
+  const priority = task.priority === 1 ? 'urgent' : task.priority === 2 ? 'high' : null;
 
   return (
-    <div className="flex min-w-0 flex-col gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="text-center min-w-[50px]">
-          <p className="font-bold text-lg">{task.room.roomNumber}</p>
-          <p className="text-xs text-muted-foreground">F{task.room.floor}</p>
+    <li className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5">
+      <div className="flex min-w-0 flex-1 items-center gap-4">
+        <div className="w-14 shrink-0 text-center">
+          <p className="text-base font-semibold tabular-nums leading-5">{task.room.roomNumber}</p>
+          <p className="text-[11px] text-muted-foreground">Floor {task.room.floor ?? '—'}</p>
         </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <p className="font-medium">{getTaskTypeLabel(task.taskType)}</p>
-            {getTaskStatusBadge(task.status)}
-            {getPriorityBadge(task.priority)}
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-medium">{taskTypeLabel(task.taskType)}</p>
+            <StatusPill kind="task" value={task.status} />
+            {priority ? <StatusPill kind="priority" value={priority} /> : null}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {task.assignedTo && (
-              <span className="flex items-center gap-1">
-                <User className="h-3 w-3" />
-                {task.assignedTo.name}
-              </span>
-            )}
-            {duration !== null && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {duration} min
-              </span>
-            )}
-          </div>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1"><UserRound className="size-3" aria-hidden="true" />{task.assignedTo?.name || 'Unassigned'}</span>
+            {duration !== null ? <span className="inline-flex items-center gap-1 tabular-nums"><Clock3 className="size-3" aria-hidden="true" />{duration} min</span> : null}
+            {task.status === 'completed' && task.completedAt ? <span>Completed {formatTime(task.completedAt)}</span> : null}
+            {task.notes ? <span className="max-w-md truncate" title={task.notes}><Flag className="mr-1 inline size-3" aria-hidden="true" />{task.notes}</span> : null}
+          </p>
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {['pending', 'inspection_needed', 'on_hold'].includes(task.status) && onStart && (
-          <Button size="sm" onClick={onStart}>
-            <Play className="h-4 w-4 mr-1" />
-            Start
-          </Button>
-        )}
-        {task.status === 'inspection_needed' && onComplete ? <Button size="sm" onClick={onComplete}><Check className="mr-1 h-4 w-4" />Pass inspection</Button> : null}
-        {task.status === 'in_progress' && (
-          <>
-            {onPause && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onPause}
-                aria-label={`Put room ${task.room.roomNumber} task on hold`}
-              >
-                <Pause className="h-4 w-4" />
-              </Button>
-            )}
-            {onComplete && (
-              <Button size="sm" onClick={onComplete}>
-                <Check className="h-4 w-4 mr-1" />
-                Done
-              </Button>
-            )}
-          </>
-        )}
-        {task.status === 'completed' && task.completedAt && (
-          <span className="text-xs text-muted-foreground">
-            {format(parseISO(task.completedAt), 'h:mm a')}
-          </span>
-        )}
+      <div className="flex shrink-0 items-center gap-2 pl-[4.5rem] sm:pl-0">
+        {onStart ? <Button size="sm" variant={task.status === 'inspection_needed' ? 'outline' : 'default'} onClick={onStart}><Play aria-hidden="true" />{task.status === 'on_hold' ? 'Resume' : 'Start'}</Button> : null}
+        {onPause ? <Button size="sm" variant="outline" onClick={onPause} aria-label={`Put room ${task.room.roomNumber} task on hold`}><Pause aria-hidden="true" />Hold</Button> : null}
+        {onComplete ? <Button size="sm" onClick={() => { if (needsChecklist) { setChecked(false); setChecklistOpen(true); } else onComplete(); }}><Check aria-hidden="true" />{needsChecklist || task.status === 'inspection_needed' ? 'Pass inspection' : 'Done'}</Button> : null}
       </div>
-    </div>
+      {onComplete && needsChecklist ? (
+        <AlertDialog open={checklistOpen} onOpenChange={setChecklistOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Pass inspection for room {task.room.roomNumber}</AlertDialogTitle>
+              <AlertDialogDescription>Confirm the checks for this room before completing its inspection.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={checked} onCheckedChange={(value) => setChecked(value === true)} className="mt-0.5" />
+              Cleanliness, room safety and repairs checked
+            </label>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction disabled={!checked} onClick={() => onComplete(INSPECTION_CHECKLIST_NOTE)}>Pass inspection</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+    </li>
   );
 }
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { permissions } from '../access';
-import { getGuestBookingToken, guestAccessTokenMatches } from '../lib/guestBookingAccess';
+import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
 import { ensureBookingFolio, getBookingCollectibleBalance } from '../folios/bookingFolio';
 import { calculateFolioBalance, validateFolioPosting } from '../folios/ledger';
 import { currentPostingDate } from '../lib/hotelBusinessTime';
@@ -23,12 +23,21 @@ export function loyaltyRedemptionValue(points: number, balance: number, dueMinor
   if (!Number.isSafeInteger(amountMinor) || amountMinor > 2147483647 || amountMinor > dueMinor) throw new Error('Redemption cannot exceed the current posted folio balance.');
   return amountMinor;
 }
+/**
+ * Loyalty balances and history belong to a guest profile, not to one reservation. A booking
+ * token or account only proves access to that stay, and a booking email is not proof of
+ * owning an existing profile, so profile-wide loyalty is staff-only until guests have a
+ * verified profile binding.
+ */
 async function bookingAccess(context: any, bookingId: string, redeem = false) {
+  const session = context.session;
+  const operator = redeem
+    ? permissions.canManagePayments({ session })
+    : permissions.canManageGuests({ session }) || permissions.canManageBookings({ session }) || permissions.canManagePayments({ session });
+  if (!operator) throw new Error('Loyalty points are managed by the front desk.');
   const booking = await context.prisma.booking.findUnique({ where: { id: bookingId } });
-  const operator = redeem ? permissions.canManagePayments({ session: context.session }) : permissions.canManageGuests({ session: context.session }) || permissions.canManageBookings({ session: context.session }) || permissions.canManagePayments({ session: context.session });
-  const token = getGuestBookingToken(context, bookingId);
-  if (!booking || (!operator && (!token || !guestAccessTokenMatches(booking.guestAccessTokenHash, token)))) throw new Error('Reservation loyalty access could not be verified.');
-  if (!booking.guestProfileId) throw new Error('Reservation has no verified guest profile.'); return booking;
+  if (!booking) throw new Error('Reservation not found.');
+  if (!booking.guestProfileId) throw new Error('Reservation has no guest profile.'); return booking;
 }
 
 /** Internal checkout/refund hook. Caller owns a serializable transaction and booking lock. */
@@ -59,12 +68,32 @@ export async function reconcileBookingLoyalty(prisma: any, bookingId: string, re
   return { pointsChanged: delta };
 }
 
+/** What a guest sees on their own reservation: points recorded against this stay only. */
+async function guestStayLoyalty(context: any, bookingId: string) {
+  await assertGuestBookingAccess(context, bookingId);
+  const booking = await context.prisma.booking.findUnique({ where: { id: bookingId }, select: { guestProfileId: true } });
+  const [settings, entries] = await Promise.all([
+    context.prisma.hotelSettings.findUnique({ where: { id: 1 } }),
+    booking?.guestProfileId
+      ? context.prisma.loyaltyTransaction.findMany({ where: { bookingId, guestId: booking.guestProfileId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 50 })
+      : [],
+  ]);
+  const policy = settings?.loyaltyEnabled ? loyaltyPolicy(settings) : null;
+  return JSON.stringify({
+    scope: 'stay', enabled: settings?.loyaltyEnabled === true, stayPoints: loyaltyBalance(entries), policy, canRedeem: false,
+    entries: entries.map((entry: any) => ({ id: entry.id, points: entry.points, type: entry.type, description: entry.description, createdAt: entry.createdAt })),
+  });
+}
+
 export async function hotelLoyaltyAccount(_root: unknown, { bookingId }: { bookingId: string }, context: any) {
+  const session = context.session;
+  const operator = permissions.canManageGuests({ session }) || permissions.canManageBookings({ session }) || permissions.canManagePayments({ session });
+  if (!operator) return guestStayLoyalty(context, bookingId);
   const booking = await bookingAccess(context, bookingId);
   const [settings, entries] = await Promise.all([context.prisma.hotelSettings.findUnique({ where: { id: 1 } }), context.prisma.loyaltyTransaction.findMany({ where: { guestId: booking.guestProfileId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] })]);
   const balance = loyaltyBalance(entries);
   const policy = settings?.loyaltyEnabled ? loyaltyPolicy(settings) : null;
-  return JSON.stringify({ enabled: settings?.loyaltyEnabled === true, balance, policy, canRedeem: settings?.loyaltyEnabled === true && booking.status === 'checked_in' && !booking.billingFolioId, entries: entries.slice(0, 50).map((entry: any) => ({ id: entry.id, points: entry.points, type: entry.type, description: entry.description, createdAt: entry.createdAt })) });
+  return JSON.stringify({ scope: 'profile', enabled: settings?.loyaltyEnabled === true, balance, policy, canRedeem: settings?.loyaltyEnabled === true && booking.status === 'checked_in' && !booking.billingFolioId, entries: entries.slice(0, 50).map((entry: any) => ({ id: entry.id, points: entry.points, type: entry.type, description: entry.description, createdAt: entry.createdAt })) });
 }
 export async function redeemHotelLoyalty(_root: unknown, { bookingId, points, idempotencyKey }: { bookingId: string; points: number; idempotencyKey: string }, context: any) {
   await bookingAccess(context, bookingId, true);

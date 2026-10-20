@@ -1,21 +1,26 @@
 'use client';
 
 import React from 'react';
-import { DerivedRatePanel } from '../DerivedRatePanel';
-import { operationAttempt } from '@/lib/operationAttempt';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import Link from 'next/link';
-import { CalendarRange, DollarSign, Eye, EyeOff, RefreshCw, Tag } from 'lucide-react';
+import { Eye, EyeOff, Minus, Pause, Pencil, Play, Plus, RefreshCw, Tag as TagIcon } from 'lucide-react';
 
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
+import { toast } from 'sonner';
+import { operationAttempt } from '@/lib/operationAttempt';
+import { cn } from '@/lib/utils';
+import { DataTable, TBody, Td, Th, THead, Tr } from '@/features/platform/components/DataTable';
+import { FilterTabs } from '@/features/platform/components/FilterTabs';
+import { FieldInput } from '@/features/platform/components/Form';
+import { PlatformPage } from '@/features/platform/components/PlatformPage';
+import { StatStrip } from '@/features/platform/components/Stats';
+import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
+import { CopyId, Panel, PanelHeader, PanelToolbar } from '@/features/platform/components/Surface';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
+import { humanize } from '@/features/platform/lib/format';
 import { applyWorkspaceView, workspaceResultLabel } from '@/features/platform/lib/workspace';
+import { DerivedRatePanel } from '../DerivedRatePanel';
 import { getRatePlanWorkspace, updateRatePlanPublicationAction, updateRoomInventoryAction } from '../actions';
+import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
 interface RoomTypeInventoryItem {
   id: string;
@@ -24,15 +29,15 @@ interface RoomTypeInventoryItem {
   sellableRooms: number;
 }
 
-interface RoomInventoryItem {
-  id: string;
+/** Authoritative per-day counts for one room type, as the booking flow calculates them. */
+interface AvailabilityDay {
+  roomTypeId: string;
   date: string;
-  totalRooms: number;
-  bookedRooms: number;
-  blockedRooms: number;
-  availableRooms?: number | null;
-  isAvailable?: boolean | null;
-  roomType?: { id: string; name: string } | null;
+  total: number;
+  booked: number;
+  held: number;
+  blocked: number;
+  available: number;
 }
 
 interface RatePlanItem {
@@ -63,11 +68,6 @@ function formatCurrency(amount?: number | null) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 }
 
-function utcDay(offset = 0) {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset));
-}
-
 function utcDateKey(value: Date | string) {
   return new Date(value).toISOString().slice(0, 10);
 }
@@ -81,26 +81,17 @@ function formatEnum(value?: string | null) {
   return value.replace(/_/g, ' ');
 }
 
-function statusBadge(status?: string | null) {
-  switch (status) {
-    case 'active':
-      return <Badge className="bg-green-100 text-green-700">Active</Badge>;
-    case 'inactive':
-      return <Badge className="bg-gray-100 text-gray-700">Inactive</Badge>;
-    case 'draft':
-      return <Badge className="bg-amber-100 text-amber-700">Draft</Badge>;
-    default:
-      return <Badge variant="outline">{status || 'Unknown'}</Badge>;
-  }
-}
-
 export function RatePlansPage() {
-  const { toast } = useToast();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [ratePlans, setRatePlans] = React.useState<RatePlanItem[]>([]);
   const [roomTypes, setRoomTypes] = React.useState<RoomTypeInventoryItem[]>([]);
-  const [inventories, setInventories] = React.useState<RoomInventoryItem[]>([]);
+  const [availability, setAvailability] = React.useState<AvailabilityDay[]>([]);
+  const [boardStart, setBoardStart] = React.useState<string | null>(null);
+  const [ratePlanTotal, setRatePlanTotal] = React.useState(0);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  // One block/release at a time per cell, so a quick double click is never applied twice.
+  const [pendingCells, setPendingCells] = React.useState<Set<string>>(() => new Set());
   const [search, setSearch] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('all');
   const [sort, setSort] = React.useState('priority');
@@ -110,51 +101,63 @@ export function RatePlansPage() {
     setLoading(true);
     setError(null);
     try {
-      const start = utcDay().toISOString();
-      const end = utcDay(60).toISOString();
-      const data = await getRatePlanWorkspace(start, end) as {
+      // The server reads the week starting on the property's business date.
+      const data = await getRatePlanWorkspace() as {
+        businessDate?: string | null;
+        start: string;
         ratePlans: RatePlanItem[];
+        ratePlanTotal: number;
         roomTypes: RoomTypeInventoryItem[];
-        inventories: RoomInventoryItem[];
+        availability: AvailabilityDay[];
       };
       setRatePlans(data.ratePlans || []);
+      setRatePlanTotal(Number(data.ratePlanTotal) || 0);
+      setBoardStart(data.start ? String(data.start) : null);
       setRoomTypes(data.roomTypes || []);
-      setInventories(data.inventories || []);
+      setAvailability(data.availability || []);
     } catch (error) {
       console.error('Failed to load rate plans:', error);
       const message = error instanceof Error ? error.message : 'Unable to load rate plan dashboard.';
       setError(message);
-      toast({
-        title: 'Rates workspace unavailable',
-        description: message,
-        variant: 'destructive',
-      });
+      toast.error('Rates workspace unavailable', { description: message });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   React.useEffect(() => {
     fetchRatePlans();
   }, [fetchRatePlans]);
 
-  const updateInventory = async (
-    roomTypeId: string,
-    date: string,
-    data: { totalRooms?: number; bookedRooms?: number; blockedRooms?: number },
-    successMessage: string
-  ) => {
+  const updateInventory = async (roomTypeId: string, date: string, blockedRoomsDelta: 1 | -1, successMessage: string) => {
+    const cell = `${roomTypeId}:${utcDateKey(date)}`;
+    if (pendingCells.has(cell)) return;
+    setPendingCells((current) => new Set(current).add(cell));
     try {
-      await updateRoomInventoryAction({ roomTypeId, date, ...data });
+      const request = { roomTypeId, date, blockedRoomsDelta };
+      const attempt = await operationAttempt('inventory-block', request);
+      unwrapAction(await updateRoomInventoryAction({ ...request, idempotencyKey: attempt.key }));
+      attempt.complete();
       await fetchRatePlans();
-      toast({ title: 'Inventory updated', description: successMessage });
+      toast.success('Inventory updated', { description: successMessage });
     } catch (error) {
-      console.error('Failed to update inventory:', error);
-      toast({
-        title: 'Unable to update inventory',
-        description: error instanceof Error ? error.message : 'Inventory controls could not be saved.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to update inventory', { description: error instanceof Error ? error.message : 'Inventory controls could not be saved.' });
+    } finally {
+      setPendingCells((current) => { const next = new Set(current); next.delete(cell); return next; });
+    }
+  };
+
+  const loadMorePlans = async () => {
+    setLoadingMore(true);
+    try {
+      const data = await getRatePlanWorkspace(ratePlans.length) as { ratePlans: RatePlanItem[]; ratePlanTotal: number };
+      const known = new Set(ratePlans.map((plan) => plan.id));
+      setRatePlans([...ratePlans, ...(data.ratePlans || []).filter((plan) => !known.has(plan.id))]);
+      setRatePlanTotal(Number(data.ratePlanTotal) || 0);
+    } catch (error) {
+      toast.error('More rate plans could not be loaded', { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -162,17 +165,13 @@ export function RatePlansPage() {
     try {
       const payload = { ratePlanId: id, status: data.status, isPublic: data.isPublic, approvalId: approvalId.trim() };
       const attempt = await operationAttempt('rate-publication', payload);
-      await updateRatePlanPublicationAction({ ...payload, idempotencyKey: attempt.key });
+      unwrapAction(await updateRatePlanPublicationAction({ ...payload, idempotencyKey: attempt.key }));
       attempt.complete();
       await fetchRatePlans();
-      toast({ title: 'Rate plan updated', description: successMessage });
+      toast.success('Rate plan updated', { description: successMessage });
     } catch (error) {
       console.error('Failed to update rate plan:', error);
-      toast({
-        title: 'Unable to update rate plan',
-        description: error instanceof Error ? error.message : 'The rate plan could not be saved.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to update rate plan', { description: error instanceof Error ? error.message : 'The rate plan could not be saved.' });
     }
   };
 
@@ -183,20 +182,20 @@ export function RatePlansPage() {
     ? publicPlans.reduce((sum, plan) => sum + (plan.baseRate || 0), 0) / publicPlans.length
     : 0;
 
-  const inventoryDays = React.useMemo(
-    () => Array.from({ length: 7 }, (_, index) => utcDay(index)),
-    []
-  );
+  // The week the server read: it starts on the property's open business date.
+  const inventoryDays = React.useMemo(() => {
+    if (!boardStart) return [];
+    const first = new Date(`${utcDateKey(boardStart)}T00:00:00.000Z`);
+    return Array.from({ length: 7 }, (_, index) => new Date(first.getTime() + index * 86_400_000));
+  }, [boardStart]);
 
-  const inventoryByRoomTypeAndDay = React.useMemo(() => {
-    const map = new Map<string, RoomInventoryItem>();
-    inventories.forEach((record) => {
-      if (!record.roomType?.id) return;
-      const key = `${record.roomType.id}:${utcDateKey(record.date)}`;
-      map.set(key, record);
-    });
+  const availabilityByRoomTypeAndDay = React.useMemo(() => {
+    const map = new Map<string, AvailabilityDay>();
+    availability.forEach((day) => map.set(`${day.roomTypeId}:${day.date}`, day));
     return map;
-  }, [inventories]);
+  }, [availability]);
+  // A failed refresh leaves the last figures on screen, but changes wait for a successful read.
+  const stale = Boolean(error);
 
   const visibleRatePlans = React.useMemo(() => applyWorkspaceView(ratePlans, {
     search,
@@ -218,241 +217,165 @@ export function RatePlansPage() {
     return Array.from(groups.values());
   }, [visibleRatePlans]);
 
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Rate Plans' },
-  ];
-
-  const header = (
-    <div className="flex flex-col">
-      <h1 className="text-lg font-semibold md:text-2xl">Rate Plans</h1>
-      <p className="text-muted-foreground">Manage public, promotional, and package rates by room type.</p>
-    </div>
-  );
+  const statusCount = (value: string) => ratePlans.filter((plan) => plan.status === value).length;
 
   return (
-    <PageContainer title="Rate Plans" header={header} breadcrumbs={breadcrumbs}>
-      <div className="space-y-6 p-4 md:p-6">
-        <div className="space-y-2"><Label htmlFor="rate-approval">Publication approval ID</Label><Input id="rate-approval" value={approvalId} onChange={event => setApprovalId(event.target.value)} /><p className="text-xs text-muted-foreground">Approval must name the rate-plan ID and exact resulting status/public visibility. <Link href="/dashboard/platform/approvals" target="_blank" className="underline">Open approvals</Link></p></div>
-        <DerivedRatePanel />
-        {error ? <WorkspaceError message={error} onRetry={fetchRatePlans} /> : null}
-        {loading && ratePlans.length === 0 && roomTypes.length === 0 ? <WorkspaceLoading label="Loading rates and inventory" /> : null}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Active Plans</p>
-                  <p className="text-2xl font-semibold">{activePlans.length}</p>
-                </div>
-                <CalendarRange className="h-6 w-6 text-blue-500" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Public Rates</p>
-                  <p className="text-2xl font-semibold">{publicPlans.length}</p>
-                </div>
-                <Eye className="h-6 w-6 text-green-500" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Promotions</p>
-                  <p className="text-2xl font-semibold">{promotionalPlans.length}</p>
-                </div>
-                <Tag className="h-6 w-6 text-purple-500" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Avg Public Rate</p>
-                  <p className="text-2xl font-semibold">{formatCurrency(averagePublicRate)}</p>
-                </div>
-                <DollarSign className="h-6 w-6 text-amber-500" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+    <PlatformPage
+      title="Rate Plans"
+      description="Public, promotional and package rates by room type, plus day-level sellable inventory controls."
+      actions={(
+        <>
+          <Button variant="outline" size="sm" onClick={fetchRatePlans} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : undefined} aria-hidden="true" />Refresh</Button>
+          <Button size="sm" asChild><Link href="/dashboard/rate-plans/create"><Plus aria-hidden="true" />Create rate plan</Link></Button>
+        </>
+      )}
+    >
+      <StatStrip
+        loading={loading && !ratePlans.length}
+        items={[
+          { label: 'Active plans', value: activePlans.length, tone: 'success', hint: `${ratePlanTotal} total`, onSelect: () => setStatusFilter(statusFilter === 'active' ? 'all' : 'active'), active: statusFilter === 'active' },
+          { label: 'Bookable publicly', value: publicPlans.length, tone: 'info', hint: 'Active and public' },
+          { label: 'Promotions', value: promotionalPlans.length, tone: 'accent', hint: 'Promo-code rates' },
+          { label: 'Average public rate', value: formatCurrency(averagePublicRate), hint: 'Across bookable plans' },
+        ]}
+      />
 
-        <Card className="min-w-0">
-          <CardHeader data-qa-layout="operator-card-header" className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <CardTitle>7-Day Inventory Controls</CardTitle>
-              <p className="text-sm text-muted-foreground">Block or release sellable inventory by room type on authoritative UTC business dates without touching physical room records.</p>
-            </div>
-            <Button variant="outline" size="sm" onClick={fetchRatePlans} disabled={loading}>
-              <RefreshCw className="mr-2 h-4 w-4" />
-              Refresh
-            </Button>
-          </CardHeader>
-          <CardContent data-qa-layout="inventory-scroll-region" className="min-w-0 max-w-full space-y-4 overflow-x-auto">
-            <div className="min-w-[860px] space-y-3">
-              <div className="grid grid-cols-[180px_repeat(7,1fr)] gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                <div>Room type</div>
-                {inventoryDays.map((day) => (
-                  <div key={day.toISOString()} className="text-center">
-                    <p>{utcDateLabel(day, { weekday: 'short' })}</p>
-                    <p>{utcDateLabel(day, { month: 'short', day: 'numeric' })}</p>
-                  </div>
-                ))}
-              </div>
-              {roomTypes.map((roomType) => {
-                const physicalTotal = roomType.totalRooms;
-                const defaultBlocked = roomType.totalRooms - roomType.sellableRooms;
-                return (
-                  <div key={roomType.id} className="grid grid-cols-[180px_repeat(7,1fr)] gap-2">
-                    <div className="rounded-lg border p-3">
-                      <p className="font-medium">{roomType.name}</p>
-                      <p className="text-xs text-muted-foreground">{physicalTotal} physical rooms</p>
-                    </div>
-                    {inventoryDays.map((day) => {
-                      const key = `${roomType.id}:${utcDateKey(day)}`;
-                      const record = inventoryByRoomTypeAndDay.get(key);
-                      const totalRooms = record?.totalRooms ?? physicalTotal;
-                      const bookedRooms = record?.bookedRooms ?? 0;
-                      const blockedRooms = record?.blockedRooms ?? defaultBlocked;
-                      const availableRooms = Math.max(0, totalRooms - bookedRooms - blockedRooms);
-                      const date = day.toISOString();
-                      return (
-                        <div key={key} className="rounded-lg border p-3 text-center">
-                          <p className="text-2xl font-semibold">{availableRooms}</p>
-                          <p className="text-[11px] text-muted-foreground">available</p>
-                          <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-                            <p>{bookedRooms} booked</p>
-                            <p>{blockedRooms} blocked</p>
-                          </div>
-                          <div className="mt-3 flex justify-center gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => updateInventory(
-                                roomType.id,
-                                date,
-                                { totalRooms, bookedRooms, blockedRooms: blockedRooms + 1 },
-                                `${roomType.name} blocked inventory increased for ${utcDateLabel(day, { month: 'short', day: 'numeric' })}.`
-                              )}
-                            >
-                              Block
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs"
-                              disabled={blockedRooms <= 0}
-                              onClick={() => updateInventory(
-                                roomType.id,
-                                date,
-                                { totalRooms, bookedRooms, blockedRooms: Math.max(0, blockedRooms - 1) },
-                                `${roomType.name} blocked inventory reduced for ${utcDateLabel(day, { month: 'short', day: 'numeric' })}.`
-                              )}
-                            >
-                              Release
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-              {!loading && roomTypes.length === 0 && (
-                <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                  No room types found. Create room types and rooms before managing inventory controls.
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <WorkspaceControls search={search} onSearchChange={setSearch} searchLabel="Search plan, room type, promo, meal, or cancellation terms" resultLabel={workspaceResultLabel(visibleRatePlans.length, ratePlans.length, 'rate plans')}>
-          <WorkspaceSelect label="Filter rate-plan status" value={statusFilter} onChange={setStatusFilter}><option value="all">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="draft">Draft</option></WorkspaceSelect>
-          <WorkspaceSelect label="Sort rate plans" value={sort} onChange={setSort}><option value="priority">Highest priority</option><option value="rate">Highest rate</option><option value="name">Name</option></WorkspaceSelect>
-        </WorkspaceControls>
-
-        <Card className="min-w-0">
-          <CardHeader data-qa-layout="operator-card-header" className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle>Rate Plan Board</CardTitle>
-            <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
-              <Button variant="outline" size="sm" onClick={fetchRatePlans} disabled={loading}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh
-              </Button>
-              <Button asChild size="sm">
-                <Link href="/dashboard/rate-plans/create">Create rate plan</Link>
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {groupedPlans.map((group) => (
-              <div key={group.label} className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>
-                  <Badge variant="outline">{group.plans.length} plans</Badge>
-                </div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {group.plans.map((plan) => (
-                    <div key={plan.id} className="rounded-lg border p-4">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-medium">{plan.name}</p><p className="text-xs text-muted-foreground">Approval target: {plan.id}</p>
-                            {statusBadge(plan.status)}
-                            {plan.isPublic ? <Badge variant="outline">Public</Badge> : <Badge variant="outline">Private</Badge>}
-                            {plan.isPromotional && <Badge className="bg-purple-100 text-purple-700">Promo</Badge>}
-                          </div>
-                          <p className="text-2xl font-semibold">{formatCurrency(plan.baseRate)}</p>
-                          <div className="grid gap-1 text-sm text-muted-foreground md:grid-cols-2">
-                            <p>Min stay: {plan.minimumStay || 1} night{(plan.minimumStay || 1) === 1 ? '' : 's'}</p>
-                            <p>Max stay: {plan.maximumStay || 'No limit'}</p>
-                            <p>Cancellation: {formatEnum(plan.cancellationPolicy)}</p>
-                            <p>Meal plan: {formatEnum(plan.mealPlan)}</p>
-                            {plan.promoCode && <p>Promo code: {plan.promoCode}</p>}
-                            {plan.priority !== null && plan.priority !== undefined && <p>Priority: {plan.priority}</p>}
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 md:justify-end">
-                          {plan.status !== 'active' && (
-                            <Button size="sm" variant="outline" onClick={() => updateRatePlan(plan.id, { status: 'active' }, 'The rate is now bookable.')}>Activate</Button>
-                          )}
-                          {plan.status === 'active' && (
-                            <Button size="sm" variant="outline" onClick={() => updateRatePlan(plan.id, { status: 'inactive' }, 'The rate has been paused.')}>Pause</Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => updateRatePlan(plan.id, { isPublic: !plan.isPublic }, plan.isPublic ? 'The rate is now private.' : 'The rate is now public.')}
-                          >
-                            {plan.isPublic ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
-                            {plan.isPublic ? 'Hide' : 'Publish'}
-                          </Button>
-                          <Button asChild size="sm" variant="outline">
-                            <Link href={`/dashboard/rate-plans/${plan.id}`}>Edit</Link>
-                          </Button>
-                        </div>
+      {error ? <WorkspaceError message={error} onRetry={fetchRatePlans} title="Rates workspace unavailable" /> : null}
+      {loading && ratePlans.length === 0 && roomTypes.length === 0 ? <WorkspaceLoading label="Loading rates and inventory" /> : (
+        <>
+          <Panel>
+            <PanelHeader title="7-day inventory controls" description="Rooms left to sell for the week starting on the business date, after bookings, group holds, blocks and outages. Physical room records are not changed." />
+            {roomTypes.length === 0 ? (
+              <WorkspaceEmpty compact title="No room types" description="Create room types and rooms before managing inventory controls." />
+            ) : (
+              <div data-qa-layout="inventory-scroll-region" className="max-w-full overflow-x-auto">
+                <div className="min-w-[860px]">
+                  <div className="grid grid-cols-[12rem_repeat(7,minmax(0,1fr))] border-b bg-muted/40 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+                    <div className="sticky left-0 bg-muted px-4 py-2">Room type</div>
+                    {inventoryDays.map((day, index) => (
+                      <div key={day.toISOString()} className={cn('border-l px-2 py-2 text-center', index === 0 && 'text-foreground')}>
+                        {utcDateLabel(day, { weekday: 'short' })} <span className="tabular-nums">{utcDateLabel(day, { day: 'numeric' })}</span>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  {roomTypes.map((roomType) => {
+                    const physicalTotal = roomType.totalRooms;
+                    return (
+                      <div key={roomType.id} className="grid grid-cols-[12rem_repeat(7,minmax(0,1fr))] border-b last:border-b-0">
+                        <div className="sticky left-0 flex flex-col justify-center bg-card px-4 py-3">
+                          <p className="truncate text-sm font-medium">{roomType.name}</p>
+                          <p className="text-xs text-muted-foreground">{physicalTotal} physical rooms</p>
+                        </div>
+                        {inventoryDays.map((day) => {
+                          const key = `${roomType.id}:${utcDateKey(day)}`;
+                          const counts = availabilityByRoomTypeAndDay.get(key);
+                          const date = day.toISOString();
+                          const dayLabel = utcDateLabel(day, { month: 'short', day: 'numeric' });
+                          const busy = pendingCells.has(key);
+                          if (!counts) {
+                            // Not part of the authoritative read: unknown, never shown as zero bookings.
+                            return <div key={key} className="flex items-center justify-center border-l px-2 py-2.5 text-sm text-muted-foreground" aria-label={`${roomType.name} on ${dayLabel}: not loaded`}>—</div>;
+                          }
+                          return (
+                            <div key={key} className={cn('group flex flex-col items-center justify-center gap-1 border-l px-2 py-2.5', counts.available === 0 ? 'bg-rose-500/[0.05]' : counts.available <= 1 ? 'bg-amber-500/[0.05]' : undefined)}>
+                              <p className={cn('text-lg font-semibold leading-6 tabular-nums', counts.available === 0 && 'text-rose-700 dark:text-rose-400')}>{counts.available}</p>
+                              <p className="text-[11px] leading-4 text-muted-foreground tabular-nums" title={`${counts.booked} booked, ${counts.held} held for groups, ${counts.blocked} blocked`}>{counts.booked} bkd · {counts.held} held · {counts.blocked} blk</p>
+                              <div className="mt-0.5 flex items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                                <Button size="icon" variant="ghost" className="size-6" disabled={stale || busy || counts.blocked <= 0} aria-label={`Release one ${roomType.name} room on ${dayLabel}`} title="Release one room" onClick={() => updateInventory(roomType.id, date, -1, `${roomType.name} blocked inventory reduced for ${dayLabel}.`)}><Minus className="size-3" aria-hidden="true" /></Button>
+                                <Button size="icon" variant="ghost" className="size-6" disabled={stale || busy || counts.available <= 0} aria-label={`Block one ${roomType.name} room on ${dayLabel}`} title="Block one room" onClick={() => updateInventory(roomType.id, date, 1, `${roomType.name} blocked inventory increased for ${dayLabel}.`)}><Plus className="size-3" aria-hidden="true" /></Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            ))}
-            {!loading && visibleRatePlans.length === 0 && (
-              <WorkspaceEmpty title={ratePlans.length ? 'No rate plans match this view' : 'No rate plans configured'} description={ratePlans.length ? 'Clear the search or status filter.' : 'Create an authoritative standard rate for each sellable room type before enabling direct booking.'} onClear={ratePlans.length ? () => { setSearch(''); setStatusFilter('all'); } : undefined} />
             )}
-          </CardContent>
-        </Card>
-      </div>
-    </PageContainer>
+            <div className="border-t px-4 py-2.5 text-xs text-muted-foreground sm:px-5">Numbers show rooms available to sell. <span className="font-medium text-foreground">−</span> releases a blocked room; <span className="font-medium text-foreground">+</span> blocks one.</div>
+          </Panel>
+
+          <Panel>
+            <div className="border-b px-4 sm:px-5">
+              <FilterTabs
+                label="Filter rate plans by status"
+                value={statusFilter}
+                onChange={setStatusFilter}
+                tabs={[
+                  { value: 'all', label: 'All plans', count: ratePlans.length },
+                  { value: 'active', label: 'Active', count: statusCount('active'), tone: 'success' },
+                  { value: 'inactive', label: 'Paused', count: statusCount('inactive') },
+                  { value: 'draft', label: 'Draft', count: statusCount('draft'), tone: 'warning' },
+                ]}
+              />
+            </div>
+            <PanelToolbar className="space-y-3">
+              <WorkspaceControls search={search} onSearchChange={setSearch} searchLabel="Search plan, room type, promo, meal or cancellation terms" resultLabel={workspaceResultLabel(visibleRatePlans.length, ratePlans.length, 'rate plans')}>
+                <WorkspaceSelect label="Sort rate plans" value={sort} onChange={setSort}><option value="priority">Sort: priority</option><option value="rate">Sort: highest rate</option><option value="name">Sort: name</option></WorkspaceSelect>
+              </WorkspaceControls>
+              <div className="flex flex-col gap-2 rounded-md bg-muted/40 px-3 py-2 sm:flex-row sm:items-center">
+                <label htmlFor="rate-approval" className="shrink-0 text-xs font-medium">Publication approval ID</label>
+                <FieldInput id="rate-approval" className="h-8 font-mono text-xs sm:max-w-xs" value={approvalId} onChange={event => setApprovalId(event.target.value)} placeholder="Required when policy demands approval" />
+                <p className="text-xs text-muted-foreground">Must name the rate-plan ID and the exact resulting status/visibility. <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Open approvals</Link></p>
+              </div>
+            </PanelToolbar>
+            {visibleRatePlans.length === 0 ? (
+              <WorkspaceEmpty icon={TagIcon} title={ratePlans.length ? 'No rate plans match this view' : 'No rate plans configured'} description={ratePlans.length ? 'Clear the search or status filter.' : 'Create a standard rate for each room type before taking direct bookings.'} onClear={ratePlans.length ? () => { setSearch(''); setStatusFilter('all'); } : undefined} />
+            ) : (
+              <DataTable minWidth="min-w-[960px]">
+                <THead>
+                  <tr><Th>Plan</Th><Th>Status</Th><Th align="right">Nightly rate</Th><Th>Stay rules</Th><Th>Terms</Th><Th align="right">Priority</Th><Th align="right">Actions</Th></tr>
+                </THead>
+                {groupedPlans.map((group) => (
+                  <TBody key={group.label}>
+                    <tr className="bg-muted/25">
+                      <td colSpan={7} className="px-4 py-1.5 sm:px-5"><span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{group.label}</span><span className="ml-2 text-[11px] text-muted-foreground">{group.plans.length} plan{group.plans.length === 1 ? '' : 's'}</span></td>
+                    </tr>
+                    {group.plans.map((plan) => (
+                      <Tr key={plan.id}>
+                        <Td>
+                          <div className="flex flex-wrap items-center gap-1.5"><p className="font-medium">{plan.name}</p>{plan.isPromotional ? <StatusPill tone="accent" label={plan.promoCode ? `Promo · ${plan.promoCode}` : 'Promo'} /> : null}</div>
+                          {plan.description ? <p className="mt-0.5 line-clamp-1 max-w-xs text-xs text-muted-foreground">{plan.description}</p> : null}
+                          <CopyId value={plan.id} label="ID" className="mt-1 max-w-[12rem]" />
+                        </Td>
+                        <Td>
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusPill kind="rate" value={plan.status} />
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">{plan.isPublic ? <Eye className="size-3" aria-hidden="true" /> : <EyeOff className="size-3" aria-hidden="true" />}{plan.isPublic ? 'Public' : 'Private'}</span>
+                          </div>
+                        </Td>
+                        <Td numeric align="right" className="text-base font-semibold">{formatCurrency(plan.baseRate)}</Td>
+                        <Td className="text-xs text-muted-foreground"><p>Min {plan.minimumStay || 1} night{(plan.minimumStay || 1) === 1 ? '' : 's'}</p><p>Max {plan.maximumStay || 'no limit'}</p></Td>
+                        <Td><div className="flex flex-col items-start gap-1"><Tag>{formatEnum(plan.cancellationPolicy)}</Tag><span className="text-xs text-muted-foreground">{humanize(plan.mealPlan)}</span></div></Td>
+                        <Td numeric align="right" className="text-muted-foreground">{plan.priority ?? '—'}</Td>
+                        <Td align="right">
+                          <div className="flex justify-end gap-1">
+                            {plan.status !== 'active'
+                              ? <Button size="sm" variant="outline" disabled={stale} onClick={() => updateRatePlan(plan.id, { status: 'active' }, 'The rate is now bookable.')}><Play aria-hidden="true" />Activate</Button>
+                              : <Button size="sm" variant="outline" disabled={stale} onClick={() => updateRatePlan(plan.id, { status: 'inactive' }, 'The rate has been paused.')}><Pause aria-hidden="true" />Pause</Button>}
+                            <Button size="sm" variant="ghost" disabled={stale} onClick={() => updateRatePlan(plan.id, { isPublic: !plan.isPublic }, plan.isPublic ? 'The rate is now private.' : 'The rate is now public.')}>{plan.isPublic ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}{plan.isPublic ? 'Hide' : 'Publish'}</Button>
+                            <Button size="icon" variant="ghost" className="size-8" asChild><Link href={`/dashboard/rate-plans/${plan.id}`} aria-label={`Edit ${plan.name}`}><Pencil aria-hidden="true" /></Link></Button>
+                          </div>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </TBody>
+                ))}
+              </DataTable>
+            )}
+            {ratePlans.length < ratePlanTotal ? (
+              <div className="flex items-center justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground">
+                <span role="status">Showing {ratePlans.length} of {ratePlanTotal} rate plans. Search and filters apply to the loaded plans.</span>
+                <Button size="sm" variant="outline" disabled={loadingMore} onClick={() => void loadMorePlans()}>{loadingMore ? 'Loading…' : 'Load more'}</Button>
+              </div>
+            ) : null}
+          </Panel>
+        </>
+      )}
+
+      <DerivedRatePanel />
+    </PlatformPage>
   );
 }
 

@@ -1,31 +1,48 @@
 'use client';
 
 import React from 'react';
-import { InHouseStayControls } from './InHouseStayControls';
-import RelocationPanel from '@/features/platform/relocations/components/RelocationPanel';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
-  BadgeCheck,
+  ArrowRightLeft,
+  Check,
   ClipboardList,
   DoorOpen,
   LogIn,
   LogOut,
-  Search,
+  MessageSquareQuote,
+  MoreHorizontal,
+  PanelRightOpen,
+  ReceiptText,
+  UserRoundX,
   Users,
+  X,
+  XCircle,
 } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { useRouter } from 'next/navigation';
+import { FilterTabs } from '@/features/platform/components/FilterTabs';
+import { Field, FieldInput, NativeSelect } from '@/features/platform/components/Form';
+import { StatStrip } from '@/features/platform/components/Stats';
+import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
+import { DetailList, InitialsAvatar, Panel, PanelToolbar, SectionLabel, SubSection } from '@/features/platform/components/Surface';
+import { WorkspaceTabs, WorkspaceTabsContent, WorkspaceTabsList, WorkspaceTabsTrigger } from '@/features/platform/components/Tabs';
+import { WorkspaceControls, WorkspaceEmpty, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
+import { formatMoney, formatStayRange, humanize, nightsBetween, pluralize, utcDayKey } from '@/features/platform/lib/format';
+import { LoyaltyStayPanel } from '@/features/platform/loyalty/components/LoyaltyStayPanel';
+import RelocationPanel from '@/features/platform/relocations/components/RelocationPanel';
+import { StayServiceDesk } from '@/features/platform/stay-service/components/StayServiceDesk';
+import { InHouseStayControls } from './InHouseStayControls';
 
 export type FrontDeskStatus =
   | 'pending'
@@ -79,6 +96,8 @@ interface FrontDeskProps {
   onStatusChange?: (bookingId: string, status: FrontDeskStatus) => Promise<void> | void;
   onAssignRoom?: (bookingId: string, roomId: string) => Promise<void> | void;
   onCancel?: (bookingId: string) => Promise<void> | void;
+  /** Reload the workspace after an in-house stay change so dates, room and balance are current. */
+  onStayChanged?: () => Promise<void> | void;
   onResolveModification?: (
     bookingId: string,
     decision: 'approved' | 'declined',
@@ -88,42 +107,8 @@ interface FrontDeskProps {
   ) => Promise<void> | void;
 }
 
-const STATUS_STYLES: Record<FrontDeskStatus, string> = {
-  pending: 'bg-amber-100 text-amber-700 border-amber-200',
-  confirmed: 'bg-blue-100 text-blue-700 border-blue-200',
-  checked_in: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  checked_out: 'bg-gray-100 text-gray-700 border-gray-200',
-  cancelled: 'bg-rose-100 text-rose-700 border-rose-200',
-  cancellation_pending: 'bg-amber-100 text-amber-800 border-amber-200',
-  no_show: 'bg-orange-100 text-orange-700 border-orange-200',
-};
-
-const STATUS_LABELS: Record<FrontDeskStatus, string> = {
-  pending: 'Pending',
-  confirmed: 'Confirmed',
-  checked_in: 'Checked In',
-  checked_out: 'Checked Out',
-  cancelled: 'Cancelled',
-  cancellation_pending: 'Cancellation pending',
-  no_show: 'No Show',
-};
-
-function utcDateKey(value: Date | string = new Date()) {
-  const date = new Date(value);
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
-}
-
-function formatUtc(value: Date | string, options: Intl.DateTimeFormatOptions) {
-  return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' }).format(new Date(value));
-}
-
-function formatCurrency(amount?: number | null) {
-  if (amount === null || amount === undefined) return '--';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
-}
+type View = 'arrivals' | 'in_house' | 'departures' | 'requests';
+type Resolution = { checkInDate: string; checkOutDate: string; staffNote: string };
 
 export function FrontDesk({
   reservations,
@@ -133,83 +118,76 @@ export function FrontDesk({
   onStatusChange,
   onAssignRoom,
   onCancel,
+  onStayChanged,
   onResolveModification,
 }: FrontDeskProps) {
   const router = useRouter();
   const [search, setSearch] = React.useState('');
+  const [view, setView] = React.useState<View>('arrivals');
+  const [workspaceId, setWorkspaceId] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState<string | null>(null);
   const [selectedRoomByReservation, setSelectedRoomByReservation] = React.useState<Record<string, string>>({});
-  const [modificationResolutionByReservation, setModificationResolutionByReservation] = React.useState<Record<string, {
-    checkInDate: string;
-    checkOutDate: string;
-    staffNote: string;
-  }>>({});
-  const [internalReservations, setInternalReservations] = React.useState(reservations);
+  const [modificationResolutionByReservation, setModificationResolutionByReservation] = React.useState<Record<string, Resolution>>({});
 
-  React.useEffect(() => {
-    setInternalReservations(reservations);
-  }, [reservations]);
-
-  const today = utcDateKey(businessDate || new Date());
+  const today = utcDayKey(businessDate || new Date());
 
   const filteredReservations = React.useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return internalReservations;
-    return internalReservations.filter((reservation) =>
+    if (!term) return reservations;
+    return reservations.filter((reservation) =>
       reservation.guestName.toLowerCase().includes(term) ||
       reservation.confirmationNumber.toLowerCase().includes(term) ||
       (reservation.roomNumber || '').toLowerCase().includes(term)
     );
-  }, [internalReservations, search]);
+  }, [reservations, search]);
 
   const arrivals = filteredReservations.filter((reservation) =>
-    utcDateKey(reservation.checkInDate) === today &&
+    utcDayKey(reservation.checkInDate) === today &&
     !['cancelled', 'cancellation_pending', 'no_show', 'checked_out'].includes(reservation.status)
   );
-
   const departures = filteredReservations.filter((reservation) =>
-    utcDateKey(reservation.checkOutDate) === today && reservation.status === 'checked_in'
+    utcDayKey(reservation.checkOutDate) === today && reservation.status === 'checked_in'
   );
-
   const modificationRequests = filteredReservations.filter((reservation) =>
-    reservation.hasPendingModificationRequest &&
-    ['pending', 'confirmed'].includes(reservation.status)
+    reservation.hasPendingModificationRequest && ['pending', 'confirmed'].includes(reservation.status)
   );
-
   const inHouse = filteredReservations.filter((reservation) => {
-    const checkIn = utcDateKey(reservation.checkInDate);
-    const checkOut = utcDateKey(reservation.checkOutDate);
+    const checkIn = utcDayKey(reservation.checkInDate);
+    const checkOut = utcDayKey(reservation.checkOutDate);
     return reservation.status === 'checked_in' && checkIn <= today && checkOut > today;
   });
 
-  const handleStatusChange = async (id: string, status: FrontDeskStatus) => {
-    if (onStatusChange) await onStatusChange(id, status);
+  const lists: Record<View, FrontDeskReservation[]> = { arrivals, in_house: inHouse, departures, requests: modificationRequests };
+  const visible = lists[view];
+  const arrivalsAwaitingRoom = arrivals.filter((reservation) => !reservation.roomNumber && reservation.status !== 'checked_in').length;
+  const departuresWithBalance = departures.filter((reservation) => Number(reservation.balanceDue || 0) > 0).length;
+  const arrivedToday = arrivals.filter((reservation) => reservation.status === 'checked_in').length;
+
+  const run = async (key: string, action: () => Promise<void> | void) => {
+    setPending(key);
+    try { await action(); } finally { setPending(null); }
   };
 
-  const getModificationResolution = (reservation: FrontDeskReservation) => {
+  const handleStatusChange = (id: string, status: FrontDeskStatus) => run(`${id}:${status}`, async () => { if (onStatusChange) await onStatusChange(id, status); });
+
+  const getModificationResolution = (reservation: FrontDeskReservation): Resolution => {
     const existing = modificationResolutionByReservation[reservation.id];
     if (existing) return existing;
     return {
-      checkInDate: utcDateKey(
-        reservation.pendingModificationRequest?.requestedCheckInDate || reservation.checkInDate
-      ),
-      checkOutDate: utcDateKey(
-        reservation.pendingModificationRequest?.requestedCheckOutDate || reservation.checkOutDate
-      ),
+      checkInDate: utcDayKey(reservation.pendingModificationRequest?.requestedCheckInDate || reservation.checkInDate),
+      checkOutDate: utcDayKey(reservation.pendingModificationRequest?.requestedCheckOutDate || reservation.checkOutDate),
       staffNote: '',
     };
   };
 
-  const updateModificationResolution = (reservationId: string, updates: Partial<{ checkInDate: string; checkOutDate: string; staffNote: string }>) => {
+  const updateModificationResolution = (reservation: FrontDeskReservation, updates: Partial<Resolution>) => {
     setModificationResolutionByReservation((prev) => ({
       ...prev,
-      [reservationId]: {
-        ...(prev[reservationId] || { checkInDate: '', checkOutDate: '', staffNote: '' }),
-        ...updates,
-      },
+      [reservation.id]: { ...(prev[reservation.id] || getModificationResolution(reservation)), ...updates },
     }));
   };
 
-  const handleResolveModification = async (reservation: FrontDeskReservation, decision: 'approved' | 'declined') => {
+  const handleResolveModification = (reservation: FrontDeskReservation, decision: 'approved' | 'declined') => run(`${reservation.id}:${decision}`, async () => {
     if (!onResolveModification) return;
     const resolution = getModificationResolution(reservation);
     await onResolveModification(
@@ -224,11 +202,10 @@ export function FrontDesk({
       delete next[reservation.id];
       return next;
     });
-  };
+  });
 
-  const handleAssignRoom = async (reservationId: string) => {
+  const handleAssignRoom = (reservationId: string) => run(`${reservationId}:assign`, async () => {
     const selectedRoomId = selectedRoomByReservation[reservationId];
-
     if (!onAssignRoom || !selectedRoomId) return;
     await onAssignRoom(reservationId, selectedRoomId);
     setSelectedRoomByReservation((prev) => {
@@ -236,334 +213,400 @@ export function FrontDesk({
       delete next[reservationId];
       return next;
     });
+  });
+
+  const openFolio = (reservationId: string) => router.push(`/dashboard/platform/folios?bookingId=${reservationId}`);
+  const workspace = reservations.find((reservation) => reservation.id === workspaceId) || null;
+
+  const roomAssigner = (reservation: FrontDeskReservation, compact = false) => (
+    <RoomAssigner
+      reservation={reservation}
+      rooms={availableRooms}
+      value={selectedRoomByReservation[reservation.id] || ''}
+      onChange={(roomId) => setSelectedRoomByReservation((prev) => ({ ...prev, [reservation.id]: roomId }))}
+      onAssign={() => handleAssignRoom(reservation.id)}
+      busy={pending === `${reservation.id}:assign`}
+      compact={compact}
+    />
+  );
+
+  const emptyCopy: Record<View, { title: string; description: string }> = {
+    arrivals: { title: 'No arrivals for this business date', description: 'Reservations arriving today appear here once confirmed or pending.' },
+    in_house: { title: 'No guests in house', description: 'Checked-in stays that continue past today appear here.' },
+    departures: { title: 'No departures due today', description: 'Checked-in guests scheduled to leave today appear here.' },
+    requests: { title: 'No change requests waiting', description: 'Guest date-change requests that need a staff decision appear here.' },
   };
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <DoorOpen className="h-5 w-5" />
-              Front Desk
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Track arrivals, departures, and in-house guests with quick actions.
-            </p>
+      <StatStrip
+        loading={loading && !reservations.length}
+        items={[
+          { label: 'Arrivals', value: arrivals.length, tone: 'info', hint: arrivalsAwaitingRoom ? `${arrivalsAwaitingRoom} awaiting a room` : arrivedToday ? `${arrivedToday} already checked in` : 'All rooms assigned', onSelect: () => setView('arrivals'), active: view === 'arrivals' },
+          { label: 'In house', value: inHouse.length, tone: 'success', hint: 'Stays continuing past today', onSelect: () => setView('in_house'), active: view === 'in_house' },
+          { label: 'Departures', value: departures.length, tone: 'warning', hint: departuresWithBalance ? `${departuresWithBalance} with balance due` : 'No open balances', onSelect: () => setView('departures'), active: view === 'departures' },
+          { label: 'Change requests', value: modificationRequests.length, tone: 'accent', hint: modificationRequests.length ? 'Awaiting staff decision' : 'Nothing waiting', onSelect: () => setView('requests'), active: view === 'requests' },
+        ]}
+      />
+
+      <Panel>
+        <div className="flex flex-col gap-3 border-b px-4 pt-2 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
+          <FilterTabs
+            label="Front desk queue"
+            value={view}
+            onChange={(next) => setView(next as View)}
+            tabs={[
+              { value: 'arrivals', label: 'Arrivals', count: arrivals.length },
+              { value: 'in_house', label: 'In house', count: inHouse.length },
+              { value: 'departures', label: 'Departures', count: departures.length },
+              { value: 'requests', label: 'Change requests', count: modificationRequests.length, tone: modificationRequests.length ? 'accent' : undefined },
+            ]}
+          />
+          <div className="pb-2 lg:w-80">
+            <WorkspaceControls search={search} onSearchChange={setSearch} searchLabel="Search guest, confirmation or room" searchClassName="md:max-w-none" />
           </div>
-          <div className="w-full md:w-72">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search guests or rooms"
-                className="pl-9"
-              />
-            </div>
-          </div>
-        </CardHeader>
-      </Card>
-
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Arrivals Today</p>
-                <p className="text-3xl font-semibold">{arrivals.length}</p>
-              </div>
-              <BadgeCheck className="h-8 w-8 text-blue-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Departures Today</p>
-                <p className="text-3xl font-semibold">{departures.length}</p>
-              </div>
-              <LogOut className="h-8 w-8 text-amber-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">In House</p>
-                <p className="text-3xl font-semibold">{inHouse.length}</p>
-              </div>
-              <Users className="h-8 w-8 text-emerald-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Change Requests</p>
-                <p className="text-3xl font-semibold">{modificationRequests.length}</p>
-              </div>
-              <ClipboardList className="h-8 w-8 text-purple-500" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {modificationRequests.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Guest Change Requests</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {modificationRequests.map((reservation) => (
-              <ReservationRow
-                key={reservation.id}
-                reservation={reservation}
-                modificationResolution={getModificationResolution(reservation)}
-                onModificationResolutionChange={(updates) => updateModificationResolution(reservation.id, updates)}
-                onApproveModification={onResolveModification ? () => handleResolveModification(reservation, 'approved') : undefined}
-                onDeclineModification={onResolveModification ? () => handleResolveModification(reservation, 'declined') : undefined}
-              />
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">Arrivals</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {arrivals.length === 0 && (
-              <p className="text-sm text-muted-foreground">No arrivals scheduled for today.</p>
-            )}
-            {arrivals.map((reservation) => (
-              <ReservationRow
-                key={reservation.id}
-                reservation={reservation}
-                availableRooms={availableRooms}
-                selectedRoomId={selectedRoomByReservation[reservation.id] || ''}
-                onSelectedRoomChange={(roomId) => setSelectedRoomByReservation((prev) => ({ ...prev, [reservation.id]: roomId }))}
-                onConfirm={reservation.status === 'pending' ? () => handleStatusChange(reservation.id, 'confirmed') : undefined}
-                onCheckIn={reservation.status === 'confirmed' ? () => handleStatusChange(reservation.id, 'checked_in') : undefined}
-                onNoShow={reservation.status === 'confirmed' ? () => handleStatusChange(reservation.id, 'no_show') : undefined}
-                onCancel={onCancel ? () => onCancel(reservation.id) : undefined}
-                onAssignRoom={() => handleAssignRoom(reservation.id)}
-              />
-            ))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Departures</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {departures.length === 0 && (
-              <p className="text-sm text-muted-foreground">No departures scheduled for today.</p>
-            )}
-            {departures.map((reservation) => (
-              <ReservationRow
-                key={reservation.id}
-                reservation={reservation}
-                onCheckOut={() => handleStatusChange(reservation.id, 'checked_out')}
-              />
-            ))}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">In-House Guests</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {inHouse.length === 0 && (
-            <p className="text-sm text-muted-foreground">No in-house guests right now.</p>
-          )}
-          {inHouse.map((reservation) => (
-            <ReservationRow
-              key={reservation.id}
-              reservation={reservation}
-              availableRooms={availableRooms}
-              selectedRoomId={selectedRoomByReservation[reservation.id] || ''}
-              onSelectedRoomChange={(roomId) => setSelectedRoomByReservation((prev) => ({ ...prev, [reservation.id]: roomId }))}
-              onAssignRoom={() => handleAssignRoom(reservation.id)}
-              onAddCharges={() => router.push(`/dashboard/platform/folios?bookingId=${reservation.id}`)}
-              onCheckOut={() => handleStatusChange(reservation.id, 'checked_out')}
-            />
-          ))}
-        </CardContent>
-      </Card>
-
-      {loading && (
-        <div className="text-sm text-muted-foreground">
-          Loading reservations...
         </div>
-      )}
+
+        {loading && !reservations.length ? (
+          <WorkspaceLoading label="Loading front desk queue" className="rounded-none border-0" />
+        ) : visible.length === 0 ? (
+          <WorkspaceEmpty
+            title={search ? 'No reservations match this search' : emptyCopy[view].title}
+            description={search ? 'Try a guest name, confirmation number or room.' : emptyCopy[view].description}
+            onClear={search ? () => setSearch('') : undefined}
+            icon={view === 'requests' ? MessageSquareQuote : view === 'departures' ? LogOut : view === 'in_house' ? Users : DoorOpen}
+          />
+        ) : (
+          <ul className="divide-y">
+            {visible.map((reservation) => view === 'requests' ? (
+              <ChangeRequestRow
+                key={reservation.id}
+                reservation={reservation}
+                resolution={getModificationResolution(reservation)}
+                onChange={(updates) => updateModificationResolution(reservation, updates)}
+                onApprove={onResolveModification ? () => handleResolveModification(reservation, 'approved') : undefined}
+                onDecline={onResolveModification ? () => handleResolveModification(reservation, 'declined') : undefined}
+                busy={pending?.startsWith(`${reservation.id}:`) || false}
+                onOpen={() => setWorkspaceId(reservation.id)}
+              />
+            ) : (
+              <QueueRow
+                key={reservation.id}
+                reservation={reservation}
+                view={view}
+                pending={pending}
+                roomControl={onAssignRoom && !reservation.roomNumber && view !== 'departures' ? roomAssigner(reservation, true) : null}
+                onStatusChange={handleStatusChange}
+                onCancel={view === 'arrivals' && onCancel ? () => run(`${reservation.id}:cancel`, () => onCancel(reservation.id)) : undefined}
+                onOpenFolio={() => openFolio(reservation.id)}
+                onOpenWorkspace={() => setWorkspaceId(reservation.id)}
+              />
+            ))}
+          </ul>
+        )}
+        {visible.length ? (
+          <PanelToolbar className="border-b-0 border-t bg-muted/20 py-2.5">
+            <p className="text-xs text-muted-foreground">
+              Showing {pluralize(visible.length, 'reservation')} for business date {today}. Open <span className="font-medium text-foreground">Manage stay</span> for keys, occupants, service cases, loyalty and relocation.
+            </p>
+          </PanelToolbar>
+        ) : null}
+      </Panel>
+
+      <Sheet open={Boolean(workspace)} onOpenChange={(open) => { if (!open) setWorkspaceId(null); }}>
+        <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl">
+          {workspace ? (
+            <>
+              <SheetHeader className="space-y-3 border-b px-5 py-4 pr-12 text-left">
+                <div className="flex items-start gap-3">
+                  <InitialsAvatar name={workspace.guestName} className="size-10 text-xs" />
+                  <div className="min-w-0">
+                    <SheetTitle className="truncate text-base">{workspace.guestName}</SheetTitle>
+                    <SheetDescription className="text-xs">
+                      <span className="font-mono">{workspace.confirmationNumber}</span> · {formatStayRange(workspace.checkInDate, workspace.checkOutDate)} · {pluralize(nightsBetween(workspace.checkInDate, workspace.checkOutDate), 'night')}
+                    </SheetDescription>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill kind="booking" value={workspace.status} />
+                  <Tag>{workspace.roomNumber ? `Room ${workspace.roomNumber}` : 'Unassigned'}{workspace.roomTypeName ? ` · ${workspace.roomTypeName}` : ''}</Tag>
+                  {Number(workspace.balanceDue || 0) > 0 ? <Tag className="border-amber-500/30 text-amber-800 dark:text-amber-300">Balance {formatMoney(workspace.balanceDue)}</Tag> : <Tag>Settled</Tag>}
+                </div>
+              </SheetHeader>
+              <WorkspaceTabs key={workspace.id} defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+                <WorkspaceTabsList>
+                  <WorkspaceTabsTrigger value="overview">Overview</WorkspaceTabsTrigger>
+                  {workspace.status === 'checked_in' ? <WorkspaceTabsTrigger value="stay">Stay & keys</WorkspaceTabsTrigger> : null}
+                  <WorkspaceTabsTrigger value="services">Services</WorkspaceTabsTrigger>
+                  {workspace.status === 'checked_in' ? <WorkspaceTabsTrigger value="loyalty">Loyalty</WorkspaceTabsTrigger> : null}
+                  <WorkspaceTabsTrigger value="relocation">Relocation</WorkspaceTabsTrigger>
+                </WorkspaceTabsList>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <WorkspaceTabsContent value="overview" className="space-y-6 p-5">
+                    <DetailList
+                      items={[
+                        { label: 'Stay', value: formatStayRange(workspace.checkInDate, workspace.checkOutDate) },
+                        { label: 'Guests', value: workspace.numberOfGuests ?? '—' },
+                        { label: 'Source', value: humanize(workspace.source) },
+                        { label: 'Total', value: <span className="tabular-nums">{formatMoney(workspace.totalAmount)}</span> },
+                        { label: 'Balance due', value: <span className="tabular-nums">{formatMoney(workspace.balanceDue)}</span> },
+                        { label: 'Room status', value: workspace.roomStatus ? <StatusPill kind="room" value={workspace.roomStatus} /> : '—' },
+                      ]}
+                    />
+                    {workspace.internalNotes ? (
+                      <div className="space-y-1.5">
+                        <SectionLabel>Internal notes</SectionLabel>
+                        <p className="whitespace-pre-wrap rounded-md bg-muted/50 px-3 py-2 text-sm">{workspace.internalNotes}</p>
+                      </div>
+                    ) : null}
+                    {onAssignRoom && (!workspace.roomNumber || workspace.status === 'checked_in') ? (
+                      <SubSection
+                        title={workspace.status === 'checked_in' ? 'Move room' : 'Assign room'}
+                        description="Only ready rooms of the booked room type are offered."
+                      >
+                        {roomAssigner(workspace)}
+                      </SubSection>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2 border-t pt-5">
+                      <Button size="sm" variant="outline" onClick={() => openFolio(workspace.id)}><ReceiptText aria-hidden="true" />Open folio</Button>
+                      <Button size="sm" variant="ghost" asChild><Link href={`/dashboard/bookings/${workspace.id}`}>Reservation record</Link></Button>
+                    </div>
+                  </WorkspaceTabsContent>
+                  {workspace.status === 'checked_in' ? (
+                    <WorkspaceTabsContent value="stay" className="p-5">
+                      <InHouseStayControls key={workspace.id} bookingId={workspace.id} checkInDate={workspace.checkInDate} checkOutDate={workspace.checkOutDate} onSaved={onStayChanged} />
+                    </WorkspaceTabsContent>
+                  ) : null}
+                  <WorkspaceTabsContent value="services" className="p-5">
+                    <StayServiceDesk bookingId={workspace.id} />
+                  </WorkspaceTabsContent>
+                  {workspace.status === 'checked_in' ? (
+                    <WorkspaceTabsContent value="loyalty" className="p-5">
+                      <LoyaltyStayPanel bookingId={workspace.id} />
+                    </WorkspaceTabsContent>
+                  ) : null}
+                  <WorkspaceTabsContent value="relocation" className="p-5">
+                    <RelocationPanel bookingId={workspace.id} />
+                  </WorkspaceTabsContent>
+                </div>
+              </WorkspaceTabs>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-function ReservationRow({
+function GuestIdentity({ reservation, children }: { reservation: FrontDeskReservation; children?: React.ReactNode }) {
+  const nights = nightsBetween(reservation.checkInDate, reservation.checkOutDate);
+  return (
+    <div className="flex min-w-0 flex-1 items-start gap-3">
+      <InitialsAvatar name={reservation.guestName} className="mt-0.5" />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="truncate font-medium text-foreground">{reservation.guestName}</p>
+          <StatusPill kind="booking" value={reservation.status} />
+          {children}
+        </div>
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <span className="font-mono">{reservation.confirmationNumber}</span>
+          <span>{formatStayRange(reservation.checkInDate, reservation.checkOutDate)} · {pluralize(nights, 'night')}</span>
+          {reservation.numberOfGuests ? <span>{pluralize(reservation.numberOfGuests, 'guest')}</span> : null}
+          {reservation.source ? <span>{humanize(reservation.source)}</span> : null}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function QueueRow({
   reservation,
-  onConfirm,
-  onCheckIn,
-  onNoShow,
-  onCheckOut,
-  availableRooms = [],
-  selectedRoomId,
-  onSelectedRoomChange,
-  modificationResolution,
-  onModificationResolutionChange,
-  onApproveModification,
-  onDeclineModification,
-  onAssignRoom,
-  onAddCharges,
+  view,
+  pending,
+  roomControl,
+  onStatusChange,
   onCancel,
+  onOpenFolio,
+  onOpenWorkspace,
 }: {
   reservation: FrontDeskReservation;
-  availableRooms?: FrontDeskRoomOption[];
-  selectedRoomId?: string;
-  modificationResolution?: { checkInDate: string; checkOutDate: string; staffNote: string };
-  onSelectedRoomChange?: (roomId: string) => void;
-  onModificationResolutionChange?: (updates: Partial<{ checkInDate: string; checkOutDate: string; staffNote: string }>) => void;
-  onConfirm?: () => void;
-  onCheckIn?: () => void;
-  onNoShow?: () => void;
-  onCheckOut?: () => void;
-  onApproveModification?: () => void;
-  onDeclineModification?: () => void;
-  onAssignRoom?: () => void;
-  onAddCharges?: () => void;
+  view: Exclude<View, 'requests'>;
+  pending: string | null;
+  roomControl: React.ReactNode;
+  onStatusChange: (id: string, status: FrontDeskStatus) => void;
   onCancel?: () => void;
+  onOpenFolio: () => void;
+  onOpenWorkspace: () => void;
 }) {
-  const compatibleRooms = availableRooms.filter(room => room.roomType?.id === reservation.roomTypeId);
+  const busy = pending?.startsWith(`${reservation.id}:`) || false;
+  const balance = Number(reservation.balanceDue || 0);
+
+  let primary: React.ReactNode = null;
+  if (view === 'arrivals' && reservation.status === 'pending') {
+    primary = <Button size="sm" variant="outline" disabled={busy} onClick={() => onStatusChange(reservation.id, 'confirmed')}><Check aria-hidden="true" />Confirm</Button>;
+  } else if (view === 'arrivals' && reservation.status === 'confirmed') {
+    primary = <Button size="sm" disabled={busy} onClick={() => onStatusChange(reservation.id, 'checked_in')}><LogIn aria-hidden="true" />Check in</Button>;
+  } else if (view === 'in_house' || view === 'departures') {
+    primary = <Button size="sm" variant={view === 'departures' ? 'default' : 'outline'} disabled={busy} onClick={() => onStatusChange(reservation.id, 'checked_out')}><LogOut aria-hidden="true" />Check out</Button>;
+  }
+
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-background p-3 md:flex-row md:items-center md:justify-between">
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-medium">{reservation.guestName}</p>
-          <Badge className={STATUS_STYLES[reservation.status]}>
-            {STATUS_LABELS[reservation.status]}
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            {reservation.confirmationNumber}
-          </span>
-        </div>
-        <div className="text-sm text-muted-foreground">
-          {formatUtc(reservation.checkInDate, { month: 'short', day: 'numeric' })} -{' '}
-          {formatUtc(reservation.checkOutDate, { month: 'short', day: 'numeric', year: 'numeric' })}
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span>
-            {reservation.roomNumber ? `Room ${reservation.roomNumber}` : 'Unassigned'}
-            {reservation.roomTypeName ? ` • ${reservation.roomTypeName}` : ''}
-          </span>
-          {reservation.roomStatus && (
-            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-              {reservation.roomStatus.replace('_', ' ')}
-            </Badge>
-          )}
-        </div>
-        <div className="text-sm text-muted-foreground">
-          Balance Due: {formatCurrency(reservation.balanceDue)}
-        </div>
-        <RelocationPanel bookingId={reservation.id} />
-        {reservation.status === 'checked_in' && <InHouseStayControls bookingId={reservation.id} checkInDate={reservation.checkInDate} checkOutDate={reservation.checkOutDate} />}
-        {reservation.hasPendingModificationRequest && (
-          <div className="space-y-3 rounded-md border border-purple-200 bg-purple-50 px-3 py-3 text-sm text-purple-700">
-            <p className="font-medium">Guest change request pending staff review.</p>
-            {reservation.pendingModificationRequest?.guestMessage && (
-              <p className="whitespace-pre-wrap text-purple-800">
-                {reservation.pendingModificationRequest.guestMessage}
-              </p>
-            )}
-            {reservation.pendingModificationRequest?.requestedCheckInDate && reservation.pendingModificationRequest?.requestedCheckOutDate && (
-              <p className="text-xs text-purple-700">
-                Requested stay: {formatUtc(reservation.pendingModificationRequest.requestedCheckInDate, { month: 'short', day: 'numeric', year: 'numeric' })} –{' '}
-                {formatUtc(reservation.pendingModificationRequest.requestedCheckOutDate, { month: 'short', day: 'numeric', year: 'numeric' })}
-              </p>
-            )}
-            {modificationResolution && onModificationResolutionChange && (
-              <div className="grid gap-2 md:grid-cols-3">
-                <Input
-                  type="date"
-                  value={modificationResolution.checkInDate}
-                  onChange={(event) => onModificationResolutionChange({ checkInDate: event.target.value })}
-                  className="h-8 bg-white"
-                />
-                <Input
-                  type="date"
-                  value={modificationResolution.checkOutDate}
-                  onChange={(event) => onModificationResolutionChange({ checkOutDate: event.target.value })}
-                  className="h-8 bg-white"
-                />
-                <Input
-                  value={modificationResolution.staffNote}
-                  onChange={(event) => onModificationResolutionChange({ staffNote: event.target.value })}
-                  placeholder="Staff note"
-                  className="h-8 bg-white"
-                />
+    <li className={cn('px-4 py-3.5 transition-colors hover:bg-muted/20 sm:px-5', busy && 'opacity-70')}>
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+        <GuestIdentity reservation={reservation}>
+          {reservation.hasPendingModificationRequest ? <StatusPill tone="accent" label="Change requested" /> : null}
+        </GuestIdentity>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 pl-11 xl:w-[24rem] xl:shrink-0 xl:pl-0">
+          <div className="min-w-0">
+            {reservation.roomNumber ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium">Room {reservation.roomNumber}</span>
+                {reservation.roomStatus ? <StatusPill kind="room" value={reservation.roomStatus} /> : null}
+                {reservation.roomTypeName ? <span className="w-full truncate text-xs text-muted-foreground">{reservation.roomTypeName}</span> : null}
+              </div>
+            ) : roomControl ? roomControl : (
+              <div className="text-sm">
+                <span className="font-medium text-muted-foreground">Unassigned</span>
+                {reservation.roomTypeName ? <span className="block truncate text-xs text-muted-foreground">{reservation.roomTypeName}</span> : null}
               </div>
             )}
           </div>
-        )}
+          <div className="whitespace-nowrap text-right">
+            <p className={cn('text-sm font-medium tabular-nums', balance > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>{formatMoney(reservation.balanceDue)}</p>
+            <p className="text-[11px] text-muted-foreground">{balance > 0 ? 'Balance due' : 'Settled'}</p>
+          </div>
+        </div>
+
+        {/* Natural width: a fixed width let "Check out" spill over the balance column. */}
+        <div className="flex shrink-0 items-center justify-end gap-1.5 pl-11 xl:min-w-[13.5rem] xl:pl-0">
+          {primary}
+          <Button size="sm" variant="ghost" onClick={onOpenWorkspace}><PanelRightOpen aria-hidden="true" />Manage</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="ghost" className="size-8" aria-label={`More actions for ${reservation.guestName}`}><MoreHorizontal aria-hidden="true" /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52 [&_svg]:size-4">
+              <DropdownMenuLabel className="font-mono text-xs font-normal text-muted-foreground">{reservation.confirmationNumber}</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={onOpenWorkspace}><PanelRightOpen aria-hidden="true" />Manage stay</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onOpenFolio}><ReceiptText aria-hidden="true" />{view === 'in_house' ? 'Add charges' : 'Open folio'}</DropdownMenuItem>
+              {view === 'in_house' ? <DropdownMenuItem onSelect={onOpenWorkspace}><ArrowRightLeft aria-hidden="true" />Move room</DropdownMenuItem> : null}
+              {view === 'arrivals' && reservation.status === 'confirmed' ? (
+                <DropdownMenuItem disabled={busy} onSelect={() => onStatusChange(reservation.id, 'no_show')}><UserRoundX aria-hidden="true" />Mark no-show</DropdownMenuItem>
+              ) : null}
+              {onCancel ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem disabled={busy} className="text-rose-700 focus:text-rose-700 dark:text-rose-400" onSelect={onCancel}><XCircle aria-hidden="true" />Cancel reservation</DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {onConfirm && <Button size="sm" variant="outline" onClick={onConfirm}>Confirm</Button>}
-        {onCheckIn && (
-          <Button size="sm" onClick={onCheckIn}>
-            <LogIn className="mr-2 h-4 w-4" />
-            Check In
-          </Button>
-        )}
-        {onNoShow && <Button size="sm" variant="outline" onClick={onNoShow}>No show</Button>}
-        {onCheckOut && (
-          <Button size="sm" variant="outline" onClick={onCheckOut}>
-            <LogOut className="mr-2 h-4 w-4" />
-            Check Out
-          </Button>
-        )}
-        {(onApproveModification || onDeclineModification) && (
-          <>
-            {onApproveModification && (
-              <Button size="sm" variant="outline" onClick={onApproveModification}>
-                Approve Change
-              </Button>
-            )}
-            {onDeclineModification && (
-              <Button size="sm" variant="outline" onClick={onDeclineModification}>
-                Decline
-              </Button>
-            )}
-          </>
-        )}
-        {onAssignRoom && (!reservation.roomNumber || reservation.status === 'checked_in') && (
-          compatibleRooms.length ? (
-            <div className="flex flex-wrap gap-2">
-              <Select value={selectedRoomId} onValueChange={onSelectedRoomChange}>
-                <SelectTrigger
-                  className="h-9 w-[180px]"
-                  aria-label={`Ready room for ${reservation.guestName}`}
-                ><SelectValue placeholder="Ready room" /></SelectTrigger>
-                <SelectContent>{compatibleRooms.map((room) => <SelectItem key={room.id} value={room.id}>{room.roomNumber}{room.roomType?.name ? ` • ${room.roomType.name}` : ''}</SelectItem>)}</SelectContent>
-              </Select>
-              <Button size="sm" variant="outline" onClick={onAssignRoom} disabled={!selectedRoomId}><ClipboardList className="mr-2 h-4 w-4" />{reservation.status === 'checked_in' ? 'Move Room' : 'Assign Room'}</Button>
-            </div>
-          ) : <span className="text-xs text-amber-700">No ready room of the booked type.</span>
-        )}
-        {onAddCharges && (
-          <Button size="sm" variant="outline" onClick={onAddCharges}>
-            <BadgeCheck className="mr-2 h-4 w-4" />
-            Add Charges
-          </Button>
-        )}
-        {onCancel && <Button size="sm" variant="destructive" onClick={onCancel}>Cancel</Button>}
+    </li>
+  );
+}
+
+function ChangeRequestRow({
+  reservation,
+  resolution,
+  onChange,
+  onApprove,
+  onDecline,
+  busy,
+  onOpen,
+}: {
+  reservation: FrontDeskReservation;
+  resolution: Resolution;
+  onChange: (updates: Partial<Resolution>) => void;
+  onApprove?: () => void;
+  onDecline?: () => void;
+  busy: boolean;
+  onOpen: () => void;
+}) {
+  const request = reservation.pendingModificationRequest;
+  return (
+    <li className="space-y-4 px-4 py-4 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <GuestIdentity reservation={reservation} />
+        <Button size="sm" variant="ghost" className="self-start" onClick={onOpen}><PanelRightOpen aria-hidden="true" />Manage</Button>
       </div>
+      <div className="grid gap-4 rounded-lg border border-violet-500/20 bg-violet-500/[0.03] p-4 lg:grid-cols-2">
+        <div className="min-w-0 space-y-3">
+          <SectionLabel>Guest request</SectionLabel>
+          {request?.guestMessage ? (
+            <blockquote className="border-l-2 border-violet-500/40 pl-3 text-sm italic text-foreground/90 [overflow-wrap:anywhere]">{request.guestMessage}</blockquote>
+          ) : <p className="text-sm text-muted-foreground">No message from the guest.</p>}
+          <dl className="grid grid-cols-2 gap-3 text-sm">
+            <div><dt className="text-xs text-muted-foreground">Currently booked</dt><dd className="font-medium">{formatStayRange(reservation.checkInDate, reservation.checkOutDate)}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Requested</dt><dd className="font-medium text-violet-800 dark:text-violet-300">{request?.requestedCheckInDate && request?.requestedCheckOutDate ? formatStayRange(request.requestedCheckInDate, request.requestedCheckOutDate) : 'Dates not specified'}</dd></div>
+          </dl>
+        </div>
+        <div className="min-w-0 space-y-3">
+          <SectionLabel>Staff decision</SectionLabel>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Arrival" htmlFor={`mod-in-${reservation.id}`}>
+              <FieldInput id={`mod-in-${reservation.id}`} type="date" value={resolution.checkInDate} onChange={(event) => onChange({ checkInDate: event.target.value })} />
+            </Field>
+            <Field label="Departure" htmlFor={`mod-out-${reservation.id}`}>
+              <FieldInput id={`mod-out-${reservation.id}`} type="date" value={resolution.checkOutDate} onChange={(event) => onChange({ checkOutDate: event.target.value })} />
+            </Field>
+          </div>
+          <Field label="Staff note" htmlFor={`mod-note-${reservation.id}`} optional>
+            <FieldInput id={`mod-note-${reservation.id}`} value={resolution.staffNote} onChange={(event) => onChange({ staffNote: event.target.value })} placeholder="Shared in the decision record" />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            {onApprove ? <Button size="sm" disabled={busy} onClick={onApprove}><Check aria-hidden="true" />Approve change</Button> : null}
+            {onDecline ? <Button size="sm" variant="outline" disabled={busy} onClick={onDecline}><X aria-hidden="true" />Decline</Button> : null}
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function RoomAssigner({
+  reservation,
+  rooms,
+  value,
+  onChange,
+  onAssign,
+  busy,
+  compact,
+}: {
+  reservation: FrontDeskReservation;
+  rooms: FrontDeskRoomOption[];
+  value: string;
+  onChange: (roomId: string) => void;
+  onAssign: () => void;
+  busy: boolean;
+  compact?: boolean;
+}) {
+  const compatibleRooms = rooms.filter((room) => room.roomType?.id === reservation.roomTypeId);
+  if (!compatibleRooms.length) {
+    return (
+      <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+        <ClipboardList className="size-3.5 shrink-0" aria-hidden="true" />
+        No ready {reservation.roomTypeName || 'room'} available
+      </p>
+    );
+  }
+  return (
+    <div className={cn('flex min-w-0 gap-1.5', compact ? 'max-w-[15rem]' : 'max-w-sm')}>
+      <NativeSelect
+        aria-label={`Ready room for ${reservation.guestName}`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={cn('flex-1', compact && '[&_select]:h-8')}
+      >
+        <option value="">{compact ? 'Assign room…' : 'Select a ready room'}</option>
+        {compatibleRooms.map((room) => <option key={room.id} value={room.id}>Room {room.roomNumber}{room.roomType?.name ? ` · ${room.roomType.name}` : ''}</option>)}
+      </NativeSelect>
+      <Button size="sm" variant="outline" className={compact ? 'h-8' : 'h-9'} onClick={onAssign} disabled={!value || busy}>
+        {reservation.status === 'checked_in' ? 'Move' : 'Assign'}
+      </Button>
     </div>
   );
 }

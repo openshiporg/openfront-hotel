@@ -4,15 +4,15 @@ import { formatStayDate } from '@/lib/hotelCalendarDate';
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Search, CalendarDays, Mail, ArrowRight, ShieldCheck } from 'lucide-react';
+import { ArrowRight, BedDouble, CalendarDays, CalendarPlus, Mail, ReceiptText, ShieldCheck } from 'lucide-react';
 
-import { useToast } from '@/components/ui/use-toast';
 import {
   lookupBookingAction,
   type BookingLookupActionState,
 } from '@/features/storefront/actions/guest-search';
 import { GuestSearchStatus } from '@/features/storefront/components/GuestSearchStatus';
 import { GuestSearchSubmitButton } from '@/features/storefront/components/GuestSearchSubmitButton';
+import { GuestPortalNav } from '@/features/storefront/components/GuestPortalNav';
 
 interface LookupBooking {
   id: string;
@@ -37,11 +37,17 @@ const initialState: BookingLookupActionState = {
   formData: { confirmationNumber: '', email: '' },
 };
 
+const BENEFITS = [
+  { icon: ReceiptText, title: 'Dates & statement', copy: 'See your stay details, recorded rate terms and the current balance.' },
+  { icon: CalendarPlus, title: 'Plan around it', copy: 'Add the stay to your calendar and keep arrival details close.' },
+  { icon: Mail, title: 'Ask for a change', copy: 'Send a change request or review cancellation terms before deciding.' },
+];
+
 export default function BookingLookupPage() {
   const router = useRouter();
-  const { toast } = useToast();
   const confirmationRef = React.useRef<HTMLInputElement>(null);
   const emailRef = React.useRef<HTMLInputElement>(null);
+  const resultRef = React.useRef<HTMLHeadingElement>(null);
   const [state, formAction] = React.useActionState(lookupBookingAction, initialState);
   const result = state.booking as LookupBooking | null;
 
@@ -55,38 +61,39 @@ export default function BookingLookupPage() {
     }
   }, []);
 
+  // The status line announces the match; move focus to the reservation it found.
   React.useEffect(() => {
     if (state.status !== 'matched' || !result) return;
-    toast({ title: 'Reservation found', description: 'You can now view the full stay details.' });
-  }, [result, state.formData.email, state.status, toast]);
+    resultRef.current?.focus({ preventScroll: false });
+  }, [result, state.status]);
 
   const assignment = result?.roomAssignments?.[0];
 
   return (
-    <main className="lodging-page min-h-screen">
-      <div className="lodging-container max-w-3xl py-12 md:py-16">
-        <header className="hotel-page-head">
-          <p className="lodging-eyebrow mb-4 text-[var(--lodging-accent-deep)]">Manage your stay</p>
-          <h1 className="lodging-display">Your stay starts here.</h1>
-          <p className="lodging-lead mx-auto mt-5 max-w-xl">
-            Use your confirmation number and the email on the reservation to view stay details, add the stay to your calendar, or request changes.
-          </p>
+    <div className="sf-wrap sf-section--tight">
+      <div className="sf-split" style={{ alignItems: 'start' }}>
+        <header className="sf-stack" style={{ '--stack': '18px', paddingTop: 'clamp(8px, 3vw, 32px)' } as React.CSSProperties}>
+          <p className="sf-eyebrow">Manage your stay</p>
+          <h1 className="sf-h1">Your stay, <em>in one place.</em></h1>
+          <p className="sf-lead">Use your confirmation number and the email on the reservation to view stay details, add the stay to your calendar, or request changes.</p>
+          <GuestPortalNav current="/bookings/lookup" />
+          <ul className="sf-stack" style={{ '--stack': '18px', listStyle: 'none', padding: 0, marginTop: 36 } as React.CSSProperties}>
+            {BENEFITS.map(item => <li key={item.title} className="sf-row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap', gap: 16 }}>
+              <span className="sf-feature__icon" style={{ flex: 'none' }}><item.icon aria-hidden="true" /></span>
+              <span><b className="sf-h4">{item.title}</b><span className="sf-muted sf-small" style={{ display: 'block', marginTop: 2 }}>{item.copy}</span></span>
+            </li>)}
+          </ul>
         </header>
-        <nav aria-label="Guest portal" className="hotel-subnav mb-8"><Link href="/bookings/lookup" aria-current="page">Find a reservation</Link><Link href="/account">Verified stays</Link><Link href="/contact">Contact the house</Link></nav>
 
-        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <form action={formAction} className="lodging-surface min-w-0 space-y-6 p-6 md:p-8">
+        <div className="sf-stack" style={{ '--stack': '16px' } as React.CSSProperties}>
+          <form action={formAction} className="sf-float sf-pad-lg sf-stack" style={{ '--stack': '20px' } as React.CSSProperties}>
             <div>
-              <p className="lodging-eyebrow mb-2 flex items-center gap-2 text-[var(--lodging-accent-deep)]">
-                <Search className="h-4 w-4" /> Reservation lookup
-              </p>
-              <p className="text-sm leading-6 text-[var(--lodging-ink-muted)]">
-                Your confirmation number starts with BK- and appears in your booking confirmation email.
-              </p>
+              <p className="sf-eyebrow sf-eyebrow--plain" style={{ gap: 8 }}><ShieldCheck aria-hidden="true" style={{ width: 16 }} /> Secure reservation lookup</p>
+              <p className="sf-muted sf-small" style={{ marginTop: 8 }}>Your confirmation number starts with BK- and appears in your booking confirmation email.</p>
             </div>
 
-            <div className="space-y-2">
-              <label htmlFor="confirmationNumber" className="lodging-label">Confirmation number</label>
+            <label className="sf-field" htmlFor="confirmationNumber">
+              <span className="sf-label">Confirmation number</span>
               <input
                 key={`confirmation-${state.status}-${state.formData.confirmationNumber}`}
                 ref={confirmationRef}
@@ -95,14 +102,14 @@ export default function BookingLookupPage() {
                 maxLength={80}
                 defaultValue={state.formData.confirmationNumber}
                 placeholder="BK-XXXX-XXXX"
-                className="lodging-input uppercase"
+                className="sf-input sf-input--code"
                 required
                 autoComplete="off"
               />
-            </div>
+            </label>
 
-            <div className="space-y-2">
-              <label htmlFor="email" className="lodging-label">Email address</label>
+            <label className="sf-field" htmlFor="email">
+              <span className="sf-label">Email address</span>
               <input
                 key={`email-${state.status}-${state.formData.email}`}
                 ref={emailRef}
@@ -112,65 +119,48 @@ export default function BookingLookupPage() {
                 maxLength={254}
                 defaultValue={state.formData.email}
                 placeholder="you@example.com"
-                className="lodging-input"
+                className="sf-input"
                 required
                 autoComplete="email"
               />
-            </div>
+              <span className="sf-hint">Use the email recorded on your reservation. The property verifies both details before giving this browser access.</span>
+            </label>
 
             <GuestSearchStatus state={{ phase: state.status, message: state.message, value: result }} />
 
             <GuestSearchSubmitButton idleLabel="Find reservation" pendingLabel="Searching…" />
+            <p className="sf-fine" style={{ display: 'flex', gap: 8 }}><CalendarDays aria-hidden="true" style={{ width: 15, flex: 'none', marginTop: 2 }} />With a guest account, every stay you book or find is kept in one place. <Link href="/account" className="sf-link" style={{ minHeight: 0, fontSize: 'inherit' }}>Sign in or create an account</Link></p>
           </form>
 
-          <div className="lodging-surface min-w-0 space-y-5 p-6 md:p-8">
-            <p className="lodging-eyebrow flex items-center gap-2 text-[var(--lodging-accent-deep)]">
-              <ShieldCheck className="h-4 w-4" /> Secure access
-            </p>
-            <div className="space-y-4 text-sm leading-7 text-[var(--lodging-ink-muted)]">
-              <div className="flex gap-3">
-                <Mail className="mt-0.5 h-4 w-4 shrink-0 text-[var(--lodging-ink-faint)]" />
-                <p>Use the email recorded on your reservation. The property verifies both details before giving this browser access.</p>
-              </div>
-              <div className="flex gap-3">
-                <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-[var(--lodging-ink-faint)]" />
-                <p>The guest portal brings together reservations you have verified in this browser.</p>
-              </div>
-            </div>
-            <Link href="/account" className="lodging-button-ghost inline-flex">
-              Open guest portal
-            </Link>
-          </div>
-        </div>
-
-        {result ? (
-          <section className="lodging-surface mt-8 p-6 md:p-8">
-            <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-              <div className="min-w-0 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="lodging-title text-[clamp(1.25rem,2vw,1.5rem)]">{result.guestName}</h2>
-                  {result.status ? <span className="lodging-pill lodging-pill-accent">{result.status.replace('_', ' ')}</span> : null}
-                  {result.paymentStatus ? <span className="lodging-pill">{result.paymentStatus.replace('_', ' ')}</span> : null}
+          {result ? (
+            <section className="sf-card sf-pad sf-updated" aria-label="Matched reservation">
+              <div className="sf-row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div className="sf-stack" style={{ '--stack': '8px', minWidth: 0 } as React.CSSProperties}>
+                  <div className="sf-row" style={{ gap: 8 }}>
+                    {result.status ? <span className="sf-badge sf-badge--accent sf-badge--dot">{result.status.replace('_', ' ')}</span> : null}
+                    {result.paymentStatus ? <span className="sf-badge">{result.paymentStatus.replace('_', ' ')}</span> : null}
+                  </div>
+                  <h2 ref={resultRef} tabIndex={-1} className="sf-h3">{result.guestName}</h2>
+                  <p className="sf-code" style={{ width: 'fit-content', paddingRight: 14 }}>{result.confirmationNumber}</p>
+                  <p className="sf-row sf-small sf-muted" style={{ gap: 8 }}><CalendarDays aria-hidden="true" style={{ width: 16 }} />
+                    {formatStayDate(result.checkInDate, { month: 'short', day: 'numeric', year: 'numeric' })} &mdash; {formatStayDate(result.checkOutDate, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
+                  <p className="sf-row sf-small sf-muted" style={{ gap: 8 }}><BedDouble aria-hidden="true" style={{ width: 16 }} />
+                    {assignment?.roomType?.name || 'Room type pending'}
+                    {assignment?.roomNumber ? ` · Room ${assignment.roomNumber}` : ''}
+                  </p>
                 </div>
-                <p className="lodging-serif text-sm text-[var(--lodging-ink-faint)]">{result.confirmationNumber}</p>
-                <p className="text-sm text-[var(--lodging-ink-muted)]">
-                  {formatStayDate(result.checkInDate, { month: "short", day: "numeric", year: "numeric" })} &mdash; {formatStayDate(result.checkOutDate, { month: "short", day: "numeric", year: "numeric" })}
-                </p>
-                <p className="text-sm text-[var(--lodging-ink-muted)]">
-                  {assignment?.roomType?.name || 'Room type pending'}
-                  {assignment?.roomNumber ? ` · Room ${assignment.roomNumber}` : ''}
-                </p>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-3">
-                <Link href="/account" className="lodging-button-ghost">View all stays</Link>
-                <button type="button" className="lodging-button" onClick={() => router.push(`/booking/${encodeURIComponent(result.id)}`)}>
-                  Open booking <ArrowRight className="h-4 w-4" />
+              <div className="sf-row" style={{ marginTop: 18 }}>
+                <button type="button" className="sf-btn" onClick={() => router.push(`/booking/${encodeURIComponent(result.id)}`)}>
+                  Open booking <ArrowRight className="sf-btn__go" aria-hidden="true" />
                 </button>
+                <Link href="/account" className="sf-btn sf-btn--ghost">View all stays</Link>
               </div>
-            </div>
-          </section>
-        ) : null}
+            </section>
+          ) : null}
+        </div>
       </div>
-    </main>
+    </div>
   );
 }

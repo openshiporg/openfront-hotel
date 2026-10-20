@@ -10,19 +10,27 @@ const storageInfrastructureConfigured = () => Boolean(
   process.env.S3_SECRET_ACCESS_KEY && process.env.S3_ENDPOINT
 );
 
-const canUseImageStorage = async (args: any) => {
-  if (!permissions.canManageRooms(args) || !storageInfrastructureConfigured()) return false;
-  const settings = await args.context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { id: true } });
-  return Boolean(settings);
-};
+// A public image path needs no file storage; only an uploaded file does.
+const uploadAllowed = ({ inputData }: any) => !inputData?.image || storageInfrastructureConfigured();
 
 export const RoomImage = list({
   access: {
     operation: {
       query: permissions.canManageRooms,
-      create: canUseImageStorage,
-      update: canUseImageStorage,
-      delete: canUseImageStorage,
+      create: permissions.canManageRooms,
+      update: permissions.canManageRooms,
+      delete: permissions.canManageRooms,
+    },
+    item: {
+      create: uploadAllowed,
+      update: uploadAllowed,
+    },
+  },
+  hooks: {
+    validateInput: ({ operation, resolvedData, item, addValidationError }) => {
+      const image = resolvedData.image?.id ?? (operation === 'update' ? item?.image_id : null);
+      const path = String(resolvedData.imagePath ?? (operation === 'update' ? item?.imagePath : '') ?? '').trim();
+      if (!image && !path) addValidationError('Add an image path, or upload an image when uploads are available.');
     },
   },
   ui: {
@@ -31,7 +39,13 @@ export const RoomImage = list({
     },
   },
   fields: {
-    image: image({ storage: 'my_images' }),
+    image: image({
+      storage: 'my_images',
+      ui: {
+        createView: { fieldMode: () => (storageInfrastructureConfigured() ? 'edit' : 'hidden') },
+        itemView: { fieldMode: () => (storageInfrastructureConfigured() ? 'edit' : 'read') },
+      },
+    }),
     imagePath: text({
       ui: {
         description: 'Public path or remote URL used for seeded/storefront imagery when no uploaded image is present.',

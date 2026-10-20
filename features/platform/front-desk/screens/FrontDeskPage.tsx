@@ -1,11 +1,14 @@
 'use client';
 
 import React from 'react';
+import { CalendarDays, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { FrontDesk } from '@/features/platform/reservations/components/FrontDesk';
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { useToast } from '@/components/ui/use-toast';
+import { toast } from 'sonner';
 import { StaffReservationForm } from '@/features/platform/reservations/components/StaffReservationForm';
+import { MetaItem, PlatformPage } from '@/features/platform/components/PlatformPage';
 import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';
+import { formatStay } from '@/features/platform/lib/format';
 import {
   assignFrontDeskRoom,
   cancelFrontDeskBooking,
@@ -63,13 +66,7 @@ interface FrontDeskResponse {
   };
 }
 
-function utcBusinessDate(offset: number) {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset));
-}
-
 export function FrontDeskPage() {
-  const { toast } = useToast();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [reservations, setReservations] = React.useState<Array<{
@@ -103,9 +100,7 @@ export function FrontDeskPage() {
     setLoading(true);
     setError(null);
     try {
-      const start = utcBusinessDate(-7).toISOString();
-      const end = utcBusinessDate(7).toISOString();
-      const data = await getFrontDeskWorkspace(start, end) as FrontDeskResponse['hotelFrontDesk'];
+      const data = await getFrontDeskWorkspace() as FrontDeskResponse['hotelFrontDesk'];
 
       const mappedReservations = (data.reservations || []).map((booking: any) => {
         return {
@@ -136,15 +131,11 @@ export function FrontDeskPage() {
       console.error('Failed to load front desk data:', error);
       const message = error instanceof Error ? error.message : 'Unable to load front desk reservations.';
       setError(message);
-      toast({
-        title: 'Front desk unavailable',
-        description: message,
-        variant: 'destructive',
-      });
+      toast.error('Front desk unavailable', { description: message });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   React.useEffect(() => {
     fetchFrontDeskData();
@@ -161,27 +152,16 @@ export function FrontDeskPage() {
       const response = await updateFrontDeskBookingStatus(bookingId, status, attemptKey(`status:${bookingId}:${status}`));
       await fetchFrontDeskData();
       if (!response.ok) {
-        toast({
-          title: 'Unable to update reservation',
-          description: response.message,
-          variant: 'destructive',
-        });
+        toast.error('Unable to update reservation', { description: response.message });
         return;
       }
       const savedStatus = response.data.status;
-      toast({
-        title: 'Reservation Updated',
-        description: savedStatus === 'cancellation_pending' ? 'No-show policy was applied; the provider refund is pending.' : `Status set to ${savedStatus.replaceAll('_', ' ')}.`,
-      });
+      toast.success('Reservation Updated', { description: savedStatus === 'cancellation_pending' ? 'No-show policy was applied; the provider refund is pending.' : `Status set to ${savedStatus.replaceAll('_', ' ')}.` });
     } catch (error) {
       console.error('Failed to update booking status:', error);
-      toast({
-        title: 'Unable to update reservation',
-        description: error instanceof Error ? error.message : 'Unable to update reservation status.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to update reservation', { description: error instanceof Error ? error.message : 'Unable to update reservation status.' });
     }
-  }, [fetchFrontDeskData, toast]);
+  }, [fetchFrontDeskData]);
 
   const handleCancel = React.useCallback(async (bookingId: string) => {
     if (!window.confirm('Cancel this reservation and apply the booked refund policy?')) return;
@@ -189,15 +169,15 @@ export function FrontDeskPage() {
       const response = await cancelFrontDeskBooking(bookingId, attemptKey(`cancel:${bookingId}`));
       await fetchFrontDeskData();
       if (!response.ok) {
-        toast({ title: 'Cancellation refused', description: response.message, variant: 'destructive' });
+        toast.error('Cancellation refused', { description: response.message });
         return;
       }
-      toast({ title: 'Cancellation recorded', description: 'Policy, refund, folio, and delivery work were persisted.' });
+      toast.success('Cancellation recorded', { description: 'Policy, refund, folio, and delivery work were persisted.' });
     } catch (error) {
       await fetchFrontDeskData();
-      toast({ title: 'Cancellation refused', description: error instanceof Error ? error.message : 'Cancellation was not persisted.', variant: 'destructive' });
+      toast.error('Cancellation refused', { description: error instanceof Error ? error.message : 'Cancellation was not persisted.' });
     }
-  }, [fetchFrontDeskData, toast]);
+  }, [fetchFrontDeskData]);
 
   const handleResolveModification = React.useCallback(async (
     bookingId: string,
@@ -225,76 +205,66 @@ export function FrontDeskPage() {
       });
       await fetchFrontDeskData();
       if (!response.ok) {
-        toast({ title: 'Unable to resolve request', description: response.message, variant: 'destructive' });
+        toast.error('Unable to resolve request', { description: response.message });
         return;
       }
       attemptKeys.current.delete(JSON.stringify({ bookingId, decision, checkInDate, checkOutDate, staffNote }));
-      toast({
-        title: decision === 'approved' ? 'Change request approved' : 'Change request declined',
-        description: decision === 'approved'
+      toast.success(decision === 'approved' ? 'Change request approved' : 'Change request declined', { description: decision === 'approved'
           ? 'Reservation dates were updated and the request was recorded.'
-          : 'The guest request was marked as declined in staff notes.',
-      });
+          : 'The guest request was marked as declined in staff notes.' });
     } catch (error) {
       console.error('Failed to resolve modification request:', error);
-      toast({
-        title: 'Unable to resolve request',
-        description: error instanceof Error ? error.message : 'The guest change request could not be resolved.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to resolve request', { description: error instanceof Error ? error.message : 'The guest change request could not be resolved.' });
     }
-  }, [fetchFrontDeskData, reservations, toast]);
+  }, [fetchFrontDeskData, reservations]);
 
   const handleRoomAssignment = React.useCallback(async (bookingId: string, roomId: string) => {
     try {
       const response = await assignFrontDeskRoom(bookingId, roomId, attemptKey(`assign:${bookingId}:${roomId}`));
       await fetchFrontDeskData();
       if (!response.ok) {
-        toast({ title: 'Unable to assign room', description: response.message, variant: 'destructive' });
+        toast.error('Unable to assign room', { description: response.message });
         return;
       }
       attemptKeys.current.delete(`assign:${bookingId}:${roomId}`);
-      toast({
-        title: 'Room Assigned',
-        description: 'The reservation now has a ready room assigned.',
-      });
+      toast.success('Room Assigned', { description: 'The reservation now has a ready room assigned.' });
     } catch (error) {
       console.error('Failed to assign room:', error);
-      toast({
-        title: 'Unable to assign room',
-        description: error instanceof Error ? error.message : 'Room assignment failed.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to assign room', { description: error instanceof Error ? error.message : 'Room assignment failed.' });
     }
-  }, [fetchFrontDeskData, toast]);
-
-  const header = (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div><h1 className="text-lg font-semibold md:text-2xl">Front Desk</h1><p className="text-muted-foreground">UTC business-date arrivals, departures, and in-house guests{businessDate ? ` · ${businessDate.slice(0, 10)}` : ''}</p></div>
-      <StaffReservationForm onCreated={fetchFrontDeskData} />
-    </div>
-  );
-
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Front Desk' },
-  ];
+  }, [fetchFrontDeskData]);
 
   return (
-    <PageContainer title="Front Desk" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full space-y-4 p-4 md:p-6">
-        {error ? <WorkspaceError message={error} onRetry={fetchFrontDeskData} /> : null}
-        <FrontDesk
-          reservations={reservations}
-          availableRooms={availableRooms}
-          businessDate={businessDate}
-          loading={loading}
-          onStatusChange={handleStatusChange}
-          onAssignRoom={handleRoomAssignment}
-          onCancel={handleCancel}
-          onResolveModification={handleResolveModification}
-        />
-      </div>
-    </PageContainer>
+    <PlatformPage
+      title="Front Desk"
+      description="Arrivals, in-house guests, departures and guest change requests for the property business date."
+      meta={(
+        <>
+          <MetaItem icon={CalendarDays}>Business date {businessDate ? formatStay(businessDate, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'} (UTC)</MetaItem>
+          <MetaItem>Window ±7 days</MetaItem>
+        </>
+      )}
+      actions={(
+        <>
+          <Button variant="outline" size="sm" onClick={fetchFrontDeskData} disabled={loading}>
+            <RefreshCw className={loading ? 'animate-spin' : undefined} aria-hidden="true" />Refresh
+          </Button>
+          <StaffReservationForm onCreated={fetchFrontDeskData} />
+        </>
+      )}
+    >
+      {error ? <WorkspaceError message={error} onRetry={fetchFrontDeskData} title="Front desk queue unavailable" /> : null}
+      <FrontDesk
+        reservations={reservations}
+        availableRooms={availableRooms}
+        businessDate={businessDate}
+        loading={loading}
+        onStatusChange={handleStatusChange}
+        onAssignRoom={handleRoomAssignment}
+        onCancel={handleCancel}
+        onStayChanged={fetchFrontDeskData}
+        onResolveModification={handleResolveModification}
+      />
+    </PlatformPage>
   );
 }

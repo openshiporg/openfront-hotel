@@ -9,8 +9,21 @@ import {
 } from '@keystone-6/core/fields'
 
 import { isSignedIn, permissions } from '../access'
+import { getHotelAvailability } from '../inventory/roomAvailability'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+
+async function authoritativeAvailable(item: any, context: any) {
+  if (!item?.roomTypeId || !item?.date) return 0
+  const day = new Date(item.date)
+  day.setUTCHours(0, 0, 0, 0)
+  const [roomType] = await getHotelAvailability(context.sudo(), {
+    roomTypeId: item.roomTypeId,
+    checkInDate: day,
+    checkOutDate: new Date(day.getTime() + 86_400_000),
+  })
+  return Number(roomType?.availabilityByDay?.[0]?.available ?? 0)
+}
 
 export const RoomInventory = list({
   access: {
@@ -88,36 +101,25 @@ export const RoomInventory = list({
       },
     }),
 
-    // Virtual field for available rooms
+    // Rooms still sellable on this date, from the same calculation the booking flow uses:
+    // bookings, group holds, blocks, repairs and outages, not just this record's counters.
     availableRooms: virtual({
       field: graphql.field({
         type: graphql.Int,
-        resolve(item: any) {
-          const total = item.totalRooms || 0
-          const booked = item.bookedRooms || 0
-          const blocked = item.blockedRooms || 0
-          return Math.max(0, total - booked - blocked)
-        },
+        resolve: async (item: any, _args: unknown, context: any) => authoritativeAvailable(item, context),
       }),
       ui: {
-        description: 'Calculated available rooms (total - booked - blocked)',
+        description: 'Rooms left to sell on this date after bookings, group holds, blocks and outages',
       },
     }),
 
-    // Virtual field for availability status
     isAvailable: virtual({
       field: graphql.field({
         type: graphql.Boolean,
-        resolve(item: any) {
-          const total = item.totalRooms || 0
-          const booked = item.bookedRooms || 0
-          const blocked = item.blockedRooms || 0
-          const available = total - booked - blocked
-          return available > 0
-        },
+        resolve: async (item: any, _args: unknown, context: any) => (await authoritativeAvailable(item, context)) > 0,
       }),
       ui: {
-        description: 'Whether any rooms are available',
+        description: 'Whether any room is left to sell on this date',
       },
     }),
     ...trackingFields,

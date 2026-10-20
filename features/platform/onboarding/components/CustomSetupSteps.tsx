@@ -66,7 +66,7 @@ Preserve the exact top-level structure and stable keys. Use only values supporte
     {
       number: 1,
       title: 'Copy Base Configuration',
-      description: 'Start with the complete Hotel template and its canonical entity relationships.',
+      description: 'Start from the complete hotel template and edit it to match your property.',
       content: <DataCard title="Hotel Onboarding Data" content={JSON.stringify(seedData, null, 2)} onCopy={copyToClipboard} copied={copiedItems.json || false} copyKey="json" />,
     },
     {

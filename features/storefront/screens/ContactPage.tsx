@@ -2,12 +2,14 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { CircleCheck, Clock, Mail, MapPin, Phone, Send } from 'lucide-react';
 import { useHotelSettings } from '../components/HotelSettingsProvider';
+import { Notice } from '../components/ui';
 import { graphqlClient } from '@/lib/graphql-client';
 import { operationAttempt } from '@/lib/operationAttempt';
 
 const SUBMIT_CONTACT_MESSAGE = `mutation SubmitHotelContactMessage($name: String!, $email: String!, $phone: String, $subject: String!, $message: String!, $idempotencyKey: String!) { submitHotelContactMessage(name: $name, email: $email, phone: $phone, subject: $subject, message: $message, idempotencyKey: $idempotencyKey) { reference status replayed } }`;
-const topics = [{ value: 'reservation', label: 'Planning a stay' }, { value: 'modification', label: 'Change or arrival request' }, { value: 'cancellation', label: 'Cancellation question' }, { value: 'billing', label: 'Payment, statement or refund' }, { value: 'accessibility', label: 'Accessibility requirements' }, { value: 'group', label: 'Multiple rooms' }, { value: 'feedback', label: 'Feedback' }, { value: 'other', label: 'Something else' }];
+const topics = [{ value: 'reservation', label: 'Planning a stay' }, { value: 'modification', label: 'Change or arrival request' }, { value: 'cancellation', label: 'Cancellation question' }, { value: 'billing', label: 'Payment, statement or refund' }, { value: 'accessibility', label: 'Accessibility requirements' }, { value: 'group', label: 'Multiple rooms' }, { value: 'account', label: 'Account access' }, { value: 'feedback', label: 'Feedback' }, { value: 'other', label: 'Something else' }];
 const emptyForm = { name: '', email: '', phone: '', subject: '', message: '' };
 export default function ContactPage() {
   const identity = useHotelSettings();
@@ -40,94 +42,61 @@ export default function ContactPage() {
       setError('We could not confirm that your message was accepted. Your details are still here; retrying the same message uses the same request reference. You can also contact the property directly.');
     } finally { pendingRef.current = false; setPending(false); }
   }
-  return <main className="lodging-container py-12 md:py-16">
-    <header className="hotel-page-head">
-      <p className="lodging-eyebrow">A little help from the house</p>
-      <h1 className="lodging-display">Let’s make your stay easier.</h1>
-      <p className="lodging-lead">Ask about your arrival, a reservation or a detail that matters to you. For an existing stay, the guest portal keeps your dates and statement close at hand.</p>
-    </header>
-    <nav aria-label="Guest help" className="hotel-subnav">
-      <Link href="/bookings/lookup">Manage a reservation</Link>
-      <Link href="/location">Plan your arrival</Link>
-      <Link href="/policies">Rates & policies</Link>
-    </nav>
-    <div className="grid gap-10 py-10 lg:grid-cols-[.8fr_1.2fr]">
-      <aside className="space-y-8">
-        <div>
-          <p className="lodging-eyebrow mb-3">Contact {identity.name}</p>
-          <h2 className="lodging-headline">Direct to the property.</h2>
+  const phone = identity.phone.replace(/[^+\d]/g, '');
+  return <div className="sf-wrap sf-section--tight">
+    <div className="sf-checkout sf-checkout--even">
+      <aside className="sf-stack" style={{ '--stack': '22px' } as React.CSSProperties}>
+        <p className="sf-eyebrow">A little help from the house</p>
+        <h1 className="sf-h1">Let’s make your stay <em>easier.</em></h1>
+        <p className="sf-lead">Ask about your arrival, a reservation or a detail that matters to you. For an existing stay, your guest account keeps your dates and statement close at hand.</p>
+        <div className="sf-stack" style={{ '--stack': '10px', marginTop: 28 } as React.CSSProperties}>
+          {phone && <a className="sf-action" href={`tel:${phone}`}><Phone aria-hidden="true" /><span>{identity.phone}<small>Call the property</small></span></a>}
+          {identity.email && <a className="sf-action" href={`mailto:${identity.email}`} style={{ overflowWrap: 'anywhere' }}><Mail aria-hidden="true" /><span>{identity.email}<small>Email the property</small></span></a>}
+          {identity.hours && <div className="sf-action" style={{ cursor: 'default' }}><Clock aria-hidden="true" /><span>{identity.hours}<small>Published hours</small></span></div>}
+          {identity.address.line1 && <Link className="sf-action" href="/location"><MapPin aria-hidden="true" /><span>{identity.address.line1}<small>{identity.address.line2 || 'Location & arrival'}</small></span></Link>}
+          {!identity.phone && !identity.email && identity.inquiriesAvailable && <Notice tone="info">Direct contact details have not been published. You can send an inquiry using this form.</Notice>}
         </div>
-        <dl className="space-y-6">
-          {identity.phone && <div>
-            <dt className="lodging-label mb-2">Telephone</dt>
-            <dd>
-              <a className="lodging-link" href={`tel:${identity.phone.replace(/[^+\d]/g, '')}`}>{identity.phone}</a>
-            </dd>
-          </div>}
-          {identity.email && <div>
-            <dt className="lodging-label mb-2">Email</dt>
-            <dd className="break-words">
-              <a className="lodging-link" href={`mailto:${identity.email}`}>{identity.email}</a>
-            </dd>
-          </div>}
-          {identity.hours && <div>
-            <dt className="lodging-label mb-2">Published hours</dt>
-            <dd>{identity.hours}</dd>
-          </div>}
-          {identity.address.line1 && <div>
-            <dt className="lodging-label mb-2">Find us</dt>
-            <dd>{identity.address.line1}<br />{identity.address.line2}</dd>
-          </div>}
-        </dl>
-        {!identity.phone && !identity.email && <p className="hotel-notice">Direct contact details have not been published. You can send an inquiry using this form.</p>}
-        <div className="border-t border-[var(--lodging-rule)] pt-6 space-y-4">
-          <h3 className="lodging-title">Before you write</h3>
-          <p className="text-sm leading-7">A message requests assistance; it does not change or cancel a reservation. For cancellations, verify your booking to review its current policy and refund estimate.</p>
-          <p className="text-sm leading-7">For accessibility, transport or room arrangements, describe what you need and ask the property to confirm suitability before booking.</p>
+        <div className="sf-panel sf-pad sf-stack" style={{ '--stack': '10px' } as React.CSSProperties}>
+          <h2 className="sf-h4">Before you write</h2>
+          <p className="sf-muted sf-small">A message requests assistance; it does not change or cancel a reservation. For cancellations, verify your booking to review its current policy and refund estimate.</p>
+          <p className="sf-muted sf-small">For accessibility, transport or room arrangements, describe what you need and ask the property to confirm suitability before booking.</p>
+          <div className="sf-row" style={{ gap: '4px 20px' }}><Link href="/bookings/lookup" className="sf-link">Manage a reservation</Link><Link href="/policies" className="sf-link">Rates & policies</Link></div>
         </div>
       </aside>
-      <section className="lodging-surface p-6 md:p-8">
-        <h2 className="lodging-title mb-6">Send the house a note</h2>
-        {receipt ? <div role="status" className="space-y-5">
-          <p className="lodging-eyebrow">Request recorded</p>
-          <p className="lodging-headline">Thank you for getting in touch.</p>
-          <p>Reference <strong className="break-all">{receipt.reference}</strong>
-          </p>
-          <p className="hotel-notice">Delivery status: {receipt.status.replaceAll('_', ' ')}. Your inquiry is recorded; this is not confirmation that a staff member has read it or approved a request.</p>
-          <button type="button" onClick={() => setReceipt(null)} className="lodging-button-ghost">Write another message</button>
-        </div> : <form onSubmit={submit} className="space-y-5">
-          <fieldset disabled={pending} className="space-y-5">
-            <legend className="sr-only">Your message and contact details</legend>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <label htmlFor="contact-name" className="lodging-label">Name *</label>
-                <input id="contact-name" name="name" autoComplete="name" required maxLength={160} value={form.name} onChange={update} className="lodging-input mt-2" />
-              </div>
-              <div>
-                <label htmlFor="contact-email" className="lodging-label">Email *</label>
-                <input id="contact-email" name="email" type="email" autoComplete="email" required maxLength={254} value={form.email} onChange={update} className="lodging-input mt-2" />
-              </div>
-            </div>
-            <div>
-              <label htmlFor="contact-phone" className="lodging-label">Telephone <span className="font-normal">(optional)</span>
-              </label>
-              <input id="contact-phone" name="phone" type="tel" autoComplete="tel" maxLength={40} value={form.phone} onChange={update} className="lodging-input mt-2" />
-            </div>
-            <div>
-              <label htmlFor="contact-subject" className="lodging-label">What can we help with? *</label>
-              <select id="contact-subject" name="subject" required value={form.subject} onChange={update} className="lodging-select mt-2">
+
+      <section className="sf-float sf-pad-lg" aria-labelledby="contact-form-title">
+        <h2 id="contact-form-title" className="sf-h2" style={{ marginBottom: 24 }}>Send the house <em>a note.</em></h2>
+        {!identity.inquiriesAvailable ? <div role="status" className="sf-stack" style={{ '--stack': '16px' } as React.CSSProperties}>
+          <p className="sf-h3">Messages can’t be sent from this page right now.</p>
+          <p className="sf-muted">{identity.phone ? 'Please call the property instead.' : 'The property has not set up a contact address yet. Please try again later.'}</p>
+          {phone && <a className="sf-btn sf-btn--ghost" href={`tel:${phone}`} style={{ width: 'fit-content' }}><Phone aria-hidden="true" />Call {identity.phone}</a>}
+        </div> : receipt ? <div role="status" className="sf-stack" style={{ '--stack': '16px' } as React.CSSProperties}>
+          <span className="sf-state__icon"><CircleCheck aria-hidden="true" /></span>
+          <p className="sf-eyebrow">Request recorded</p>
+          <p className="sf-h3">Thank you for getting in touch.</p>
+          <p>Reference <span className="sf-code" style={{ paddingRight: 14 }}>{receipt.reference}</span></p>
+          <Notice tone="info">Delivery status: {receipt.status.replaceAll('_', ' ')}. Your inquiry is recorded; this is not confirmation that a staff member has read it or approved a request.</Notice>
+          <button type="button" onClick={() => setReceipt(null)} className="sf-btn sf-btn--ghost" style={{ width: 'fit-content' }}>Write another message</button>
+        </div> : <form onSubmit={submit} className="sf-stack" style={{ '--stack': '20px' } as React.CSSProperties}>
+          <fieldset disabled={pending} className="sf-formgrid">
+            <legend className="sf-sr">Your message and contact details</legend>
+            <label className="sf-field" htmlFor="contact-name"><span className="sf-label">Name</span><input id="contact-name" name="name" autoComplete="name" required maxLength={160} value={form.name} onChange={update} className="sf-input" /></label>
+            <label className="sf-field" htmlFor="contact-email"><span className="sf-label">Email</span><input id="contact-email" name="email" type="email" autoComplete="email" required maxLength={254} value={form.email} onChange={update} className="sf-input" /></label>
+            <label className="sf-field" htmlFor="contact-phone"><span className="sf-label">Telephone <small>(optional)</small></span><input id="contact-phone" name="phone" type="tel" autoComplete="tel" maxLength={40} value={form.phone} onChange={update} className="sf-input" /></label>
+            <label className="sf-field" htmlFor="contact-subject"><span className="sf-label">What can we help with?</span>
+              <select id="contact-subject" name="subject" required value={form.subject} onChange={update} className="sf-select">
                 <option value="">Choose a topic</option>{topics.map(topic => <option key={topic.value} value={topic.value}>{topic.label}</option>)}</select>
-            </div>
-            <div>
-              <label htmlFor="contact-message" className="lodging-label">Message *</label>
-              <textarea id="contact-message" name="message" required maxLength={4000} value={form.message} onChange={update} rows={6} aria-describedby="contact-privacy" className="lodging-textarea mt-2" />
-              <p id="contact-privacy" className="mt-2 text-sm text-[var(--lodging-ink-muted)]">Include your reservation reference if relevant. Please do not send payment card details or identity documents.</p>
-            </div>
+            </label>
+            <label className="sf-field sf-span" htmlFor="contact-message"><span className="sf-label">Message</span>
+              <textarea id="contact-message" name="message" required maxLength={4000} value={form.message} onChange={update} rows={6} aria-describedby="contact-privacy" className="sf-textarea" />
+              <span id="contact-privacy" className="sf-hint">Include your reservation reference if relevant. Please do not send payment card details or identity documents.</span>
+            </label>
           </fieldset>
-          {error && <p role="alert" className="hotel-notice">{error}</p>}
-          <button type="submit" disabled={pending} className="lodging-button w-full">{pending ? 'Recording your message…' : 'Send message'}</button>
+          {error && <Notice tone="danger" role="alert">{error}</Notice>}
+          <button type="submit" disabled={pending} className="sf-btn sf-btn--lg sf-btn--block"><Send aria-hidden="true" />{pending ? 'Recording your message…' : 'Send message'}</button>
+          <p className="sf-fine">All fields are required unless marked optional.</p>
         </form>}
       </section>
     </div>
-  </main>;
+  </div>;
 }

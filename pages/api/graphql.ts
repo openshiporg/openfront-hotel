@@ -7,6 +7,9 @@ import { enforceAbuseLimit } from '../../features/keystone/lib/abuseControl';
 import { hotelGraphqlPolicyRequest, hotelGraphqlRequestPolicy } from '../../features/keystone/lib/hotelGraphqlRequestPolicy';
 import { GraphqlRequestBodyTooLargeError, MAX_GRAPHQL_REQUEST_BODY_BYTES, readBoundedGraphqlRequestBody } from '../../features/keystone/lib/graphqlRequestBody';
 import { hotelGraphqlQueryLimitsPlugin } from '../../features/keystone/lib/hotelGraphqlQueryLimits';
+import { admitGraphqlRequest } from '../../features/keystone/lib/graphqlAdmission';
+import { maskHotelGraphqlError } from '../../features/keystone/lib/hotelGraphqlErrors';
+import { permissions } from '../../features/keystone/access';
 
 export const config = {
   api: {
@@ -43,6 +46,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ errors: [{ message: 'Invalid GraphQL request body' }] });
     }
   }
+
+  // Bound parsing and fragment expansion before the request policy expands the document or
+  // any abuse counter is written.
+  const admission = admitGraphqlRequest(req.body, req.query);
+  if (!admission.ok) return res.status(400).json({ errors: [{ message: admission.message }] });
 
   const requestContext = await keystoneContext.withRequest(req, res);
   if (req.method === 'POST' || req.method === 'GET') {
@@ -86,6 +94,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     graphqlEndpoint: "/api/graphql",
     schema: keystoneContext.graphql.schema,
     context: () => requestContext,
+    maskedErrors: {
+      maskError: (error: unknown, message: string) => maskHotelGraphqlError(error, message, permissions.canAccessDashboard({ session: requestContext.session as any })),
+    },
     plugins: [hotelGraphqlQueryLimitsPlugin],
     multipart: false,
   })(req, res);

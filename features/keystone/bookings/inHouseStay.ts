@@ -15,7 +15,8 @@ import { queueBookingCommunication } from '../communications/commands';
 export function assertInHouseDateChange(booking: any, checkIn: Date, checkOut: Date, businessDate: Date, roomTypeId: string, ratePlanId: string, allowCommercialMove = false) {
   if (booking.status !== 'checked_in') throw new Error('Only an in-house stay can use this amendment.');
   if (checkIn.getTime() !== new Date(booking.checkInDate).getTime()) throw new Error('An in-house arrival date is immutable.');
-  if (checkOut < businessDate || checkOut <= checkIn) throw new Error('Departure cannot precede the open business date or arrival.');
+  if (checkOut <= checkIn) throw new Error('Departure must be at least one night after arrival. For a guest leaving on arrival day, check them out directly; that night stays charged.');
+  if (checkOut < businessDate) throw new Error('Departure cannot be before the current business date.');
   if (!allowCommercialMove && (roomTypeId !== booking.roomAssignments[0]?.roomTypeId || ratePlanId !== booking.ratePlanId)) throw new Error('In-house amendments preserve the booked room type and rate plan; use a room move for physical-room changes.');
 }
 

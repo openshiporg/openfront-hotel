@@ -78,10 +78,14 @@ export const Room = list({
     }),
 
     // Housekeeping
+    // Set only when a cleaning task is completed or the room is marked ready.
     lastCleaned: timestamp({
       label: 'Last Cleaned',
+      access: { create: () => false, update: () => false },
       ui: {
         description: 'When the room was last cleaned',
+        createView: { fieldMode: 'hidden' },
+        itemView: { fieldMode: 'read' },
       },
     }),
 
@@ -102,7 +106,9 @@ export const Room = list({
       ui: {
         displayMode: 'cards',
         cardFields: ['taskType', 'status', 'assignedTo'],
-        inlineCreate: { fields: ['taskType', 'priority', 'notes'] },
+        // A task belongs to one room and the shared inline-create card cannot link a new
+        // child to its parent; tasks are created from Housekeeping and opened from here.
+        linkToItem: true,
       },
       label: 'Housekeeping Tasks',
     }),

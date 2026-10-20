@@ -3,10 +3,11 @@
 import React from 'react';
 import { useSearchParams } from 'next/navigation';
 
+import { CalendarDays, MousePointerClick } from 'lucide-react';
 import { ReservationCalendar } from '@/features/platform/reservations/components/ReservationCalendar';
-import { PageContainer } from '@/features/dashboard/components/PageContainer';
-import { useToast } from '@/components/ui/use-toast';
+import { toast } from 'sonner';
 import { StaffReservationForm } from '@/features/platform/reservations/components/StaffReservationForm';
+import { MetaItem, PlatformPage } from '@/features/platform/components/PlatformPage';
 import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';
 import {
   amendReservationStayAction,
@@ -14,6 +15,7 @@ import {
   getReservationCalendarWorkspace,
   updateReservationStatusAction,
 } from '../actions';
+import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
 type ReservationStatus =
   | 'pending'
@@ -50,6 +52,7 @@ interface ReservationCalendarRoom {
 
 interface ReservationCalendarResponse {
   hotelReservationCalendar: {
+    businessDate?: string;
     reservations: Array<{
     id: string;
     confirmationNumber: string;
@@ -75,12 +78,12 @@ function initialCalendarRange() {
 }
 
 export function ReservationsPage() {
-  const { toast } = useToast();
   const searchParams = useSearchParams();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [reservations, setReservations] = React.useState<ReservationCalendarItem[]>([]);
   const [rooms, setRooms] = React.useState<ReservationCalendarRoom[]>([]);
+  const [businessDate, setBusinessDate] = React.useState<string | null>(null);
   const [visibleRange, setVisibleRange] = React.useState(initialCalendarRange);
 
   const handleViewRangeChange = React.useCallback((start: Date, end: Date) => {
@@ -89,13 +92,18 @@ export function ReservationsPage() {
       : { start, end });
   }, []);
 
+  // Each read is numbered; a slower response for a range the user has left is discarded.
+  const latestRequest = React.useRef(0);
+  React.useEffect(() => () => { latestRequest.current += 1; }, []);
   const fetchCalendarData = React.useCallback(async () => {
+    const requestId = ++latestRequest.current;
     setLoading(true);
     setError(null);
     try {
       const start = visibleRange.start.toISOString();
       const end = visibleRange.end.toISOString();
       const data = await getReservationCalendarWorkspace(start, end) as ReservationCalendarResponse['hotelReservationCalendar'];
+      if (requestId !== latestRequest.current) return;
 
       const mappedReservations = (data.reservations || []).map((booking: any) => {
         return {
@@ -118,19 +126,16 @@ export function ReservationsPage() {
 
       setReservations(mappedReservations);
       setRooms(data.rooms || []);
+      if (data.businessDate) setBusinessDate(String(data.businessDate));
     } catch (error) {
-      console.error('Failed to load reservations:', error);
+      if (requestId !== latestRequest.current) return;
       const message = error instanceof Error ? error.message : 'Unable to load reservation calendar data.';
       setError(message);
-      toast({
-        title: 'Reservation calendar unavailable',
-        description: message,
-        variant: 'destructive',
-      });
+      toast.error('Reservation calendar unavailable', { description: message });
     } finally {
-      setLoading(false);
+      if (requestId === latestRequest.current) setLoading(false);
     }
-  }, [toast, visibleRange]);
+  }, [visibleRange]);
 
   React.useEffect(() => {
     fetchCalendarData();
@@ -138,80 +143,73 @@ export function ReservationsPage() {
 
   const handleUpdateStayDates = React.useCallback(async (bookingId: string, checkInDate: string, checkOutDate: string) => {
     try {
-      await amendReservationStayAction(bookingId, checkInDate, checkOutDate);
+      unwrapAction(await amendReservationStayAction(bookingId, checkInDate, checkOutDate));
       await fetchCalendarData();
-      toast({
-        title: 'Reservation dates updated',
-        description: 'The stay dates were saved and conflict-checked.',
-      });
+      toast.success('Reservation dates updated', { description: 'The stay dates were saved and conflict-checked.' });
     } catch (error) {
       console.error('Failed to update reservation dates:', error);
       await fetchCalendarData();
-      toast({
-        title: 'Unable to update dates',
-        description: error instanceof Error ? error.message : 'The reservation dates could not be saved.',
-        variant: 'destructive',
-      });
+      toast.error('Unable to update dates', { description: error instanceof Error ? error.message : 'The reservation dates could not be saved.' });
     }
-  }, [fetchCalendarData, toast]);
+  }, [fetchCalendarData]);
 
   const handleStatusChange = React.useCallback(async (bookingId: string, status: ReservationStatus) => {
     try {
-      const response = await updateReservationStatusAction(bookingId, status);
+      const response = unwrapAction(await updateReservationStatusAction(bookingId, status));
       await fetchCalendarData();
       const savedStatus = response.status;
-      toast({ title: 'Reservation updated', description: savedStatus === 'cancellation_pending' ? 'No-show policy was applied; the provider refund is pending.' : `Status saved as ${savedStatus.replaceAll('_', ' ')}.` });
+      toast.success('Reservation updated', { description: savedStatus === 'cancellation_pending' ? 'No-show policy was applied; the provider refund is pending.' : `Status saved as ${savedStatus.replaceAll('_', ' ')}.` });
     } catch (error) {
       await fetchCalendarData();
-      toast({ title: 'Status change refused', description: error instanceof Error ? error.message : 'The lifecycle transition was not saved.', variant: 'destructive' });
+      toast.error('Status change refused', { description: error instanceof Error ? error.message : 'The lifecycle transition was not saved.' });
       throw error;
     }
-  }, [fetchCalendarData, toast]);
+  }, [fetchCalendarData]);
 
   const handleCancel = React.useCallback(async (bookingId: string) => {
     if (!window.confirm('Cancel this reservation and apply its snapshotted refund policy?')) return;
     try {
-      await cancelReservationAction(bookingId);
+      unwrapAction(await cancelReservationAction(bookingId));
       await fetchCalendarData();
-      toast({ title: 'Cancellation recorded', description: 'Policy, folio, refund, inventory, and communication work were persisted.' });
+      toast.success('Cancellation recorded', { description: 'Policy, folio, refund, inventory, and communication work were persisted.' });
     } catch (error) {
       await fetchCalendarData();
-      toast({ title: 'Cancellation refused', description: error instanceof Error ? error.message : 'The cancellation was not saved.', variant: 'destructive' });
+      toast.error('Cancellation refused', { description: error instanceof Error ? error.message : 'The cancellation was not saved.' });
     }
-  }, [fetchCalendarData, toast]);
-
-  const header = (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div><h1 className="text-lg font-semibold md:text-2xl">Reservations</h1><p className="text-muted-foreground">UTC business-date calendar and authoritative desk workflows</p></div>
-      <StaffReservationForm
-        initialGuestId={searchParams?.get('guestId')}
-        defaultOpen={searchParams?.get('new') === '1' || Boolean(searchParams?.get('guestId'))}
-        onCreated={fetchCalendarData}
-      />
-    </div>
-  );
-
-  const breadcrumbs = [
-    { type: 'page' as const, label: 'Dashboard', path: '/dashboard' },
-    { type: 'page' as const, label: 'Reservations' },
-  ];
+  }, [fetchCalendarData]);
 
   return (
-    <PageContainer title="Reservations" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full space-y-4 p-4 md:p-6">
-        {error ? <WorkspaceError message={error} onRetry={fetchCalendarData} /> : null}
-        <ReservationCalendar
-          reservations={reservations}
-          rooms={rooms}
-          loading={loading}
-          onRefresh={fetchCalendarData}
-          onViewRangeChange={handleViewRangeChange}
-          onUpdateStayDates={handleUpdateStayDates}
-          onStatusChange={handleStatusChange}
-          onCancel={handleCancel}
+    <PlatformPage
+      title="Reservations"
+      description="Room-by-room stay calendar. Select a stay for details and desk actions, or drag it to change dates."
+      meta={(
+        <>
+          <MetaItem icon={CalendarDays}>14-day view · UTC business dates</MetaItem>
+          <MetaItem icon={MousePointerClick}>Edges resize, body moves</MetaItem>
+        </>
+      )}
+      actions={(
+        <StaffReservationForm
+          initialGuestId={searchParams?.get('guestId')}
+          defaultOpen={searchParams?.get('new') === '1' || Boolean(searchParams?.get('guestId'))}
+          onCreated={fetchCalendarData}
         />
-      </div>
-    </PageContainer>
+      )}
+    >
+      {error ? <WorkspaceError message={error} onRetry={fetchCalendarData} title="Reservation calendar unavailable" /> : null}
+      <ReservationCalendar
+        businessDate={businessDate}
+        reservations={reservations}
+        rooms={rooms}
+        loading={loading}
+        onRefresh={fetchCalendarData}
+        onViewRangeChange={handleViewRangeChange}
+        onUpdateStayDates={handleUpdateStayDates}
+        onStatusChange={handleStatusChange}
+        onCancel={handleCancel}
+        initialSearch={searchParams?.get('search') || ''}
+      />
+    </PlatformPage>
   );
 }
 

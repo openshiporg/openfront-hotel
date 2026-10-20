@@ -27,9 +27,20 @@ function projection(state: SecurityState | undefined) {
 export async function hotelSecurityAuthorization(_root: unknown, { bookingId }: { bookingId: string }, context: any) {
   await assertGuestBookingAccess(context, bookingId);
   const [state] = await states(context.prisma, bookingId);
-  const booking = await context.prisma.booking.findUnique({ where: { id: bookingId }, select: { pricingSnapshot: true } });
+  const booking = await context.prisma.booking.findUnique({ where: { id: bookingId }, select: { pricingSnapshot: true, status: true, billingFolioId: true } });
   const provider = await context.prisma.paymentProvider.findUnique({ where: { code: 'pp_stripe_stripe' } });
-  return { authorization: projection(state), configuredAmountMinor: Number(booking?.pricingSnapshot?.securityDepositMinor || 0), available: Boolean(isPaymentProviderConfigured(provider)), operator: permissions.canManagePayments({ session: context.session }) };
+  const available = Boolean(provider && isPaymentProviderConfigured(provider));
+  const configuredAmountMinor = Number(booking?.pricingSnapshot?.securityDepositMinor || 0);
+  // Mirrors the 'initiate' checks in manageHotelSecurityAuthorization, so the guest is only
+  // offered an authorization the server will accept.
+  const unavailableReason = !available ? 'Card holds are not available right now.'
+    : booking?.billingFolioId && !canManageBookingRecords(context) ? 'The property manages card holds for group reservations.'
+    : booking?.status === 'pending' ? 'You can authorize the card hold once your reservation is confirmed.'
+    : !['confirmed', 'checked_in'].includes(String(booking?.status)) ? 'Card holds are not available for this reservation.'
+    : !Number.isSafeInteger(configuredAmountMinor) || configuredAmountMinor <= 0 ? 'This reservation has no card hold amount.'
+    : state && !['canceled', 'succeeded'].includes(state.status) ? 'A card hold is already in progress for this reservation.'
+    : '';
+  return { authorization: projection(state), configuredAmountMinor, available, canInitiate: !unavailableReason, unavailableReason, operator: permissions.canManagePayments({ session: context.session }) };
 }
 export function validateSecurityEvidence(state: SecurityState, evidence: any) {
   if (evidence.authorizationId !== state.id || evidence.bookingId !== state.bookingId || (state.providerPaymentId && evidence.id !== state.providerPaymentId) || !String(evidence.id || '').startsWith('pi_')) throw new Error('Security authorization identity mismatch.');

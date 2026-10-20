@@ -1,12 +1,12 @@
 'use server';
 
 import { keystoneClient } from '@/features/dashboard/lib/keystoneClient';
-import { requireActionData } from '@/features/platform/lib/actionResult';
+import { requireActionData, toActionResult } from '@/features/platform/lib/actionResult';
 
 const PAYMENT_PROVIDERS = String.raw`
   query HotelPaymentProviders {
     hotelPaymentProviderOperations(propertyKey: "the-alder-house") {
-      providers { id name code isInstalled configured }
+      providers { id name code isInstalled configured credentialSource }
     }
   }
 `;
@@ -29,11 +29,13 @@ export async function configurePaymentProviderAction(input: {
   enabled: boolean;
   credentials?: Record<string, unknown>;
 }) {
-  if (!['pp_stripe_stripe', 'pp_paypal_paypal'].includes(input.code)) throw new Error('Unsupported payment provider.');
-  const response = await keystoneClient<any>(CONFIGURE_PROVIDER, {
-    code: input.code,
-    enabled: Boolean(input.enabled),
-    credentials: input.enabled ? input.credentials || {} : null,
+  return toActionResult(async () => {
+    if (!['pp_stripe_stripe', 'pp_paypal_paypal'].includes(input.code)) throw new Error('Unsupported payment provider.');
+    const response = await keystoneClient<any>(CONFIGURE_PROVIDER, {
+      code: input.code,
+      enabled: Boolean(input.enabled),
+      credentials: input.enabled ? input.credentials || {} : null,
+    });
+    return requireActionData(response).configureHotelPaymentProvider;
   });
-  return requireActionData(response).configureHotelPaymentProvider;
 }

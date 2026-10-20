@@ -12,6 +12,7 @@ import { calculateHotelPrice, issueHotelQuoteToken, verifyHotelQuoteToken, type 
 import { enforceAbuseLimit } from '../lib/abuseControl';
 import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { STOREFRONT_BOOKING_QUERY } from '../lib/storefrontBooking';
+import { guestAccountId } from '../mutations/guestAccounts';
 
 export type StorefrontBookingInput = HotelPriceInput & {
   idempotencyKey: string;
@@ -45,6 +46,7 @@ async function createStorefrontBooking(
   // Bound and normalize before building room-night locks, even for anonymous invalid requests.
   const { checkIn, checkOut } = hotelStayDates(data.checkInDate, data.checkOutDate);
   const guestAccessToken = createGuestAccessToken();
+  const accountId = guestAccountId(context);
 
   if (!/^[a-zA-Z0-9_-]{32,128}$/.test(String(data.idempotencyKey || ''))) throw new Error('A random stable booking attempt key is required.');
   const attemptId = createHash('sha256').update(data.idempotencyKey).digest('hex');
@@ -71,6 +73,8 @@ async function createStorefrontBooking(
       data: {
         confirmationNumber: `BK-${randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase()}`,
         guestName, guestEmail, guestPhone: data.guestPhone?.trim() || '', guestProfileId: guest.id,
+        // A stay booked while signed in belongs to that guest account.
+        ...(accountId ? { guestId: accountId } : {}),
         checkInDate: quote.checkIn, checkOutDate: quote.checkOut,
         numberOfGuests: quote.numberOfGuests, numberOfAdults: quote.adults, numberOfChildren: quote.children,
         roomRateMinor: quote.roomSubtotalMinor, taxAmountMinor: quote.taxMinor, feesAmountMinor: quote.feesMinor,

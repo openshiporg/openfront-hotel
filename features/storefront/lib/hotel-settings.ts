@@ -6,6 +6,8 @@ import {
   resolveStorefrontAccentPreset,
   type StorefrontAccentPreset,
 } from './storefront-theme';
+import { normalizeStoreLogoColor } from '@/features/platform/property/lib/store-logo';
+import { sanitizeStoreLogoSvg } from '@/features/platform/property/lib/sanitize-store-logo';
 
 export type HotelSettingsState = 'configured' | 'missing' | 'unavailable';
 
@@ -19,15 +21,26 @@ export interface HotelIdentity {
   };
   phone: string;
   email: string;
+  /** The contact form can be accepted: the property has a valid contact email on file. */
+  inquiriesAvailable: boolean;
   hours: string;
   checkIn: string;
   checkOut: string;
+  /** IANA zone used for the property's calendar day; empty when unpublished. */
+  timeZone: string;
   accentPreset: StorefrontAccentPreset;
+  /** Saved SVG logo and its hue rotation; an empty icon keeps the accent mark. */
+  logo: HotelLogo;
   media: {
     hero: HotelMedia;
     amenity: HotelMedia;
     location: HotelMedia;
   };
+}
+
+export interface HotelLogo {
+  icon: string;
+  color: string;
 }
 
 export interface HotelMedia {
@@ -38,7 +51,6 @@ export interface HotelMedia {
 
 type SettingsRecord = Record<string, unknown>;
 
-const BANNED_PUBLIC_BRANDS = /\b(?:grand hotel|openfront(?: hotel)?|acme|elite auto dealership|demo)\b/i;
 const SAFE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SAFE_IMAGE_PATH = /^\/images\/(?!.*(?:\.\.|\\))/;
 
@@ -53,10 +65,13 @@ function neutralHotelIdentity(
     address: { line1: '', line2: '' },
     phone: '',
     email: '',
+    inquiriesAvailable: false,
     hours: '',
     checkIn: '3:00 PM',
     checkOut: '11:00 AM',
+    timeZone: '',
     accentPreset,
+    logo: { icon: '', color: normalizeStoreLogoColor(undefined) },
     media: {
       hero: {
         imagePath: '/images/rooms/hotel-lobby-hero.svg',
@@ -93,6 +108,7 @@ const PUBLIC_HOTEL_SETTINGS_QUERY = String.raw`
       frontDeskCopy
       checkInTime
       checkOutTime
+      timeZone
       heroImagePath
       heroImageAltText
       heroImageCaption
@@ -102,6 +118,8 @@ const PUBLIC_HOTEL_SETTINGS_QUERY = String.raw`
       locationImagePath
       locationImageAltText
       locationImageCaption
+      logoIcon
+      logoColor
     }
   }
 `;
@@ -113,14 +131,25 @@ function firstString(record: SettingsRecord, key: string) {
 
 function publicText(record: SettingsRecord, key: string, fallback: string) {
   const value = firstString(record, key);
-  if (!value || BANNED_PUBLIC_BRANDS.test(value)) return fallback;
+  if (!value) return fallback;
   return value;
 }
 
 function publicEmail(record: SettingsRecord, key: string, fallback: string) {
   const value = firstString(record, key);
-  if (!value || !SAFE_EMAIL.test(value) || BANNED_PUBLIC_BRANDS.test(value)) return fallback;
+  if (!value || !SAFE_EMAIL.test(value)) return fallback;
   return value;
+}
+
+function timeZone(record: SettingsRecord) {
+  const value = firstString(record, 'timeZone');
+  if (!value) return '';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return value;
+  } catch {
+    return '';
+  }
 }
 
 function imagePath(record: SettingsRecord, key: string, fallback: string) {
@@ -149,10 +178,16 @@ export function normalizeHotelSettings(input: unknown): HotelIdentity {
     },
     phone: publicText(record, 'contactPhone', neutral.phone),
     email: publicEmail(record, 'contactEmail', neutral.email),
+    inquiriesAvailable: Boolean(publicEmail(record, 'contactEmail', '')),
     hours: publicText(record, 'frontDeskCopy', neutral.hours),
     checkIn: publicText(record, 'checkInTime', neutral.checkIn),
     checkOut: publicText(record, 'checkOutTime', neutral.checkOut),
+    timeZone: timeZone(record),
     accentPreset,
+    logo: {
+      icon: sanitizeStoreLogoSvg(firstString(record, 'logoIcon') || ''),
+      color: normalizeStoreLogoColor(record.logoColor),
+    },
     media: {
       hero: {
         imagePath: imagePath(record, 'heroImagePath', neutral.media.hero.imagePath),

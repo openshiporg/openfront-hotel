@@ -117,7 +117,10 @@ export default async function resolveBookingModificationRequest(
           idempotencyKey: `${eventKey}:commercial-amendment`, source: 'staff-modification', withinTransaction: true,
           actorId: context.session.itemId, queueCommunication: false,
           commercialPricing: {
-            ratePlanId: quote.ratePlan.id, pricingVersion: quote.pricingVersion,
+            // Booked policy facts stay; the arrival instant follows the approved dates so the
+            // cancellation deadline matches the stay the guest now sees.
+            arrivalInstant: quote.arrivalInstant, propertyTimeZone: quote.propertyTimeZone,
+            ratePlanId: quote.ratePlan.id, ratePlanName: quote.ratePlan.name, mealPlan: quote.ratePlan.mealPlan, pricingVersion: quote.pricingVersion,
             roomSubtotalMinor: quote.roomSubtotalMinor, taxMinor: quote.taxMinor, feesMinor: quote.feesMinor,
             totalMinor: quote.totalMinor, taxRateBasisPoints: quote.taxRateBasisPoints, nightlyRates: quote.nightlyRates,
           },

@@ -1,18 +1,27 @@
-import '@/features/storefront/styles/redesign.css';
+import '@/features/storefront/styles/tokens.css';
+import '@/features/storefront/styles/storefront.css';
 import { StayProvider } from '@/features/storefront/components/StayProvider';
 import type { Metadata, Viewport } from 'next';
-import type { CSSProperties } from 'react';
-import { DM_Sans } from 'next/font/google';
-import { Header } from '@/components/storefront/Header';
-import { Footer } from '@/components/storefront/Footer';
+import { Fraunces, Instrument_Sans } from 'next/font/google';
+import { SiteHeader } from '@/features/storefront/components/chrome/SiteHeader';
+import { SiteFooter } from '@/features/storefront/components/chrome/SiteFooter';
 import { HotelSettingsProvider } from '@/features/storefront/components/HotelSettingsProvider';
 import { getHotelSettings } from '@/features/storefront/lib/hotel-settings';
-import { resolveStorefrontAccentPreset, storefrontAccentCssVariables } from '@/features/storefront/lib/storefront-theme';
+import { resolveStorefrontBrand, storefrontBrandCssVariables } from '@/features/storefront/lib/storefront-theme';
+import { wordmarkFont } from '@/features/storefront/lib/wordmark-font';
+import { GuestAccountProvider } from '@/features/storefront/components/GuestAccountProvider';
+import { getGuestAccountStatus } from '@/features/storefront/lib/guest-account';
 
-const lodgingBody = DM_Sans({
-  variable: '--font-lodging-body',
+const display = Fraunces({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
+  axes: ['opsz', 'SOFT'],
+  style: ['normal', 'italic'],
+  display: 'swap',
+});
+
+const sans = Instrument_Sans({
+  subsets: ['latin'],
+  display: 'swap',
 });
 
 export const dynamic = 'force-dynamic';
@@ -43,8 +52,21 @@ export async function generateViewport(): Promise<Viewport> {
   const identity = await getHotelSettings();
   return {
     colorScheme: 'light',
-    themeColor: resolveStorefrontAccentPreset(identity.accentPreset).swatch,
+    themeColor: resolveStorefrontBrand(identity.accentPreset, identity.logo).swatch,
   };
+}
+
+/** Theme tokens live on :root so dialogs and popovers portalled outside the shell match it.
+ * Values come only from the accent presets, the normalized saved logo hue and next/font,
+ * never from request input. */
+function storefrontRootStyle(identity: Awaited<ReturnType<typeof getHotelSettings>>) {
+  const tokens = {
+    ...storefrontBrandCssVariables(resolveStorefrontBrand(identity.accentPreset, identity.logo)),
+    '--sf-font-display': display.style.fontFamily,
+    '--sf-font-sans': sans.style.fontFamily,
+    '--sf-font-wordmark': wordmarkFont.style.fontFamily,
+  };
+  return `:root{${Object.entries(tokens).map(([name, value]) => `${name}:${value}`).join(';')}}`;
 }
 
 export default async function StorefrontLayout({
@@ -52,20 +74,24 @@ export default async function StorefrontLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const identity = await getHotelSettings();
+  const [identity, account] = await Promise.all([getHotelSettings(), getGuestAccountStatus()]);
 
   return (
     <HotelSettingsProvider identity={identity}>
-      <StayProvider><div
-        className={`${lodgingBody.variable} hotel-storefront lodging-page flex min-h-screen flex-col`}
-        data-storefront-accent={identity.accentPreset}
-        data-storefront-settings-state={identity.state}
-        style={{ ...storefrontAccentCssVariables(identity.accentPreset), '--font-lodging-display': 'Georgia, "Times New Roman"' } as CSSProperties}
-      >
-        <Header />
-        <div id="storefront-content" tabIndex={-1} className="flex-1">{children}</div>
-        <Footer />
-      </div></StayProvider>
+      <GuestAccountProvider status={account}>
+      <StayProvider>
+        <style dangerouslySetInnerHTML={{ __html: storefrontRootStyle(identity) }} />
+        <div
+          className="sf"
+          data-storefront-accent={identity.accentPreset}
+          data-storefront-settings-state={identity.state}
+        >
+          <SiteHeader />
+          <main id="storefront-content" tabIndex={-1} className="sf-main">{children}</main>
+          <SiteFooter />
+        </div>
+      </StayProvider>
+      </GuestAccountProvider>
     </HotelSettingsProvider>
   );
 }

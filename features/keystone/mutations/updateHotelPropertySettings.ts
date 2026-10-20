@@ -7,6 +7,8 @@ import { findHotelLifecycleReplay, HOTEL_PROPERTY_KEY, lockHotelLifecycle, recor
 import { haveHotelPricingInputsChanged } from '../lib/hotelPropertySettings';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
 import { parseStorefrontAccentPreset } from '../../storefront/lib/storefront-theme';
+import { normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
+import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
 
 function text(value: unknown, label: string, max: number, required = false) {
   const normalized = String(value || '').trim();
@@ -20,6 +22,24 @@ function stayTime(value: unknown, label: string) {
     throw new Error(`${label} must use 24-hour HH:mm or h:mm AM/PM format.`);
   }
   return normalized;
+}
+
+// Logo fields are optional: an omitted field keeps the saved branding, an empty
+// logoIcon restores the accent mark, and any other SVG must survive sanitization.
+function logoBranding(data: Record<string, unknown>) {
+  const branding: { logoIcon?: string; logoColor?: string } = {};
+  if (data.logoIcon !== undefined && data.logoIcon !== null) {
+    const submitted = String(data.logoIcon).trim();
+    const logoIcon = submitted ? sanitizeStoreLogoSvg(submitted) : '';
+    if (submitted && !logoIcon) throw new Error('Logo must be a valid, safe SVG document.');
+    branding.logoIcon = logoIcon;
+  }
+  if (data.logoColor !== undefined && data.logoColor !== null) branding.logoColor = normalizeStoreLogoColor(data.logoColor);
+  return branding;
+}
+
+function logoDigest(logoIcon: unknown) {
+  return logoIcon ? createHash('sha256').update(String(logoIcon)).digest('hex') : null;
 }
 
 function imagePath(value: unknown, label: string) {
@@ -39,7 +59,7 @@ export default async function updateHotelPropertySettings(
   if (!key || key.length > 180) throw new Error('A bounded idempotency key is required.');
   const eventKey = `hotel-settings:${key}`;
   const currencyCode = text(data.currencyCode, 'Currency code', 3, true).toUpperCase();
-  if (currencyCode !== 'USD') throw new Error('The bounded initial release supports USD settlement only.');
+  if (currencyCode !== 'USD') throw new Error('Currency must be USD.');
   const taxRateBasisPoints = Number(data.taxRateBasisPoints);
   const serviceFeeMinor = Number(data.serviceFeeMinor);
   if (!Number.isSafeInteger(taxRateBasisPoints) || taxRateBasisPoints < 0 || taxRateBasisPoints > 10_000) throw new Error('Tax rate basis points must be between 0 and 10000.');
@@ -47,7 +67,6 @@ export default async function updateHotelPropertySettings(
   const contactEmail = text(data.contactEmail, 'Contact email', 320, true).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new Error('Contact email is invalid.');
   const propertyName = text(data.propertyName, 'Property name', 200, true);
-  if (/\b(?:grand hotel|openfront(?: hotel)?|acme|demo)\b/i.test(propertyName)) throw new Error('Property name must use the real public hotel brand.');
   const normalized = {
     refundApprovalThresholdMinor: Number(data.refundApprovalThresholdMinor ?? 0),
     writeOffApprovalThresholdMinor: Number(data.writeOffApprovalThresholdMinor ?? 0),
@@ -85,6 +104,7 @@ export default async function updateHotelPropertySettings(
     locationImagePath: imagePath(data.locationImagePath, 'Location image path'),
     locationImageAltText: text(data.locationImageAltText, 'Location image alt text', 300),
     locationImageCaption: text(data.locationImageCaption, 'Location image caption', 500),
+    ...logoBranding(data),
   };
   for (const key of ['loyaltyEarnMinorPerPoint', 'loyaltyRedeemMinorPerPoint', 'loyaltyMinimumRedemptionPoints'] as const) if (!Number.isInteger(normalized[key]) || normalized[key] < 1 || normalized[key] > 1000000) throw new Error('Loyalty amounts must be whole units between 1 and 1000000.');
   if (!Number.isInteger(normalized.depositPercent) || normalized.depositPercent < 1 || normalized.depositPercent > 100) throw new Error('Deposit percentage must be 1–100.');
@@ -171,8 +191,8 @@ export default async function updateHotelPropertySettings(
       eventKey,
       actorId: context.session.itemId,
       identity,
-      beforeSnapshot: before && { securityDepositMinor: before.securityDepositMinor, depositPercent: before.depositPercent, loyaltyEnabled: before.loyaltyEnabled, loyaltyEarnMinorPerPoint: before.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: before.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: before.loyaltyMinimumRedemptionPoints, prearrivalEmailEnabled: before.prearrivalEmailEnabled, prearrivalDays: before.prearrivalDays, groupsEnabled: before.groupsEnabled, refundApprovalThresholdMinor: before.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: before.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: before.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: before.ratePublicationRequiresApproval, propertyName: before.propertyName, contactEmail: before.contactEmail, timeZone: before.timeZone, currencyCode: before.currencyCode, taxRateBasisPoints: before.taxRateBasisPoints, serviceFeeMinor: before.serviceFeeMinor, storefrontAccentPreset: before.storefrontAccentPreset },
-      afterSnapshot: { securityDepositMinor: updated.securityDepositMinor, depositPercent: updated.depositPercent, loyaltyEnabled: updated.loyaltyEnabled, loyaltyEarnMinorPerPoint: updated.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: updated.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: updated.loyaltyMinimumRedemptionPoints, prearrivalEmailEnabled: updated.prearrivalEmailEnabled, prearrivalDays: updated.prearrivalDays, groupsEnabled: updated.groupsEnabled, refundApprovalThresholdMinor: updated.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: updated.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: updated.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: updated.ratePublicationRequiresApproval, propertyName: updated.propertyName, contactEmail: updated.contactEmail, timeZone: updated.timeZone, currencyCode: updated.currencyCode, taxRateBasisPoints: updated.taxRateBasisPoints, serviceFeeMinor: updated.serviceFeeMinor, storefrontAccentPreset: updated.storefrontAccentPreset, pricingVersion: updated.pricingVersion, businessDateBefore: clock?.currentBusinessDate || null, businessDateAfter },
+      beforeSnapshot: before && { securityDepositMinor: before.securityDepositMinor, depositPercent: before.depositPercent, loyaltyEnabled: before.loyaltyEnabled, loyaltyEarnMinorPerPoint: before.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: before.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: before.loyaltyMinimumRedemptionPoints, prearrivalEmailEnabled: before.prearrivalEmailEnabled, prearrivalDays: before.prearrivalDays, groupsEnabled: before.groupsEnabled, refundApprovalThresholdMinor: before.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: before.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: before.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: before.ratePublicationRequiresApproval, propertyName: before.propertyName, contactEmail: before.contactEmail, timeZone: before.timeZone, currencyCode: before.currencyCode, taxRateBasisPoints: before.taxRateBasisPoints, serviceFeeMinor: before.serviceFeeMinor, storefrontAccentPreset: before.storefrontAccentPreset, logoColor: before.logoColor, logoIconSha256: logoDigest(before.logoIcon) },
+      afterSnapshot: { securityDepositMinor: updated.securityDepositMinor, depositPercent: updated.depositPercent, loyaltyEnabled: updated.loyaltyEnabled, loyaltyEarnMinorPerPoint: updated.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: updated.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: updated.loyaltyMinimumRedemptionPoints, prearrivalEmailEnabled: updated.prearrivalEmailEnabled, prearrivalDays: updated.prearrivalDays, groupsEnabled: updated.groupsEnabled, refundApprovalThresholdMinor: updated.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: updated.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: updated.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: updated.ratePublicationRequiresApproval, propertyName: updated.propertyName, contactEmail: updated.contactEmail, timeZone: updated.timeZone, currencyCode: updated.currencyCode, taxRateBasisPoints: updated.taxRateBasisPoints, serviceFeeMinor: updated.serviceFeeMinor, storefrontAccentPreset: updated.storefrontAccentPreset, logoColor: updated.logoColor, logoIconSha256: logoDigest(updated.logoIcon), pricingVersion: updated.pricingVersion, businessDateBefore: clock?.currentBusinessDate || null, businessDateAfter },
     });
   }, { maxWait: 5_000, timeout: 30_000, isolationLevel: 'ReadCommitted' });
   return context.prisma.hotelSettings.findUnique({ where: { id: 1 } });

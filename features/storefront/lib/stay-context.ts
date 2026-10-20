@@ -25,6 +25,11 @@ export function stayNights(from: string, to: string) {
 export function money(minor: number, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
 }
+/** Calendar-cell form of `money`: drops ".00" so a nightly charge fits under the day number. */
+export function nightMoney(minor: number, currency = 'USD') {
+  const fraction = minor % 100 === 0 ? 0 : 2;
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: fraction, maximumFractionDigits: fraction }).format(minor / 100);
+}
 export function cancellationTerms(policy?: string | null) {
   if (policy === 'flexible') return 'Full refund until 48 hours before arrival; the first night is retained after that.';
   if (policy === 'moderate') return 'Full refund until 7 days before arrival; 50% until 48 hours before arrival; non-refundable after that.';
@@ -49,4 +54,18 @@ export function bookingGroup(status?: string | null) {
   if (['cancelled', 'cancellation_pending', 'no_show'].includes(status || '')) return 'cancelled';
   if (status === 'checked_out') return 'past';
   return 'upcoming';
+}
+/** Short form of `cancellationTerms` for cards and summaries. */
+export function cancellationHeadline(policy?: string | null) {
+  if (policy === 'flexible') return 'Free cancellation until 48 hours before arrival';
+  if (policy === 'moderate') return 'Full refund until 7 days before arrival';
+  if (policy === 'strict') return '50% refund until 14 days before arrival';
+  if (policy === 'non_refundable') return 'Non-refundable';
+  return 'Cancellation terms depend on the rate';
+}
+export function mealPlanLabel(plan?: string | null) {
+  const labels: Record<string, string> = { room_only: 'Room only', breakfast: 'Breakfast included', bed_and_breakfast: 'Breakfast included', half_board: 'Half board', full_board: 'Full board', all_inclusive: 'All inclusive' };
+  if (!plan) return '';
+  const text = labels[plan] || plan.replaceAll('_', ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

@@ -116,4 +116,27 @@ export const SeasonalRate = list({
 
     ...trackingFields,
   },
+  hooks: {
+    // An active season changes the price of live rates. When the property requires approval
+    // to publish rates, such a change is made while the room type's public rates are paused;
+    // publishing them again needs an approval that covers the new seasons.
+    beforeOperation: async ({ operation, item, resolvedData, context }) => {
+      if (context.graphql.schema === context.sudo().graphql.schema) return;
+      const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { ratePublicationRequiresApproval: true } });
+      if (settings?.ratePublicationRequiresApproval === false) return;
+      const before: any = item || null;
+      const after: any = operation === 'delete' ? null : { ...(before || {}), ...(resolvedData || {}) };
+      const wasLive = Boolean(before?.isActive);
+      const willBeLive = Boolean(after?.isActive);
+      if (!wasLive && !willBeLive) return;
+      const nextRoomTypeId = (resolvedData as any)?.roomType?.connect?.id ?? before?.roomTypeId;
+      const roomTypeIds = [before?.roomTypeId, after ? nextRoomTypeId : null].filter(Boolean);
+      const live = roomTypeIds.length
+        ? await context.prisma.ratePlan.findFirst({ where: { roomTypeId: { in: roomTypeIds }, status: 'active', isPublic: true }, select: { name: true } })
+        : null;
+      if (live) {
+        throw new Error(`An active season changes the price of the live rate "${live.name}". Pause that room type's public rates first; publishing them again needs approval.`);
+      }
+    },
+  },
 })

@@ -27,8 +27,16 @@ export async function ItemPage({ params }: ItemPageParams) {
     notFound()
   }
 
-  // Staff item data is always fetched through the no-store authenticated GraphQL transport.
-  const response = await getItemAction(list, itemId)
+  // Fetch item data with cache options
+  const cacheOptions = {
+    next: {
+      tags: [`item-${list.key}-${itemId}`],
+      revalidate: 3600,
+    },
+  }
+
+  // Use the working dashboard action for item data
+  const response = await getItemAction(list, itemId, {}, cacheOptions)
 
   let fetchedItem: Record<string, unknown> = {}
 

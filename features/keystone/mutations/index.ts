@@ -8,6 +8,8 @@ import { hotelLoyaltyAccount, redeemHotelLoyalty } from '../loyalty/commands';
 import { maintenanceCommercialTypeDefs, maintenanceCommercialResolvers } from '../operations/maintenanceCommercial';
 import { saveHotelChannelDraft } from '../lib/hotelChannelConfiguration';
 import { hotelMfaTypeDefs, hotelMfaResolvers } from '../lib/hotelMfa';
+import { guestAccountTypeDefs, createGuestAccountResolvers } from './guestAccounts';
+import { hotelGuestMessages, hotelGuestMessagesTypeDefs } from '../queries/hotelGuestMessages';
 import { hotelPayerWindows, hotelReceivableOperations, hotelReceivableOperationsPage, manageHotelReceivable } from '../receivables/commands';
 import { hotelDisputeOperations, annotateHotelDispute } from '../finance/hotelDisputes';
 import { hotelGroupWorkspace, createHotelGroupRoomingList, closeHotelGroupMasterFolio, detachHotelGroupBooking } from '../groups/commands';
@@ -50,6 +52,7 @@ import verifyGuestBooking from '../queries/verifyGuestBooking';
 import storefrontRoomType from '../queries/storefrontRoomType';
 import storefrontRoomTypes from '../queries/storefrontRoomTypes';
 import storefrontAvailability from '../queries/storefrontAvailability';
+import storefrontStayCalendar from '../queries/storefrontStayCalendar';
 import publicHotelSettings from '../queries/publicHotelSettings';
 import storefrontQuote from '../queries/storefrontQuote';
 import guestCancellationQuote from '../queries/guestCancellationQuote';
@@ -60,7 +63,7 @@ import postFolioEntry from './postFolioEntry';
 import reverseFolioEntry from './reverseFolioEntry';
 import recordBookingPayment from './recordBookingPayment';
 import closeReconciledFolio from './closeReconciledFolio';
-import updateHousekeepingTaskStatus from '../workforce/housekeepingTasks';
+import updateHousekeepingTaskStatus, { scheduleHousekeepingTask } from '../workforce/housekeepingTasks';
 import updateRatePlanPublication from './updateRatePlanPublication';
 import { hotelOperationsResolvers, hotelOperationsTypeDefs } from '../queries/hotelOperations';
 import runHotelNightAudit from '../operations/nightAudit';
@@ -92,16 +95,23 @@ function mapCheckoutPaymentProvider(provider: any) {
   };
 }
 
-function mapCheckoutPaymentSession(session: any) {
+/**
+ * The session's provider is projected from the exact stored provider record, so its public
+ * client key matches the standalone provider list; only that public key leaves the server.
+ */
+async function mapCheckoutPaymentSession(session: any, context: any) {
   if (!session) return null;
   const data = session.data && typeof session.data === 'object' ? session.data : {};
+  const provider = session.paymentProvider?.id
+    ? await context.prisma.paymentProvider.findUnique({ where: { id: session.paymentProvider.id } })
+    : null;
   return {
     ...session,
     clientSecret: typeof data.clientSecret === 'string' ? data.clientSecret : null,
     paymentIntentId: typeof data.paymentIntentId === 'string' ? data.paymentIntentId : null,
     orderId: typeof data.orderId === 'string' ? data.orderId : null,
     approveLink: typeof data.approveLink === 'string' ? data.approveLink : null,
-    paymentProvider: mapCheckoutPaymentProvider(session.paymentProvider),
+    paymentProvider: mapCheckoutPaymentProvider(provider || session.paymentProvider),
   };
 }
 
@@ -146,10 +156,26 @@ function mapStorefrontRoomType(roomType: any) {
   };
 }
 
+export function mapGuestChangeRequest(request: any) {
+  if (!request) return null;
+  const date = (value: unknown) => value ? new Date(value as string) : null;
+  return {
+    id: request.id,
+    status: request.status,
+    requestedCheckInDate: date(request.requestedCheckInDate),
+    requestedCheckOutDate: date(request.requestedCheckOutDate),
+    guestMessage: request.guestMessage || null,
+    propertyNote: request.status === 'pending' ? null : request.staffNote || null,
+    createdAt: date(request.createdAt),
+    resolvedAt: date(request.resolvedAt),
+  };
+}
+
 function mapGuestBooking(booking: any) {
   if (!booking) return null;
   return {
     ...booking,
+    changeRequest: mapGuestChangeRequest(booking.changeRequest),
     bookedStayTerms: guestBookedStayTerms(booking),
     checkInDate: booking.checkInDate ? new Date(booking.checkInDate) : null,
     checkOutDate: booking.checkOutDate ? new Date(booking.checkOutDate) : null,
@@ -166,6 +192,8 @@ function mapGuestBooking(booking: any) {
   };
 }
 
+const guestAccountResolvers = createGuestAccountResolvers(mapGuestBooking);
+
 export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
   const schema = mergeSchemas({
     schemas: [baseSchema],
@@ -173,6 +201,8 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
       ${hotelOperationsTypeDefs}
       ${hotelGuestGovernanceTypeDefs}
       ${hotelMfaTypeDefs}
+      ${guestAccountTypeDefs}
+      ${hotelGuestMessagesTypeDefs}
       ${maintenanceCommercialTypeDefs}
       ${hotelDerivedRateTypeDefs}
 
@@ -188,6 +218,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         frontDeskCopy: String
         checkInTime: String
         checkOutTime: String
+        timeZone: String
         heroImagePath: String
         heroImageAltText: String
         heroImageCaption: String
@@ -197,6 +228,8 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         locationImagePath: String
         locationImageAltText: String
         locationImageCaption: String
+        logoIcon: String
+        logoColor: String
       }
 
       type BookingCheckoutPaymentProvider {
@@ -260,6 +293,13 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         securityDepositMinor: Int!
         depositPercent: Int!
         quoteToken: String!
+        promoCodeApplied: Boolean
+        nightlyRates: [StorefrontNightlyRate!]!
+      }
+
+      type StorefrontNightlyRate {
+        date: String!
+        amountMinor: Int!
       }
 
       type StorefrontRoomImage {
@@ -304,6 +344,11 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         ratePlans: [StorefrontRatePlan!]!
       }
 
+      type StorefrontStayNight {
+        date: String!
+        available: Boolean!
+      }
+
       type GuestRoomAssignment {
         id: ID!
         ratePerNight: Float
@@ -318,6 +363,18 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         paymentStatus: String
         balanceDueMinor: Int!
         cancelledAt: DateTime
+        changeRequest: GuestChangeRequest
+      }
+
+      type GuestChangeRequest {
+        id: ID!
+        status: String!
+        requestedCheckInDate: DateTime
+        requestedCheckOutDate: DateTime
+        guestMessage: String
+        propertyNote: String
+        createdAt: DateTime
+        resolvedAt: DateTime
       }
 
       type HotelPasswordResetResult {
@@ -396,6 +453,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         confirmationDeliveryStatus: String
         updateDeliveryStatus: String
         cancellationDeliveryStatus: String
+        changeRequest: GuestChangeRequest
         roomAssignments: [GuestRoomAssignment!]!
       }
 
@@ -419,10 +477,11 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         redirectToInit: Boolean
         publicHotelSettings: PublicHotelSettings!
         bookingPaymentProviders: [BookingCheckoutPaymentProvider!]!
-        activeBookingPaymentSession(bookingId: ID!): ActiveBookingPaymentSession
+        activeBookingPaymentSession(bookingId: ID!, providerPaymentId: String): ActiveBookingPaymentSession
         storefrontRoomTypes: [StorefrontRoomType!]!
         storefrontRoomType(id: ID!): StorefrontRoomType
         storefrontAvailability(checkInDate: DateTime!, checkOutDate: DateTime!): [StorefrontRoomType!]!
+        storefrontStayCalendar(roomTypeId: ID, fromDate: DateTime!, toDate: DateTime!): [StorefrontStayNight!]!
         storefrontQuote(
           roomTypeId: ID!
           ratePlanId: ID!
@@ -559,6 +618,8 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         locationImagePath: String
         locationImageAltText: String
         locationImageCaption: String
+        logoIcon: String
+        logoColor: String
       }
 
       input HotelPaymentProviderCredentialsInput {
@@ -729,6 +790,14 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           idempotencyKey: String!
         ): Room
         updateHotelHousekeepingStaffCapability(staffId: ID!, configuration: String!, expectedRevision: Int!, idempotencyKey: String!): String!
+        scheduleHousekeepingTask(
+          roomId: ID!
+          taskType: String!
+          priority: Int
+          assignedToId: ID
+          notes: String
+          idempotencyKey: String!
+        ): HousekeepingTask
         updateHousekeepingTaskStatus(
           taskId: ID!
           expectedStatus: String
@@ -772,6 +841,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           totalRooms: Int
           bookedRooms: Int
           blockedRooms: Int
+          blockedRoomsDelta: Int
           idempotencyKey: String!
         ): RoomInventory
         requestBookingModification(
@@ -807,6 +877,8 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         hotelHousekeepingStaffCapabilities, hotelPayerWindows, hotelFolioReceipt, hotelSecurityAuthorization, guestFolio, hotelPayoutOperations,
         ...hotelGuestGovernanceResolvers.Query,
         ...hotelMfaResolvers.Query,
+        ...guestAccountResolvers.Query,
+        hotelGuestMessages,
         ...maintenanceCommercialResolvers.Query,
         ...hotelDerivedRateResolvers.Query,
         hotelReceivableOperations, hotelReceivableOperationsPage, hotelDisputeOperations, hotelGroupWorkspace, hotelLoyaltyAccount, hotelRelocation,
@@ -829,6 +901,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           args: { checkInDate: string; checkOutDate: string },
           context: any
         ) => (await storefrontAvailability(root, args, context)).map(mapStorefrontRoomType),
+        storefrontStayCalendar,
         storefrontQuote,
         guestBooking: async (root: unknown, args: { bookingId: string }, context: any) =>
           mapGuestBooking(await guestBooking(root, args, context)),
@@ -839,6 +912,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
       Mutation: {
         ...hotelGuestGovernanceResolvers.Mutation,
         ...hotelMfaResolvers.Mutation,
+        ...guestAccountResolvers.Mutation,
         ...maintenanceCommercialResolvers.Mutation,
         ...hotelDerivedRateResolvers.Mutation,
         updateHotelRelocation, detachHotelGroupBooking, manageHotelPayout, manageHotelSecurityAuthorization, redeemHotelLoyalty, saveHotelChannelDraft, manageHotelReceivable, annotateHotelDispute, createHotelGroupRoomingList, closeHotelGroupMasterFolio,
@@ -908,7 +982,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         requestBookingPaymentRefund,
         updateBookingStatus,
         updateRoomOperationalStatus,
-        updateHotelHousekeepingStaffCapability, updateHousekeepingTaskStatus,
+        updateHotelHousekeepingStaffCapability, updateHousekeepingTaskStatus, scheduleHousekeepingTask,
         updateRatePlanPublication,
         reportRoomMaintenanceIssue,
         assignRoomToBooking,
@@ -916,17 +990,19 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         updateMaintenanceRequestStatus,
         updateRoomInventoryControls,
         requestBookingModification: async (root: unknown, args: any, context: any) => {
-          const booking = await requestBookingModification(root, args, context);
+          const { booking, request } = await requestBookingModification(root, args, context);
           return {
             id: booking.id,
             status: booking.status || null,
-            paymentStatus: null,
+            paymentStatus: booking.paymentStatus || null,
+            balanceDueMinor: Number(booking.balanceDueMinor || 0),
             cancelledAt: null,
+            changeRequest: mapGuestChangeRequest(request),
           };
         },
         resolveBookingModificationRequest,
         initiateBookingPaymentSession: async (root: unknown, args: any, context: any) =>
-          mapCheckoutPaymentSession(await initiateBookingPaymentSession(root, args, context)),
+          mapCheckoutPaymentSession(await initiateBookingPaymentSession(root, args, context), context),
         completeBookingPayment,
       },
     },

@@ -24,7 +24,13 @@ export async function SignInPage({ searchParams }: SignInPageProps) {
           Sign in to your account
         </h3>
         <p className="mt-2 text-sm text-muted-foreground dark:text-muted-foreground">
-          Staff access is managed by your hotel administrator. Contact them if you need an account.
+          Don&apos;t have an account?
+          <Link
+            href="/dashboard/signup"
+            className="ml-1 font-medium text-primary hover:text-primary/90 dark:text-primary hover:dark:text-primary/90"
+          >
+            Sign up
+          </Link>
         </p>
         <SignInForm from={from} />
         <p className="mt-6 text-sm text-muted-foreground dark:text-muted-foreground">

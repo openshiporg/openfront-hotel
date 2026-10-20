@@ -1,16 +1,27 @@
 import { relationship, text } from '@keystone-6/core/fields';
 import { list } from '@keystone-6/core';
-import { permissions } from '../access';
+import { isSignedIn, permissions } from '../access';
 import { permissionFields } from './fields';
 import { trackingFields } from './trackingFields';
+
+// Signed-in staff can read their own role's permission flags; the canonical dashboard
+// admission query needs them. Other roles and role membership stay with role managers.
+const canReadRoles = ({ session }: any) => {
+  if (!isSignedIn({ session })) return false;
+  if (permissions.canManageRoles({ session })) return true;
+  return { assignedTo: { some: { id: { equals: session.itemId } } } };
+};
 
 export const Role = list({
   access: {
     operation: {
-      query: permissions.canManageRoles,
+      query: isSignedIn,
       create: permissions.canManageRoles,
       update: permissions.canManageRoles,
       delete: permissions.canManageRoles,
+    },
+    filter: {
+      query: canReadRoles,
     },
   },
   ui: {
@@ -24,6 +35,7 @@ export const Role = list({
     assignedTo: relationship({
       ref: 'User.role',
       many: true,
+      access: { read: permissions.canManageRoles },
     }),
     ...trackingFields
   },

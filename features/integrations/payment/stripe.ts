@@ -40,7 +40,7 @@ export async function createPaymentFunction({
       amount: normalizeAmount(amount),
       currency: (currency || 'usd').toLowerCase(),
       automatic_payment_methods: { enabled: true },
-      metadata,
+      metadata: { ...metadata, source: 'openfront-hotel' },
     },
     { idempotencyKey }
   );
@@ -108,6 +108,16 @@ export async function handleWebhookFunction({ rawBody, headers, providerCredenti
     type: event.type,
     resource,
     settlement: settlementFromResource(resource),
+    // Refunds created anywhere, including the Stripe dashboard, arrive as refund objects.
+    refund: resource.object === 'refund' ? {
+      id: String(resource.id || ''),
+      providerPaymentId: typeof resource.payment_intent === 'string' ? resource.payment_intent : String(resource.payment_intent?.id || ''),
+      amountMinor: resource.amount,
+      currencyCode: String(resource.currency || '').toUpperCase(),
+      status: resource.status === 'succeeded' ? 'succeeded' : ['failed', 'canceled'].includes(resource.status) ? 'failed' : 'pending',
+      requestKey: resource.metadata?.refundIntentKey || null,
+      data: resource,
+    } : null,
     dispute: resource.object === 'dispute' && event.type.startsWith('charge.dispute.') ? { id: resource.id, providerPaymentId: typeof resource.payment_intent === 'string' ? resource.payment_intent : resource.payment_intent?.id, amountMinor: resource.amount, currencyCode: String(resource.currency || '').toUpperCase(), status: resource.status, reason: resource.reason, evidenceDueBy: resource.evidence_details?.due_by || null, eventCreated: event.created, balanceTransactions: resource.balance_transactions || [] } : null,
   };
 }
@@ -137,7 +147,7 @@ export async function securityAuthorizationFunction({ action, paymentId, amountM
   const stripe = getStripeClient(providerCredentials);
   let intent: Stripe.PaymentIntent;
   if (action === 'initiate') intent = await stripe.paymentIntents.create({ amount: normalizeAmount(amountMinor), currency: 'usd', capture_method: 'manual', payment_method_types: ['card'],
-    metadata: { bookingId, securityAuthorizationId: authorizationId, purpose: 'hotel_security' } }, { idempotencyKey });
+    metadata: { source: 'openfront-hotel', bookingId, securityAuthorizationId: authorizationId, purpose: 'hotel_security' } }, { idempotencyKey });
   else {
     intent = await stripe.paymentIntents.retrieve(paymentId, { expand: ['latest_charge'] });
     if (action === 'capture' && intent.status === 'requires_capture') intent = await stripe.paymentIntents.capture(paymentId, { amount_to_capture: normalizeAmount(amountMinor), final_capture: true }, { idempotencyKey });

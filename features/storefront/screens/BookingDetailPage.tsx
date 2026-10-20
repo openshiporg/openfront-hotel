@@ -3,24 +3,28 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import * as Dialog from '@radix-ui/react-dialog';
+import { ArrowLeft, CalendarPlus, CalendarX2, Check, Copy, CreditCard, KeyRound, Mail, MapPin, MessageCircle, Moon, PenLine, Phone, Printer, RefreshCw, X } from 'lucide-react';
 import { formatStayDate, stayCalendar } from '../lib/stay-calendar';
 import { GuestFolioPanel } from '../components/GuestFolioPanel';
 import { SecurityAuthorizationPanel } from '../components/security-authorization/SecurityAuthorizationPanel';
-import LoyaltyPanel from '@/features/platform/loyalty/components/LoyaltyPanel';
+import { GuestLoyaltyPanel } from '../components/GuestLoyaltyPanel';
 
 import { graphqlClient } from '@/lib/graphql-client';
 import { CANCEL_BOOKING, GET_GUEST_BOOKING } from '@/lib/queries';
 import { primaryRoomImage } from '@/lib/hotel-storefront';
 import { useHotelSettings } from '@/features/storefront/components/HotelSettingsProvider';
+import { useGuestAccount } from '@/features/storefront/components/GuestAccountProvider';
 import type { HotelIdentity } from '@/features/storefront/lib/hotel-settings';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { operationAttempt } from '@/lib/operationAttempt';
 import { calendarDay, stayNights, reservationPresentation, money } from '../lib/stay-context';
-import { storefrontAccentCssVariables } from '../lib/storefront-theme';
 import { BookedStayTermsPanel } from '../components/BookedStayTermsPanel';
 import type { StayPriceSummary } from '@/lib/types';
-import { Skeleton } from '@/components/ui/skeleton';
 import { modificationDateToIso, safeGuestWorkflowFailure } from '@/features/storefront/lib/qa-workflows';
+import { useScrollSpy } from '../lib/use-scroll-spy';
+import { Notice, Skeleton, StatePanel } from '../components/ui';
+import { StayPicker } from '../components/stay/StayCalendar';
+import { propertyToday } from '../lib/calendar';
 
 interface Booking {
   id: string;
@@ -53,6 +57,7 @@ interface Booking {
   confirmationDeliveryStatus?: string | null;
   updateDeliveryStatus?: string | null;
   cancellationDeliveryStatus?: string | null;
+  changeRequest?: GuestChangeRequest | null;
   roomAssignments?: Array<{
     id: string;
     roomType?: {
@@ -75,6 +80,17 @@ interface Booking {
   }>;
 }
 
+interface GuestChangeRequest {
+  id: string;
+  status: 'pending' | 'approved' | 'declined' | string;
+  requestedCheckInDate?: string | null;
+  requestedCheckOutDate?: string | null;
+  guestMessage?: string | null;
+  propertyNote?: string | null;
+  createdAt?: string | null;
+  resolvedAt?: string | null;
+}
+
 interface BookingResponse {
   booking: Booking;
 }
@@ -95,6 +111,7 @@ const REQUEST_BOOKING_MODIFICATION = `
       message: $message
     ) {
       id
+      changeRequest { id status requestedCheckInDate requestedCheckOutDate guestMessage propertyNote createdAt resolvedAt }
       status
     }
   }
@@ -118,6 +135,8 @@ const GET_CANCELLATION_QUOTE = `
     }
   }
 `;
+
+const SECTIONS = [['stay', 'Your stay'], ['statement', 'Statement'], ['manage', 'Manage'], ['arrival', 'Arrival & help']] as const;
 
 // Generate .ics calendar file for the stay
 const generateCalendarFile = (booking: Booking, identity: HotelIdentity) => {
@@ -145,17 +164,25 @@ function bookingAmount(minor: number | null | undefined, major: number | null | 
   try { return money(amountMinor, currencyCode!); } catch { return 'Amount unavailable'; }
 }
 
-function DetailRow({ label, children }: { label: string; children: React.ReactNode; }) {
-  return (
-    <div className="min-w-0">
-      <dt className="lodging-eyebrow mb-1.5 text-[0.625rem]">{label}</dt>
-      <dd className="text-[var(--lodging-ink)] leading-6">{children}</dd>
-    </div>
-  );
+function statusTone(status: string) {
+  if (status === 'confirmed' || status === 'checked_in') return 'sf-badge--success';
+  if (status === 'pending' || status === 'cancellation_pending') return 'sf-badge--warn';
+  if (status === 'cancelled' || status === 'no_show') return 'sf-badge--danger';
+  return '';
+}
+
+function CopyReference({ value }: { value: string }) {
+  const [copied, setCopied] = React.useState(false);
+  return <span className="sf-code"><span aria-label="Confirmation number">{value}</span>
+    <button type="button" className="sf-noprint" onClick={() => { void navigator.clipboard?.writeText(value).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1800); }).catch(() => undefined); }}>
+      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}<span aria-live="polite">{copied ? 'Copied' : 'Copy'}</span>
+    </button>
+  </span>;
 }
 
 export default function BookingDetailPage() {
   const identity = useHotelSettings();
+  const { account } = useGuestAccount();
   const params = useParams();
   const bookingId = typeof params?.id === 'string' ? params.id : '';
   const [booking, setBooking] = React.useState<Booking | null>(null);
@@ -177,6 +204,7 @@ export default function BookingDetailPage() {
   const [modificationError, setModificationError] = React.useState('');
   const [modificationSuccess, setModificationSuccess] = React.useState('');
   const [modificationForm, setModificationForm] = React.useState({ requestedCheckInDate: '', requestedCheckOutDate: '', message: '' });
+  const active = useScrollSpy(SECTIONS.map(([id]) => id), Boolean(booking));
   const refreshBooking = React.useCallback(async () => {
     const sequence = ++requestSequence.current;
     setRefreshing(true); setError('');
@@ -217,11 +245,17 @@ export default function BookingDetailPage() {
     modifyFlight.current = true; setIsRequestingModification(true); setModificationError('');
     try {
       if (!booking.guestEmail) throw new Error('Guest email unavailable');
-      const result = await graphqlClient.request<{ requestBookingModification: { id: string; status: string; }; }>(REQUEST_BOOKING_MODIFICATION, { bookingId: booking.id, guestEmail: booking.guestEmail, requestedCheckInDate: modificationDateToIso(arrival), requestedCheckOutDate: modificationDateToIso(departure), message: message || null });
-      if (!result.requestBookingModification?.id) throw new Error('Missing request acknowledgement');
-      setModificationSuccess(`Change request recorded (${result.requestBookingModification.status.replaceAll('_', ' ')}). Your current reservation dates remain in effect until the property confirms a change.`);
+      const result = await graphqlClient.request<{ requestBookingModification: { id: string; changeRequest?: GuestChangeRequest | null; }; }>(REQUEST_BOOKING_MODIFICATION, { bookingId: booking.id, guestEmail: booking.guestEmail, requestedCheckInDate: modificationDateToIso(arrival), requestedCheckOutDate: modificationDateToIso(departure), message: message || null });
+      const request = result.requestBookingModification?.changeRequest;
+      if (!request?.id) throw new Error('Missing request acknowledgement');
+      setBooking(previous => previous ? { ...previous, changeRequest: request } : previous);
+      setModificationSuccess('Change request sent for property review. Your current dates stay in effect until the property confirms a change.');
       setShowModifyDialog(false); setModificationForm({ requestedCheckInDate: '', requestedCheckOutDate: '', message: '' });
-    } catch { setModificationError('We could not confirm the change request. Your stay has not been shown as changed. Contact the property to check whether the request was received before submitting it again.'); }
+      void refreshBooking();
+    } catch {
+      void refreshBooking();
+      setModificationError('We could not confirm the change request. Your stay has not been shown as changed. Contact the property to check whether the request was received before submitting it again.');
+    }
     finally { modifyFlight.current = false; setIsRequestingModification(false); }
   }
   async function handleCancelBooking() {
@@ -238,191 +272,226 @@ export default function BookingDetailPage() {
     } catch { setCancelError('Cancellation could not be confirmed. Retry this request or refresh your reservation to check its status. Contact the property if it remains unclear.'); }
     finally { cancelFlight.current = false; setIsCancelling(false); }
   }
-  if (loading) return <main className="lodging-container py-16" aria-busy="true">
-    <p role="status" className="mb-6">Loading your private reservation…</p>
-    <Skeleton className="h-48 w-full" />
-    <Skeleton className="mt-6 h-48 w-full" />
-  </main>;
-  if (!booking) return <main className="lodging-container py-16">
-    <div className="max-w-2xl">
-      <p className="lodging-eyebrow mb-3">Your reservation</p>
-      <h1 className="lodging-display">Let’s find your stay.</h1>
-      <p role="alert" className="lodging-lead mt-6">{error || safeGuestWorkflowFailure('booking')} Verify your reservation again with its confirmation number and booking email.</p>
-      <div className="mt-8 flex flex-wrap gap-3">
-        <Link href="/bookings/lookup" className="lodging-button">Verify reservation</Link>
-        <button className="lodging-button-ghost" onClick={refreshBooking} disabled={refreshing}>{refreshing ? 'Checking…' : 'Try again'}</button>
-        <Link href="/contact" className="lodging-button-ghost">Get help</Link>
-      </div>
-    </div>
-  </main>;
+  if (loading) return <div className="sf-wrap sf-section--tight" role="status" aria-label="Loading your private reservation">
+    <Skeleton height={14} width={140} /><div style={{ height: 24 }} />
+    <Skeleton height={360} radius={22} /><div style={{ height: 24 }} /><Skeleton height={200} radius={22} />
+  </div>;
+  if (!booking) return <StatePanel role="alert" icon={KeyRound} eyebrow="Your reservation" title="Let’s find your stay."
+    actions={<><Link href="/bookings/lookup" className="sf-btn">Verify reservation</Link><button type="button" className="sf-btn sf-btn--ghost" onClick={refreshBooking} disabled={refreshing}><RefreshCw aria-hidden="true" />{refreshing ? 'Checking…' : 'Try again'}</button><Link href="/contact" className="sf-link">Get help</Link></>}>
+    {error || safeGuestWorkflowFailure('booking')} Verify your reservation again with its confirmation number and booking email.
+  </StatePanel>;
   const presentation = reservationPresentation(booking.status, booking.refundPendingMinor);
   const canRequest = ['pending', 'confirmed'].includes(booking.status);
+  const changePending = booking.changeRequest?.status === 'pending';
   const activeStay = ['confirmed', 'checked_in'].includes(booking.status);
-  const portalStyle = storefrontAccentCssVariables(identity.accentPreset) as React.CSSProperties;
-  return <main className="lodging-container py-12 md:py-16">
-    <div className="max-w-5xl mx-auto">
-      <Link href="/account" className="lodging-link print:hidden">← Verified stays</Link>
-      <header className="hotel-page-head mt-8">
-        <p className="lodging-eyebrow">{presentation.label}</p>
-        <h1 className="lodging-display">{presentation.title}</h1>
-        <p className="lodging-lead">{presentation.copy}</p>
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <span className="lodging-pill">Reference {booking.confirmationNumber}</span>
-          <span className="lodging-pill">Payment: {booking.paymentStatus?.replaceAll('_', ' ') || 'not available'}</span>
-          <button type="button" onClick={refreshBooking} disabled={refreshing} className="lodging-button-ghost print:hidden">{refreshing ? 'Refreshing…' : 'Refresh status'}</button>
-        </div>
-      </header>
-      {error && <p role="alert" className="hotel-notice my-5">{error} The details below are from the last successful refresh.</p>}
-      <nav aria-label="Reservation sections" className="hotel-subnav print:hidden">
-        <a href="#stay">Your stay</a>
-        <a href="#statement">Statement</a>
-        <a href="#manage">Manage</a>
-        <a href="#arrival">Arrival & help</a>
-      </nav>
-      {booking.status === 'pending' && <div className="hotel-notice my-6">
-        <h2 className="lodging-title mb-3">Still awaiting confirmation</h2>
-        <p className="mb-4">Room availability and payment must be checked again by the reservation service. If you already paid, review the statement and refresh before retrying payment.</p>
-        <Link href={`/book?bookingId=${encodeURIComponent(booking.id)}`} className="lodging-button-ghost">Review existing booking payment</Link>
-      </div>}
-      {booking.status === 'confirmed' && typeof booking.balanceDue === 'number' && booking.balanceDue > 0 && <div className="hotel-notice my-6 print:hidden">
-        <h2 className="lodging-title mb-3">A balance remains on this reservation.</h2>
-        <p className="mb-4">The reservation currently shows {bookingAmount(booking.balanceDueMinor, booking.balanceDue, booking.currencyCode)} remaining. Review the statement, then check the current collectible amount before continuing payment.</p>
-        <Link href={`/book?bookingId=${encodeURIComponent(booking.id)}`} className="lodging-button-ghost">Check current payment amount</Link>
-      </div>}
-      <section id="stay" className="border-b border-[var(--lodging-rule)] py-10 scroll-mt-28">
-        <p className="lodging-eyebrow mb-3">The essentials</p>
-        <h2 className="lodging-headline mb-8">Your dates, your room.</h2>
-        <div className="grid gap-8 md:grid-cols-2">
-          <dl className="grid gap-6 sm:grid-cols-2">
-            <DetailRow label="Arrival">{formatStayDate(booking.checkInDate)}</DetailRow>
-            <DetailRow label="Departure">{formatStayDate(booking.checkOutDate)}</DetailRow>
-            <DetailRow label="Length of stay">{booking.numberOfNights} {booking.numberOfNights === 1 ? 'night' : 'nights'}</DetailRow>
-            <DetailRow label="Party">{booking.numberOfAdults} {booking.numberOfAdults === 1 ? 'adult' : 'adults'}{booking.numberOfChildren ? `, ${booking.numberOfChildren} ${booking.numberOfChildren === 1 ? 'child' : 'children'}` : ''}</DetailRow>
-            <DetailRow label="Guest">{booking.guestName}</DetailRow>
-            <DetailRow label="Booking contact">
-              <span className="break-words">{booking.guestEmail || 'Held by the property'}</span>{booking.guestPhone && <span className="block">{booking.guestPhone}</span>}</DetailRow>
-          </dl>
-          <div className="space-y-5">{booking.roomAssignments?.length ? booking.roomAssignments.map(assignment => <article key={assignment.id} className="lodging-surface overflow-hidden">
-            <img src={primaryRoomImage(assignment.roomType)} alt={assignment.roomType?.roomImages?.[0]?.altText || assignment.roomType?.name || 'Reserved accommodation'} className="aspect-[16/9] w-full object-cover" />
-            <div className="p-5">
-              <h3 className="lodging-title">{assignment.roomType?.name || 'Accommodation'}</h3>{assignment.roomNumber && <p className="mt-2 text-sm">Room {assignment.roomNumber}</p>}</div>
-          </article>) : <p className="hotel-notice">Room assignment details are not available. Contact the property for help.</p>}</div>
-        </div>{booking.specialRequests && <div className="mt-8 border-t border-[var(--lodging-rule)] pt-6">
-          <h3 className="lodging-title mb-3">Your requests</h3>
-          <p className="whitespace-pre-wrap break-words">{booking.specialRequests}</p>
-          <p className="text-sm mt-3">Requests are subject to confirmation by the property.</p>
-        </div>}</section>
-      <section className="py-8">
-        {booking.bookedStayTerms ? <BookedStayTermsPanel terms={booking.bookedStayTerms} /> : <section aria-label="Recorded booking amounts" className="lodging-surface space-y-4 p-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-4">
-            <h2 className="lodging-title">Recorded booking total</h2>
-            <p className="lodging-headline">{bookingAmount(booking.totalAmountMinor, booking.totalAmount, booking.currencyCode)}</p>
-          </div>
-          <p className="text-sm leading-6">The original rate breakdown is unavailable. These amounts come from the saved booking record, not a current quote; payments and the current balance are shown separately.</p>
-          <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
-            {(booking.roomRateMinor != null || booking.roomRate != null) && <div><dt className="inline">Recorded room subtotal: </dt><dd className="inline">{bookingAmount(booking.roomRateMinor, booking.roomRate, booking.currencyCode)}</dd></div>}
-            {(booking.taxAmountMinor != null || booking.taxAmount != null) && <div><dt className="inline">Recorded taxes: </dt><dd className="inline">{bookingAmount(booking.taxAmountMinor, booking.taxAmount, booking.currencyCode)}</dd></div>}
-            {(booking.feesAmountMinor != null || booking.feesAmount != null) && <div><dt className="inline">Recorded fees: </dt><dd className="inline">{bookingAmount(booking.feesAmountMinor, booking.feesAmount, booking.currencyCode)}</dd></div>}
-          </dl>
-        </section>}
-      </section>
-      <GuestFolioPanel bookingId={booking.id} refreshKey={revision} />
-      <section id="manage" className="border-t border-[var(--lodging-rule)] py-10 scroll-mt-28 print:hidden">
-        <p className="lodging-eyebrow mb-3">Trip tools</p>
-        <h2 className="lodging-headline mb-6">Make a plan. Keep it close.</h2>{modificationSuccess && <p role="status" className="hotel-notice mb-6">{modificationSuccess}</p>}<div className="flex flex-wrap gap-3">
-          <button type="button" className="lodging-button-ghost" onClick={() => window.print()}>Print stay details</button>{activeStay && <button type="button" className="lodging-button-ghost" onClick={() => generateCalendarFile(booking, identity)}>Add to calendar</button>}
-          {canRequest && <>
-            <Dialog open={showModifyDialog} onOpenChange={open => { if (modifyFlight.current) return; setShowModifyDialog(open); if (open) setModificationError(''); }}>
-              <DialogTrigger asChild>
-                <button type="button" className="lodging-button-ghost">Request a change</button>
-              </DialogTrigger>
-              <DialogContent className="hotel-storefront max-h-[90dvh] overflow-y-auto rounded-none border-[var(--lodging-rule)] bg-[var(--lodging-paper)]" style={portalStyle}>
-                <DialogHeader>
-                  <DialogTitle className="lodging-title">Request a stay change</DialogTitle>
-                  <DialogDescription>The property reviews your request against availability and rate terms. Your current dates remain in effect until a change is confirmed.</DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleRequestModification} className="space-y-5">
-                  <fieldset disabled={isRequestingModification} className="space-y-5">
-                    <legend className="sr-only">Requested change</legend>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label htmlFor="requestedCheckInDate" className="lodging-label">Requested arrival</label>
-                        <input id="requestedCheckInDate" type="date" value={modificationForm.requestedCheckInDate} onChange={event => setModificationForm(previous => ({ ...previous, requestedCheckInDate: event.target.value }))} className="lodging-input mt-2" />
-                      </div>
-                      <div>
-                        <label htmlFor="requestedCheckOutDate" className="lodging-label">Requested departure</label>
-                        <input id="requestedCheckOutDate" type="date" value={modificationForm.requestedCheckOutDate} onChange={event => setModificationForm(previous => ({ ...previous, requestedCheckOutDate: event.target.value }))} className="lodging-input mt-2" />
-                      </div>
-                    </div>
-                    <div>
-                      <label htmlFor="modificationMessage" className="lodging-label">What would you like to change?</label>
-                      <textarea id="modificationMessage" rows={4} maxLength={4000} value={modificationForm.message} onChange={event => setModificationForm(previous => ({ ...previous, message: event.target.value }))} className="lodging-textarea mt-2" />
-                    </div>
-                  </fieldset>{modificationError && <p role="alert" className="hotel-notice">{modificationError}</p>}<div className="flex flex-wrap gap-3">
-                    <button type="submit" disabled={isRequestingModification} className="lodging-button">{isRequestingModification ? 'Sending request…' : 'Send change request'}</button>
-                    <button type="button" disabled={isRequestingModification} onClick={() => setShowModifyDialog(false)} className="lodging-button-ghost">Close</button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
-            <Dialog open={showCancelDialog} onOpenChange={open => { if (cancelFlight.current) return; setShowCancelDialog(open); if (open) void loadCancellationQuote(); }}>
-              <DialogTrigger asChild>
-                <button type="button" className="lodging-button-ghost">Review cancellation</button>
-              </DialogTrigger>
-              <DialogContent className="hotel-storefront max-h-[90dvh] overflow-y-auto rounded-none border-[var(--lodging-rule)] bg-[var(--lodging-paper)]" style={portalStyle}>
-                <DialogHeader>
-                  <DialogTitle className="lodging-title">Review before cancelling</DialogTitle>
-                  <DialogDescription>These are the current terms for this reservation. A cancellation may leave a fee or balance due. A refund is complete only after settlement is recorded.</DialogDescription>
-                </DialogHeader>{quoteLoading ? <p role="status">Checking your cancellation terms…</p> : cancellationQuote ? <div className="space-y-4">
-                  <p>{cancellationQuote.summary}</p>
-                  {cancellationQuote.fullRefundDeadline && Number.isFinite(Date.parse(cancellationQuote.fullRefundDeadline)) && <p className="text-sm">
-                    <strong>Full-refund deadline:</strong> <time dateTime={cancellationQuote.fullRefundDeadline}>{new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' }).format(new Date(cancellationQuote.fullRefundDeadline))}</time>. The deadline above is shown in UTC.</p>}
-                  <dl className="lodging-surface p-4 space-y-3">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <dt>Estimated refund</dt>
-                      <dd>{money(cancellationQuote.refundableMinor, cancellationQuote.currencyCode)}</dd>
-                    </div>
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <dt>Cancellation fee</dt>
-                      <dd>{money(cancellationQuote.cancellationFeeMinor, cancellationQuote.currencyCode)}</dd>
-                    </div>
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <dt>Captured payments</dt>
-                      <dd>{money(cancellationQuote.capturedMinor, cancellationQuote.currencyCode)}</dd>
-                    </div>
-                  </dl>{!cancellationQuote.canCancel && <p className="hotel-notice">Online cancellation is not available for the current reservation state. Contact the property for help.</p>}</div> : null}{cancelError && <p role="alert" className="hotel-notice">{cancelError}</p>}{!cancellationQuote && !quoteLoading && <button type="button" className="lodging-button-ghost" onClick={loadCancellationQuote}>Retry policy check</button>}<div className="flex flex-wrap gap-3">
-                  <button type="button" className="lodging-button-ghost" disabled={isCancelling} onClick={() => setShowCancelDialog(false)}>Keep reservation</button>
-                  <button type="button" className="lodging-button" disabled={isCancelling || quoteLoading || !cancellationQuote?.canCancel} onClick={handleCancelBooking}>{isCancelling ? 'Processing request…' : 'Confirm cancellation'}</button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </>}
-          <Link href="/contact?subject=modification" className="lodging-button-ghost">Ask the property</Link>
-        </div>
-        <p className="mt-6 text-sm leading-6">{canRequest ? 'A change request does not alter your booking immediately. Review cancellation terms separately before making a final decision.' : 'For this reservation status, contact the property about changes or arrival arrangements.'}</p>
-      </section>
-      {Boolean(booking.refundPendingMinor) && <div role="status" className="hotel-notice mb-8">Refund awaiting settlement: {bookingAmount(booking.refundPendingMinor, null, booking.currencyCode)}. This amount has not yet been recorded as a completed refund. Check your statement or contact the property.</div>}
-      <div className="space-y-6 py-6 print:hidden">
-        <LoyaltyPanel bookingId={booking.id} />
-        <SecurityAuthorizationPanel bookingId={booking.id} />
-      </div>
-      <section id="arrival" className="grid gap-8 border-t border-[var(--lodging-rule)] py-10 md:grid-cols-2 scroll-mt-28">
-        <div>
-          <p className="lodging-eyebrow mb-3">Arrival & help</p>
-          <h2 className="lodging-headline mb-5">{identity.name}</h2>{identity.address.line1 && <p>{identity.address.line1}<br />{identity.address.line2}</p>}<div className="mt-4 space-y-3">{identity.phone && <p>
-            <a href={`tel:${identity.phone.replace(/[^+\d]/g, '')}`} className="lodging-link">{identity.phone}</a>
-          </p>}{identity.email && <p className="break-words">
-            <a href={`mailto:${identity.email}`} className="lodging-link">{identity.email}</a>
-          </p>}</div>
-          <Link href="/location" className="lodging-button-ghost mt-5 print:hidden">Plan your arrival</Link>
-        </div>
-        <div className="space-y-5">
-          <h3 className="lodging-title">Before you arrive</h3>
-          <p>Published arrival time: {identity.checkIn}. Departure: {identity.checkOut}. Contact the property to confirm special arrangements.</p>{identity.hours && <p>{identity.hours}</p>}<p className="text-sm">The property’s current guidance is shown here. For terms specific to your reservation, contact the team with reference {booking.confirmationNumber}.</p>
-          <Link href="/policies" className="lodging-link print:hidden">Read about rates and policies</Link>
-        </div>
-      </section>
-      <p className="border-t border-[var(--lodging-rule)] pt-6 text-sm text-[var(--lodging-ink-muted)]">Confirmation email delivery: {booking.confirmationDeliveryStatus?.replaceAll('_', ' ') || 'not recorded'}. Email delivery does not determine your reservation or payment status.</p>
+  const assignment = booking.roomAssignments?.[0];
+  const phone = identity.phone.replace(/[^+\d]/g, '');
+  const partyLabel = `${booking.numberOfAdults} ${booking.numberOfAdults === 1 ? 'adult' : 'adults'}${booking.numberOfChildren ? `, ${booking.numberOfChildren} ${booking.numberOfChildren === 1 ? 'child' : 'children'}` : ''}`;
+  return <div className="sf-wrap" style={{ paddingBottom: 'clamp(56px, 8vw, 96px)' }}>
+    <div className="sf-pagehead" style={{ paddingBottom: 24 }}>
+      {account ? <Link href="/account" className="sf-link sf-link--back sf-noprint"><ArrowLeft aria-hidden="true" />Your stays</Link>
+        : <Link href="/bookings/lookup" className="sf-link sf-link--back sf-noprint"><ArrowLeft aria-hidden="true" />Find a reservation</Link>}
     </div>
-  </main>;
+
+    <article className="sf-card sf-pass" aria-labelledby="reservation-title">
+      <div className="sf-pass__info">
+        <div className="sf-row" style={{ justifyContent: 'space-between' }}>
+          <span className={`sf-badge sf-badge--dot ${statusTone(booking.status)}`}>{presentation.label}</span>
+          <button type="button" onClick={refreshBooking} disabled={refreshing} className="sf-btn sf-btn--ghost sf-btn--sm sf-noprint"><RefreshCw aria-hidden="true" className={refreshing ? 'sf-spinner' : undefined} />{refreshing ? 'Refreshing…' : 'Refresh status'}</button>
+        </div>
+        <div className="sf-stack" style={{ '--stack': '12px' } as React.CSSProperties}>
+          <h1 id="reservation-title" className="sf-h1">{presentation.title}</h1>
+          <p className="sf-lead">{presentation.copy}</p>
+        </div>
+        <div className="sf-pass__dates">
+          <div className="sf-pass__date"><small>Arrival</small><b>{formatStayDate(booking.checkInDate, { month: 'short', day: 'numeric' })}</b><span>{formatStayDate(booking.checkInDate, { weekday: 'long' })} · from {identity.checkIn}</span></div>
+          <div className="sf-pass__nights"><span><Moon aria-hidden="true" style={{ width: 14, display: 'inline', verticalAlign: '-2px' }} /> {booking.numberOfNights} {booking.numberOfNights === 1 ? 'night' : 'nights'}</span></div>
+          <div className="sf-pass__date"><small>Departure</small><b>{formatStayDate(booking.checkOutDate, { month: 'short', day: 'numeric' })}</b><span>{formatStayDate(booking.checkOutDate, { weekday: 'long' })} · by {identity.checkOut}</span></div>
+        </div>
+        <div className="sf-row" style={{ gap: 10 }}>
+          <CopyReference value={booking.confirmationNumber} />
+          <span className="sf-badge"><CreditCard aria-hidden="true" />Payment: {booking.paymentStatus?.replaceAll('_', ' ') || 'not available'}</span>
+        </div>
+      </div>
+      <div className="sf-pass__media">
+        <img src={primaryRoomImage(assignment?.roomType)} alt={assignment?.roomType?.roomImages?.[0]?.altText || assignment?.roomType?.name || 'Reserved accommodation'} />
+        <div className="sf-media__badges" style={{ top: 'auto', bottom: 16 }}><span className="sf-badge sf-badge--onphoto">{assignment?.roomType?.name || 'Accommodation'}{assignment?.roomNumber ? ` · Room ${assignment.roomNumber}` : ''}</span></div>
+      </div>
+    </article>
+
+    <div className="sf-stack" style={{ '--stack': '12px', marginTop: 20 } as React.CSSProperties}>
+      {error && <Notice tone="warn" role="alert">{error} The details below are from the last successful refresh.</Notice>}
+      {booking.status === 'pending' && <Notice tone="warn" title="Still awaiting confirmation">
+        <p>Room availability and payment must be checked again by the reservation service. If you already paid, review the statement and refresh before retrying payment.</p>
+        <div className="sf-row"><Link href={`/book?bookingId=${encodeURIComponent(booking.id)}`} className="sf-btn sf-btn--sm">Review existing booking payment</Link></div>
+      </Notice>}
+      {booking.status === 'confirmed' && typeof booking.balanceDue === 'number' && booking.balanceDue > 0 && <Notice tone="accent" title="A balance remains on this reservation." className="sf-noprint">
+        <p>The reservation currently shows {bookingAmount(booking.balanceDueMinor, booking.balanceDue, booking.currencyCode)} remaining. Review the statement, then check the current collectible amount before continuing payment.</p>
+        <div className="sf-row"><Link href={`/book?bookingId=${encodeURIComponent(booking.id)}`} className="sf-btn sf-btn--sm sf-btn--ghost">Check current payment amount</Link></div>
+      </Notice>}
+      {Boolean(booking.refundPendingMinor) && <Notice tone="info" role="status" title="Refund awaiting settlement">{bookingAmount(booking.refundPendingMinor, null, booking.currencyCode)} has not yet been recorded as a completed refund. Check your statement or contact the property.</Notice>}
+      {modificationSuccess && <Notice tone="success" role="status">{modificationSuccess}</Notice>}
+      {booking.changeRequest && <ChangeRequestNotice request={booking.changeRequest} />}
+      {!account && <Notice tone="accent" title="Keep this stay in a guest account" className="sf-noprint">
+        <p>Create an account with {booking.guestEmail ? 'this reservation’s email' : 'your booking email'} and this stay is added to it, along with your future bookings.</p>
+        <div className="sf-row">
+          <Link href={`/account?mode=create&next=${encodeURIComponent(`/booking/${booking.id}`)}${booking.guestEmail ? `&email=${encodeURIComponent(booking.guestEmail)}` : ''}`} className="sf-btn sf-btn--sm">Create an account</Link>
+          <Link href={`/account?next=${encodeURIComponent(`/booking/${booking.id}`)}${booking.guestEmail ? `&email=${encodeURIComponent(booking.guestEmail)}` : ''}`} className="sf-link">Sign in</Link>
+        </div>
+      </Notice>}
+    </div>
+
+    <nav aria-label="Reservation sections" className="sf-tabs sf-noprint" style={{ marginTop: 28, marginInline: 'calc(var(--sf-gutter) * -1)', paddingInline: 'var(--sf-gutter)' }}>
+      <div className="sf-tabs__row">{SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} aria-current={active === id ? 'true' : undefined}>{label}</a>)}</div>
+    </nav>
+
+    <div className="sf-reservation" style={{ paddingTop: 32 }}>
+      <div style={{ minWidth: 0 }}>
+        <section id="stay" className="sf-block">
+          <div className="sf-block__head"><p className="sf-eyebrow">The essentials</p><h2 className="sf-h2">Your dates, <em>your room.</em></h2></div>
+          <dl className="sf-dl">
+            <div><dt>Arrival</dt><dd>{formatStayDate(booking.checkInDate)}</dd></div>
+            <div><dt>Departure</dt><dd>{formatStayDate(booking.checkOutDate)}</dd></div>
+            <div><dt>Length of stay</dt><dd>{booking.numberOfNights} {booking.numberOfNights === 1 ? 'night' : 'nights'}</dd></div>
+            <div><dt>Party</dt><dd>{partyLabel}</dd></div>
+            <div><dt>Guest</dt><dd>{booking.guestName}</dd></div>
+            <div><dt>Booking contact</dt><dd style={{ overflowWrap: 'anywhere' }}>{booking.guestEmail || 'Held by the property'}{booking.guestPhone && <span style={{ display: 'block', fontWeight: 400 }}>{booking.guestPhone}</span>}</dd></div>
+            {booking.roomAssignments?.length ? booking.roomAssignments.map(item => <div key={item.id}><dt>Accommodation</dt><dd>{item.roomType?.name || 'Accommodation'}{item.roomNumber && <span style={{ display: 'block', fontWeight: 400 }}>Room {item.roomNumber}</span>}</dd></div>)
+              : <div><dt>Accommodation</dt><dd style={{ fontWeight: 400 }}>Room assignment details are not available. Contact the property for help.</dd></div>}
+          </dl>
+          {booking.specialRequests && <div className="sf-panel sf-pad" style={{ marginTop: 22 }}>
+            <h3 className="sf-h4">Your requests</h3>
+            <p className="sf-muted" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 8 }}>{booking.specialRequests}</p>
+            <p className="sf-fine" style={{ marginTop: 10 }}>Requests are subject to confirmation by the property.</p>
+          </div>}
+          <div style={{ marginTop: 28 }}>
+            {booking.bookedStayTerms ? <BookedStayTermsPanel terms={booking.bookedStayTerms} /> : <section aria-label="Recorded booking amounts" className="sf-card sf-pad">
+              <div className="sf-bill__total" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}><b>Recorded booking total<small>From the saved booking record, not a current quote</small></b><span className="sf-amount">{bookingAmount(booking.totalAmountMinor, booking.totalAmount, booking.currencyCode)}</span></div>
+              <p className="sf-fine" style={{ marginTop: 12 }}>The original rate breakdown is unavailable. Payments and the current balance are shown separately.</p>
+              <div className="sf-bill" style={{ marginTop: 10 }}>
+                {(booking.roomRateMinor != null || booking.roomRate != null) && <div className="sf-bill__row"><span>Recorded room subtotal</span><span>{bookingAmount(booking.roomRateMinor, booking.roomRate, booking.currencyCode)}</span></div>}
+                {(booking.taxAmountMinor != null || booking.taxAmount != null) && <div className="sf-bill__row"><span>Recorded taxes</span><span>{bookingAmount(booking.taxAmountMinor, booking.taxAmount, booking.currencyCode)}</span></div>}
+                {(booking.feesAmountMinor != null || booking.feesAmount != null) && <div className="sf-bill__row"><span>Recorded fees</span><span>{bookingAmount(booking.feesAmountMinor, booking.feesAmount, booking.currencyCode)}</span></div>}
+              </div>
+            </section>}
+          </div>
+        </section>
+
+        <GuestFolioPanel bookingId={booking.id} refreshKey={revision} />
+
+        <section id="manage" className="sf-block sf-noprint">
+          <div className="sf-block__head"><p className="sf-eyebrow">Trip tools</p><h2 className="sf-h2">Make a plan. <em>Keep it close.</em></h2></div>
+          <div className="sf-actions">
+            <button type="button" className="sf-action" onClick={() => window.print()}><Printer aria-hidden="true" /><span>Print stay details<small>Reservation and statement</small></span></button>
+            {activeStay && <button type="button" className="sf-action" onClick={() => generateCalendarFile(booking, identity)}><CalendarPlus aria-hidden="true" /><span>Add to calendar<small>Download an .ics file</small></span></button>}
+            {canRequest && <>
+              {changePending ? <div className="sf-action" aria-disabled="true"><PenLine aria-hidden="true" /><span>Change request pending<small>Waiting for the property to review</small></span></div> : <Dialog.Root open={showModifyDialog} onOpenChange={open => { if (modifyFlight.current) return; setShowModifyDialog(open); if (open) setModificationError(''); }}>
+                <Dialog.Trigger asChild><button type="button" className="sf-action"><PenLine aria-hidden="true" /><span>Request a change<small>Reviewed by the property</small></span></button></Dialog.Trigger>
+                <Dialog.Portal>
+                  <Dialog.Overlay className="sf-overlay" />
+                  <Dialog.Content className="sf-dialog sf-portal">
+                    <div className="sf-dialog__head">
+                      <div><Dialog.Title className="sf-h3">Request a stay change</Dialog.Title><Dialog.Description>The property reviews your request against availability and rate terms. Your current dates remain in effect until a change is confirmed.</Dialog.Description></div>
+                      <Dialog.Close className="sf-iconbtn" aria-label="Close" disabled={isRequestingModification}><X aria-hidden="true" /></Dialog.Close>
+                    </div>
+                    <form onSubmit={handleRequestModification} className="sf-stack" style={{ '--stack': '18px' } as React.CSSProperties}>
+                      <fieldset disabled={isRequestingModification} className="sf-stack" style={{ '--stack': '16px' } as React.CSSProperties}>
+                        <legend className="sf-sr">Requested change</legend>
+                        <div className="sf-field">
+                          <span className="sf-label">Requested dates <small>(optional)</small></span>
+                          <div className="sf-stay-frame">
+                            <StayPicker labels={{ checkIn: 'Arrival', checkOut: 'Departure' }} checkIn={modificationForm.requestedCheckInDate} checkOut={modificationForm.requestedCheckOutDate} today={propertyToday(identity.timeZone)}
+                              onChange={range => setModificationForm(previous => ({ ...previous, requestedCheckInDate: range.checkIn, requestedCheckOutDate: range.checkOut }))} />
+                          </div>
+                        </div>
+                        <label className="sf-field" htmlFor="modificationMessage"><span className="sf-label">What would you like to change?</span><textarea id="modificationMessage" rows={4} maxLength={4000} value={modificationForm.message} onChange={event => setModificationForm(previous => ({ ...previous, message: event.target.value }))} className="sf-textarea" /></label>
+                      </fieldset>
+                      {modificationError && <Notice tone="danger" role="alert">{modificationError}</Notice>}
+                      <div className="sf-row">
+                        <button type="submit" disabled={isRequestingModification} className="sf-btn">{isRequestingModification ? 'Sending request…' : 'Send change request'}</button>
+                        <button type="button" disabled={isRequestingModification} onClick={() => setShowModifyDialog(false)} className="sf-btn sf-btn--ghost">Close</button>
+                      </div>
+                    </form>
+                  </Dialog.Content>
+                </Dialog.Portal>
+              </Dialog.Root>}
+              <Dialog.Root open={showCancelDialog} onOpenChange={open => { if (cancelFlight.current) return; setShowCancelDialog(open); if (open) void loadCancellationQuote(); }}>
+                <Dialog.Trigger asChild><button type="button" className="sf-action sf-action--danger"><CalendarX2 aria-hidden="true" /><span>Review cancellation<small>See the current terms first</small></span></button></Dialog.Trigger>
+                <Dialog.Portal>
+                  <Dialog.Overlay className="sf-overlay" />
+                  <Dialog.Content className="sf-dialog sf-portal">
+                    <div className="sf-dialog__head">
+                      <div><Dialog.Title className="sf-h3">Review before cancelling</Dialog.Title><Dialog.Description>These are the current terms for this reservation. A cancellation may leave a fee or balance due. A refund is complete only after settlement is recorded.</Dialog.Description></div>
+                      <Dialog.Close className="sf-iconbtn" aria-label="Close" disabled={isCancelling}><X aria-hidden="true" /></Dialog.Close>
+                    </div>
+                    <div className="sf-stack" style={{ '--stack': '16px' } as React.CSSProperties}>
+                      {quoteLoading ? <div role="status" aria-label="Checking your cancellation terms" className="sf-stack"><Skeleton height={18} /><Skeleton height={110} radius={14} /></div> : cancellationQuote ? <>
+                        <p>{cancellationQuote.summary}</p>
+                        {cancellationQuote.fullRefundDeadline && Number.isFinite(Date.parse(cancellationQuote.fullRefundDeadline)) && <p className="sf-small sf-muted"><b>Full-refund deadline:</b> <time dateTime={cancellationQuote.fullRefundDeadline}>{new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' }).format(new Date(cancellationQuote.fullRefundDeadline))}</time>. The deadline above is shown in UTC.</p>}
+                        <dl className="sf-dl sf-panel" style={{ padding: '4px 18px' }}>
+                          <div><dt>Estimated refund</dt><dd>{money(cancellationQuote.refundableMinor, cancellationQuote.currencyCode)}</dd></div>
+                          <div><dt>Cancellation fee</dt><dd>{money(cancellationQuote.cancellationFeeMinor, cancellationQuote.currencyCode)}</dd></div>
+                          <div><dt>Captured payments</dt><dd>{money(cancellationQuote.capturedMinor, cancellationQuote.currencyCode)}</dd></div>
+                        </dl>
+                        {!cancellationQuote.canCancel && <Notice tone="warn">Online cancellation is not available for the current reservation state. Contact the property for help.</Notice>}
+                      </> : null}
+                      {cancelError && <Notice tone="danger" role="alert">{cancelError}</Notice>}
+                      {!cancellationQuote && !quoteLoading && <button type="button" className="sf-btn sf-btn--ghost sf-btn--sm" onClick={loadCancellationQuote}><RefreshCw aria-hidden="true" />Retry policy check</button>}
+                      <div className="sf-row">
+                        <button type="button" className="sf-btn sf-btn--ghost" disabled={isCancelling} onClick={() => setShowCancelDialog(false)}>Keep reservation</button>
+                        <button type="button" className="sf-btn sf-btn--danger" disabled={isCancelling || quoteLoading || !cancellationQuote?.canCancel} onClick={handleCancelBooking}>{isCancelling ? 'Processing request…' : 'Confirm cancellation'}</button>
+                      </div>
+                    </div>
+                  </Dialog.Content>
+                </Dialog.Portal>
+              </Dialog.Root>
+            </>}
+            <Link href="/contact?subject=modification" className="sf-action"><MessageCircle aria-hidden="true" /><span>Ask the property<small>Send the team a note</small></span></Link>
+          </div>
+          <p className="sf-fine" style={{ marginTop: 16 }}>{canRequest ? 'A change request does not alter your booking immediately. Review cancellation terms separately before making a final decision.' : 'For this reservation status, contact the property about changes or arrival arrangements.'}</p>
+          <div className="sf-stack" style={{ '--stack': '14px', marginTop: 28 } as React.CSSProperties}>
+            <GuestLoyaltyPanel bookingId={booking.id} />
+            <SecurityAuthorizationPanel bookingId={booking.id} />
+          </div>
+        </section>
+
+        <section id="arrival" className="sf-block">
+          <div className="sf-block__head"><p className="sf-eyebrow">Arrival & help</p><h2 className="sf-h2">Before <em>you arrive.</em></h2></div>
+          <div className="sf-times" style={{ maxWidth: 520 }}><div><small>Check-in from</small><b>{identity.checkIn}</b></div><div><small>Check-out by</small><b>{identity.checkOut}</b></div></div>
+          <p className="sf-body" style={{ marginTop: 16 }}>Published arrival time: {identity.checkIn}. Departure: {identity.checkOut}. Contact the property to confirm special arrangements.</p>
+          {identity.hours && <p className="sf-body" style={{ marginTop: 8 }}>{identity.hours}</p>}
+          <p className="sf-fine" style={{ marginTop: 10 }}>The property’s current guidance is shown here. For terms specific to your reservation, contact the team with reference {booking.confirmationNumber}.</p>
+          <div className="sf-row sf-noprint" style={{ marginTop: 16, gap: '8px 24px' }}><Link href="/location" className="sf-link">Plan your arrival</Link><Link href="/policies" className="sf-link">Read about rates and policies</Link></div>
+        </section>
+        <p className="sf-fine" style={{ borderTop: '1px solid var(--line)', paddingTop: 20 }}>Confirmation email delivery: {booking.confirmationDeliveryStatus?.replaceAll('_', ' ') || 'not recorded'}. Email delivery does not determine your reservation or payment status.</p>
+      </div>
+
+      <aside className="sf-reservation__aside" aria-label={`Contact ${identity.name}`}>
+        <div className="sf-card sf-pad sf-stack" style={{ '--stack': '14px' } as React.CSSProperties}>
+          <p className="sf-eyebrow sf-eyebrow--plain">Your hosts</p>
+          <h2 className="sf-h3">{identity.name}</h2>
+          {identity.address.line1 && <p className="sf-row sf-small sf-muted" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}><MapPin aria-hidden="true" style={{ width: 16, flex: 'none', marginTop: 3 }} /><span>{identity.address.line1}{identity.address.line2 && <><br />{identity.address.line2}</>}</span></p>}
+          {phone && <a href={`tel:${phone}`} className="sf-btn sf-btn--ghost sf-btn--block sf-noprint"><Phone aria-hidden="true" />{identity.phone}</a>}
+          {identity.email && <a href={`mailto:${identity.email}`} className="sf-btn sf-btn--soft sf-btn--block sf-noprint" style={{ whiteSpace: 'normal' }}><Mail aria-hidden="true" />Email the property</a>}
+          <Link href="/location" className="sf-link sf-noprint">Plan your arrival</Link>
+        </div>
+      </aside>
+    </div>
+  </div>;
+}
+
+function ChangeRequestNotice({ request }: { request: GuestChangeRequest }) {
+  const dates = request.requestedCheckInDate && request.requestedCheckOutDate
+    ? `${formatStayDate(request.requestedCheckInDate)} to ${formatStayDate(request.requestedCheckOutDate)}`
+    : null;
+  const sent = request.createdAt ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(request.createdAt)) : null;
+  if (request.status === 'pending') return <Notice tone="info" role="status" title="Change request pending review">
+    <p>{dates ? `Requested dates: ${dates}.` : 'Your requested change is with the property.'}{sent ? ` Sent ${sent}.` : ''} Your current dates stay in effect until the property confirms a change.</p>
+    {request.guestMessage && <p className="sf-small sf-muted" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{request.guestMessage}</p>}
+  </Notice>;
+  const approved = request.status === 'approved';
+  return <Notice tone={approved ? 'success' : 'warn'} title={approved ? 'Change request approved' : 'Change request declined'}>
+    <p>{approved ? `The property approved your request${dates ? ` for ${dates}` : ''}. The dates and amounts above are the updated reservation.` : 'The property could not make this change. Your reservation dates are unchanged.'}</p>
+    {request.propertyNote && <p className="sf-small" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>Note from the property: {request.propertyNote}</p>}
+  </Notice>;
 }

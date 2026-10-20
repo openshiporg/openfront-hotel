@@ -1,5 +1,3 @@
-import { redirect } from 'next/navigation';
+import { SignUpPage } from "@/features/dashboard/screens/SignUpPage";
 
-export default function SignUpPage() {
-  redirect('/dashboard/signin');
-}
+export default SignUpPage;

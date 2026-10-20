@@ -173,11 +173,13 @@ export const RoomType = list({
       ui: {
         displayMode: 'cards',
         cardFields: ['image', 'imagePath', 'altText', 'caption', 'order', 'isPrimary'],
-        inlineCreate: { fields: ['image', 'imagePath', 'altText', 'caption', 'order', 'isPrimary'] },
+        // Every image belongs to exactly one room type, and the shared inline-create card
+        // cannot link a new child to its parent. Images are created from Room Images with
+        // the room type chosen, then edited here; each card opens its full record.
         inlineEdit: { fields: ['image', 'imagePath', 'altText', 'caption', 'order', 'isPrimary'] },
         inlineConnect: true,
-        removeMode: 'disconnect',
-        linkToItem: false,
+        removeMode: 'none',
+        linkToItem: true,
       },
       label: 'Storefront images',
     }),

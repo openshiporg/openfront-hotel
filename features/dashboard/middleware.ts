@@ -1,11 +1,8 @@
-import { safeDashboardReturnPath } from './lib/safeDashboardReturnPath';
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { getGraphQLEndpoint } from "@/features/dashboard/lib/getBaseUrl";
 import { GraphQLClient } from 'graphql-request';
-import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
-
-const boundedGraphqlFetch = createBoundedGraphqlFetch(8_000);
+import { safeErrorSummary, sanitizeDashboardRedirect } from './lib/security';
 
 const basePath = "/dashboard";
 
@@ -14,8 +11,8 @@ async function createMiddlewareGraphQLClient(headers: Record<string, string>): P
   const endpoint = await getGraphQLEndpoint();
   return new GraphQLClient(endpoint, {
     credentials: 'include',
+    redirect: 'error',
     headers,
-    fetch: boundedGraphqlFetch,
   });
 }
 
@@ -35,10 +32,9 @@ export async function checkInitStatus(request: NextRequest) {
     const client = await createMiddlewareGraphQLClient(headers);
     const data = await client.request(query) as { redirectToInit: boolean };
     return data.redirectToInit;
-  } catch {
-    console.error('Dashboard initialization status unavailable; applying the configured fail-closed redirect behavior.');
-    // Hotel fresh installs fail closed until initialization status is known.
-    return process.env.NODE_ENV === 'production';
+  } catch (error) {
+    console.error("Error checking init status:", safeErrorSummary(error));
+    return false;
   }
 }
 
@@ -73,9 +69,10 @@ export async function getAuthenticatedUser(request: NextRequest) {
       user: data.authenticatedItem,
       redirectToInit: data.redirectToInit
     };
-  } catch {
-    console.error('Dashboard authentication status unavailable; treating the request as unauthenticated.');
-    return { user: null, redirectToInit: process.env.NODE_ENV === 'production' };
+  } catch (error) {
+    console.error("Auth check failed:", safeErrorSummary(error));
+    
+    return { user: null, redirectToInit: false };
   }
 }
 
@@ -123,7 +120,7 @@ export async function handleDashboardRoutes(
   // Handle authenticated users trying to access signin
   if (user && (isSigninRoute || isResetRoute)) {
     if (fromPath && !fromPath.includes("no-access")) {
-      return NextResponse.redirect(new URL(safeDashboardReturnPath(fromPath), request.url));
+      return NextResponse.redirect(new URL(sanitizeDashboardRedirect(fromPath), request.url));
     }
     return NextResponse.redirect(new URL(basePath, request.url));
   }

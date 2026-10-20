@@ -1,7 +1,6 @@
 "use server";
 
 import { keystoneClient, type KeystoneResponse } from "@/features/dashboard/lib/keystoneClient";
-import { safeGraphQLError, safeGraphQLLog } from "@/features/dashboard/lib/safeGraphQLError";
 
 // Relationship Options Server Action
 export async function getRelationshipOptions(
@@ -38,8 +37,10 @@ export async function getRelationshipOptions(
     // Return the entire response object directly
     return response;
   } catch (error) {
-    console.error("Error fetching relationship options:", safeGraphQLLog(error));
-    return { success: false, error: safeGraphQLError(error).message } as KeystoneResponse<any>;
+    console.error("Dashboard operation failed (details redacted).");
+    const errorMessage =
+      "An unexpected error occurred while fetching relationship options";
+    return { success: false, error: errorMessage } as KeystoneResponse<any>;
   }
 }
 

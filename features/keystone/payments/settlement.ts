@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { ensurePaymentFolioPosting, getBookingCollectibleBalance } from '../folios/bookingFolio';
 import { recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
 import { queueBookingCommunication } from '../communications/commands';
@@ -395,13 +396,27 @@ export async function retireBookingPaymentSession(context: any, sessionId: strin
 }
 
 export async function dispatchPaymentSessionRetirements(context: any) {
-  const sessions = await context.prisma.bookingPaymentSession.findMany({
+  // Only attempts that are due now are selected, before the batch limit, so retirements still
+  // backing off can never fill the batch and hold back a newer one that is ready.
+  const due: Array<{ id: string }> = await context.prisma.$queryRaw(Prisma.sql`
+    SELECT "id" FROM "BookingPaymentSession"
+    WHERE "data"->'retirement'->>'status' IN ('pending', 'failed')
+      AND (
+        "data"->'retirement'->>'nextAttemptAt' IS NULL
+        OR CASE WHEN "data"->'retirement'->>'nextAttemptAt' ~ '^\\d{4}-\\d{2}-\\d{2}T'
+          THEN ("data"->'retirement'->>'nextAttemptAt')::timestamptz <= now() ELSE true END
+      )
+    ORDER BY "updatedAt" ASC, "id" ASC
+    LIMIT 20
+  `);
+  const backingOff = await context.prisma.bookingPaymentSession.count({
     where: { OR: [{ data: { path: ['retirement', 'status'], equals: 'pending' } }, { data: { path: ['retirement', 'status'], equals: 'failed' } }] },
-    orderBy: { updatedAt: 'asc' }, take: 20,
-  });
-  let unresolved = 0;
+  }) - due.length;
+  const sessions = due.length
+    ? await context.prisma.bookingPaymentSession.findMany({ where: { id: { in: due.map((row) => row.id) } }, orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }] })
+    : [];
+  let unresolved = Math.max(0, backingOff);
   for (const session of sessions) {
-    if (session.data?.retirement?.nextAttemptAt && new Date(session.data.retirement.nextAttemptAt) > new Date()) { unresolved += 1; continue; }
     const status = await retireBookingPaymentSession(context, session.id, session.bookingId);
     if (status === 'failed') unresolved += 1;
   }

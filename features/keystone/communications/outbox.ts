@@ -152,6 +152,25 @@ export async function claimHotelOutboxEvents(
     }
   }
 
+  // A claim that expired after its last allowed attempt was dispatched has an unknown outcome:
+  // it goes to dead letter for a reviewed replay instead of being sent again past the budget.
+  const exhausted = await prisma.$queryRaw(Prisma.sql`
+    UPDATE "HotelOutboxEvent"
+    SET "status"='dead_letter', "deadLetteredAt"=COALESCE("deadLetteredAt", ${now}),
+        "lastError"=${`${HOTEL_OUTBOX_UNKNOWN_DELIVERY_PREFIX} the last allowed attempt did not finish; verify receipt before replay.`},
+        "leaseToken"='', "leaseExpiresAt"=NULL, "updatedAt"=${now}
+    WHERE "propertyKey"=${propertyKey} AND "status"='processing'
+      AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" <= ${now})
+      AND "attempts" >= "maxAttempts"
+    RETURNING "id", "attempts"
+  `) as Array<{ id: string; attempts: number }>;
+  for (const event of exhausted) {
+    await prisma.hotelOutboxAttempt.updateMany({
+      where: { outboxId: event.id, attemptNumber: event.attempts, status: 'failed' },
+      data: { errorMessage: `${HOTEL_OUTBOX_UNKNOWN_DELIVERY_PREFIX} lease expired on the last allowed attempt.`, finishedAt: now },
+    });
+  }
+
   const claimed = await prisma.$queryRaw(Prisma.sql`
     WITH candidates AS (
       SELECT "id"
@@ -161,6 +180,7 @@ export async function claimHotelOutboxEvents(
           ("status" IN ('pending', 'failed') AND "availableAt" <= ${now})
           OR ("status" = 'processing' AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" <= ${now}) ${ambiguousProcessingFilter})
         )
+        AND "attempts" < "maxAttempts"
         ${topicFilter}
       ORDER BY "availableAt" ASC, "createdAt" ASC, "id" ASC
       FOR UPDATE SKIP LOCKED
@@ -266,9 +286,17 @@ export async function dispatchHotelOutboxBatch(
   handler: OutboxHandler,
 ): Promise<OutboxDispatchResult> {
   const ambiguousTopics = normalizeTopics(options.ambiguousTopics);
+  const leaseMs = boundedInt(options.leaseMs, OUTBOX_DEFAULT_LEASE_MS, 1_000, 15 * 60_000);
   const events = await claimHotelOutboxEvents(prisma, { ...options, ambiguousTopics });
   const result: OutboxDispatchResult = { delivered: 0, retried: 0, deadLettered: 0, skipped: 0 };
   for (const event of events) {
+    // Items run one after another; renew this item's own lease immediately before sending so a
+    // later item is never sent on a claim that has already expired and passed to another worker.
+    const renewed = await prisma.hotelOutboxEvent.updateMany({
+      where: { id: event.id, propertyKey: event.propertyKey, status: 'processing', leaseToken: event.leaseToken },
+      data: { leaseExpiresAt: new Date(Date.now() + leaseMs), updatedAt: new Date() },
+    });
+    if (renewed.count !== 1) { result.skipped += 1; continue; }
     let response: unknown;
     try {
       response = await handler(event);
@@ -490,6 +518,9 @@ export function createHttpOutboxHandler(options: {
         'x-openfront-outbox-signature': signature,
       },
       body,
+      // The signed guest payload goes only to the configured receiver; a redirect is a failure,
+      // never a new recipient.
+      redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw new Error(`Outbox receiver returned HTTP ${response.status}.`);

@@ -1,12 +1,29 @@
 import 'server-only';
 
 import type { KeystoneResponse } from '@/features/dashboard/lib/keystoneClient';
+import { safeActionMessage, safeGraphQLError } from '@/features/platform/lib/safeGraphQLError';
+import type { ActionResult } from './actionOutcome';
 
 export const HOTEL_PROPERTY_KEY = 'the-alder-house';
 
+/** The shared Openfront client appends paths and codes for developers; staff see only the business rule. */
 export function requireActionData<T>(response: KeystoneResponse<T>): T {
-  if (!response.success) throw new Error(response.error || 'The request could not be completed.');
+  if (!response.success) {
+    const errors = Array.isArray(response.errors) ? response.errors : [];
+    throw new Error(errors.length ? safeGraphQLError({ response: { errors } }).message : 'The request could not be completed.');
+  }
   return response.data;
+}
+
+const ACTION_FALLBACK = 'The request could not be completed. Refresh and review the record before trying again.';
+
+/** Run a mutation and return its failure as a value so staff see the actual reason. */
+export async function toActionResult<T>(operation: () => Promise<T>, fallback = ACTION_FALLBACK): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, data: await operation() };
+  } catch (error) {
+    return { ok: false, message: safeActionMessage(error, fallback) };
+  }
 }
 
 export function boundedId(value: unknown, label = 'ID'): string {

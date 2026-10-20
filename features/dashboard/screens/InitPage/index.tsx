@@ -18,7 +18,7 @@ type ActionState = {
   formData: {
     name: string;
     email: string;
-    password: string;
+
   };
 };
 
@@ -45,7 +45,7 @@ const initialState: ActionState = {
   formData: {
     name: "",
     email: "",
-    password: "",
+
   },
 };
 
@@ -61,7 +61,6 @@ export function InitPage() {
           formData: {
             name: formData.get("name") as string,
             email: formData.get("email") as string,
-            password: formData.get("password") as string,
           },
         };
       }
@@ -72,7 +71,6 @@ export function InitPage() {
           message: null,
           formData: {
             email: formData.get("email") as string,
-            password: formData.get("password") as string,
           },
         },
         formData
@@ -83,7 +81,6 @@ export function InitPage() {
         formData: {
           name: formData.get("name") as string,
           email: formData.get("email") as string,
-          password: formData.get("password") as string,
         },
       };
     },
@@ -155,13 +152,11 @@ export function InitPage() {
                 autoComplete="new-password"
                 placeholder="••••••••"
                 className="pr-10 bg-muted/40"
-                defaultValue={state.formData.password}
+
                 required
               />
               <button
                 type="button"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                aria-controls="password"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-500"
               >

@@ -36,6 +36,10 @@ async function storefrontQuote(
     depositPercent: quote.depositPercent,
     pricingVersion: quote.pricingVersion,
     quoteToken: quote.quoteToken,
+    // A code only changes promotional rates; say so instead of silently ignoring it.
+    promoCodeApplied: String(args.promoCode || '').trim() ? Boolean(quote.ratePlan.isPromotional) : null,
+    // Same nights the signed quote binds; seasonal rule names stay internal.
+    nightlyRates: quote.nightlyRates.map(({ date, amountMinor }: { date: string; amountMinor: number }) => ({ date, amountMinor })),
   };
 }
 

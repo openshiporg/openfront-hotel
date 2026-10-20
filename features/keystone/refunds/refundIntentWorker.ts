@@ -262,7 +262,8 @@ export async function settleRefundIntent(context: any, intent: RefundIntentClaim
             paymentStatus: outstandingFeeMinor > 0 ? (netRetainedMinor > 0 ? 'partial' : 'unpaid') : netRetainedMinor === 0 ? 'refunded' : 'paid',
             balanceDueMinor: outstandingFeeMinor,
             balanceDue: outstandingFeeMinor / 100,
-            cancelledAt: new Date(),
+            // The cancellation happened when it was requested, not when the refund settled.
+            cancelledAt: booking.cancelledAt || cancellationAudit?.occurredAt || new Date(),
           },
         });
         await recomputeBookingPaymentState(prisma, current.bookingId);
@@ -289,10 +290,21 @@ export async function settleRefundIntent(context: any, intent: RefundIntentClaim
   }, { maxWait: 5_000, timeout: 30_000, isolationLevel: 'Serializable' });
 }
 
+// Longer than the worst case for one refund: two provider calls of up to 20 seconds each.
+const REFUND_ITEM_LEASE_MS = 120_000;
+
 export async function dispatchRefundIntentBatch(context: any, options: { workerId: string; limit?: number }) {
   const intents = await claimRefundIntents(context.prisma, options);
   const result = { succeeded: 0, retried: 0, deadLettered: 0 };
   for (const intent of intents) {
+    // Refunds run one after another and each may make several provider calls; renew this
+    // intent's own lease right before its provider work, and leave it alone if another worker
+    // has taken it over after an expired claim.
+    const renewed = await context.prisma.refundIntent.updateMany({
+      where: { id: intent.id, status: 'processing', leaseToken: intent.leaseToken },
+      data: { leaseExpiresAt: new Date(Date.now() + REFUND_ITEM_LEASE_MS), updatedAt: new Date() },
+    });
+    if (renewed.count !== 1) continue;
     try {
       const [sourcePayment, provider] = await Promise.all([
         context.prisma.bookingPayment.findUnique({ where: { id: intent.sourcePaymentId } }),

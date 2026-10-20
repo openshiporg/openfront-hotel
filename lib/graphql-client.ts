@@ -22,6 +22,16 @@ export const graphqlClient = new GraphQLClient(getGraphQLEndpoint(), {
     graphqlFetch(input, { ...init, credentials: 'include' }),
 });
 
+// Payment settlement talks to the provider and retries serializable work, so it gets
+// longer than ordinary storefront reads before the browser stops waiting.
+const settlementFetch = createBoundedGraphqlFetch(45_000);
+
+export const graphqlSettlementClient = new GraphQLClient(getGraphQLEndpoint(), {
+  headers: {},
+  fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+    settlementFetch(input, { ...init, credentials: 'include' }),
+});
+
 export async function graphqlQuery<T>(query: string, variables?: any): Promise<T> {
   try {
     const client = typeof window === 'undefined'

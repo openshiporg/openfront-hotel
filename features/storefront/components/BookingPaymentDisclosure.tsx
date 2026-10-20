@@ -1,7 +1,13 @@
 import * as React from 'react';
+import { money } from '../lib/stay-context';
+
+/** What is collected now versus later. `paymentAmountMinor` comes from the live payment session when one exists. */
 export function BookingPaymentDisclosure({ totalMinor, depositPercent = 100, securityDepositMinor = 0, paymentAmountMinor, currencyCode = 'USD' }: { totalMinor: number; depositPercent?: number; securityDepositMinor?: number; paymentAmountMinor?: number | null; currencyCode?: string }) {
   const dueNow = paymentAmountMinor ?? Math.ceil(totalMinor * depositPercent / 100);
   const remaining = Math.max(0, totalMinor - dueNow);
-  const money = (minor: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(minor / 100);
-  return <section aria-label="Booking payment terms" className="space-y-3 text-sm"><div className="flex justify-between"><span>Due now{depositPercent < 100 ? ` (${depositPercent}% booking deposit)` : ''}</span><span>{money(dueNow)}</span></div>{remaining > 0 && <p>Remaining booking balance: {money(remaining)}, due at the property before departure.</p>}{securityDepositMinor > 0 && <p>Security card authorization: {money(securityDepositMinor)}, separate from the booking payment above. After confirmation, authorize this temporary card hold through your reservation details before arrival. The property releases the hold or applies an approved charge already recorded on your folio. Card authorization availability and expiry are determined by the provider.</p>}</section>;
+  return <section aria-label="Booking payment terms" className="sf-bill__pay">
+    <div><span>{paymentAmountMinor != null ? 'Payment amount' : 'Due when you book'}{paymentAmountMinor == null && depositPercent < 100 ? ` (${depositPercent}% deposit)` : ''}</span><span>{money(dueNow, currencyCode)}</span></div>
+    {remaining > 0 && <div><span>Balance, due at the property before departure</span><span>{money(remaining, currencyCode)}</span></div>}
+    {securityDepositMinor > 0 && <p>A separate security card authorization of {money(securityDepositMinor, currencyCode)} may be requested after confirmation, through your reservation, before arrival. It is a temporary hold, not part of the booking payment; the property releases it or applies an approved charge already recorded on your folio.</p>}
+  </section>;
 }

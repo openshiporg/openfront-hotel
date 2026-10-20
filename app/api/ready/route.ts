@@ -12,8 +12,7 @@ const prisma = globalForReadiness.hotelReadinessPrisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForReadiness.hotelReadinessPrisma = prisma;
 
 function realPropertyName(value: string | null | undefined) {
-  const name = String(value || '').trim();
-  return Boolean(name) && !/\b(?:grand hotel|openfront(?: hotel)?|acme|demo)\b/i.test(name);
+  return Boolean(String(value || '').trim());
 }
 
 function realContactEmail(value: string | null | undefined) {
@@ -30,7 +29,9 @@ export async function GET() {
     const [settings, clock, providers, sellableRate, activeChannel, enabledRateSync, enabledInventorySync, activeGroupBlock, openGroupFolio, activeGroupBooking] = await Promise.all([
       (prisma as any).hotelSettings.findUnique({ where: { id: 1 }, select: { groupsEnabled: true, timeZone: true, id: true, propertyName: true, contactEmail: true, contactPhone: true, addressLine1: true } }),
       prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { id: true, currentBusinessDate: true } }),
-      prisma.paymentProvider.findMany({ where: { code: { in: ['pp_stripe_stripe', 'pp_paypal_paypal'] }, isInstalled: true } }),
+      // Every supported online provider, judged by the same predicate checkout uses: an empty
+      // Stripe record can be configured from the deployment environment without isInstalled.
+      prisma.paymentProvider.findMany({ where: { code: { in: ['pp_stripe_stripe', 'pp_paypal_paypal'] } } }),
       prisma.ratePlan.findFirst({
         where: { status: 'active', isPublic: true, currencyCode: 'USD', roomType: { rooms: { some: { status: { notIn: ['maintenance', 'out_of_order'] } } } } },
         select: { id: true },
@@ -65,7 +66,9 @@ export async function GET() {
     const [stuckHold, stuckRefund, stuckOutbox] = await Promise.all([
       prisma.booking.findFirst({ where: { status: 'pending', holdExpiresAt: { lt: staleBefore } }, select: { id: true } }),
       prisma.refundIntent.findFirst({ where: { status: 'dead_letter' }, select: { id: true } }),
-      prisma.hotelOutboxEvent.findFirst({ where: { status: 'dead_letter' }, select: { id: true } }),
+      // A message that has been due for a while and is still waiting or retrying is a delivery
+      // problem even if the worker itself keeps running.
+      prisma.hotelOutboxEvent.findFirst({ where: { OR: [{ status: 'dead_letter' }, { status: { in: ['pending', 'failed'] }, availableAt: { lt: staleBefore } }] }, select: { id: true } }),
     ]);
     const recoveryClear = !stuckHold && !stuckRefund && !stuckOutbox;
     const configured = Boolean(
@@ -74,12 +77,12 @@ export async function GET() {
     );
     if (!configured) {
       return Response.json(
-        { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled } },
+        { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } },
         { status: 503, headers: { 'Cache-Control': 'no-store' } },
       );
     }
     return Response.json(
-      { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true } },
+      { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   } catch {

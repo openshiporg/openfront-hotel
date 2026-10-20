@@ -106,10 +106,11 @@ export default async function updateBookingStatus(
 
     const now = new Date();
     let folioId: string | null = null;
+    let earlyDeparture = false;
     if (status === 'checked_out') {
       const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
       if (!clock) throw new Error('Property business date is not configured.');
-      assertCheckoutDateReached(booking.checkOutDate, clock.currentBusinessDate);
+      earlyDeparture = assertCheckoutDateReached(booking.checkOutDate, clock.currentBusinessDate);
       if (booking.lineItems.some((line: any) => line.totalPrice > 0 && new Date(line.date) > clock.currentBusinessDate)) {
         throw new Error('Future reservation snapshots must be superseded or reconciled through the in-house stay amendment before check-out.');
       }
@@ -191,7 +192,7 @@ export default async function updateBookingStatus(
       identity,
       beforeSnapshot: { status: booking.status, roomStatuses: rooms.map((room: any) => ({ id: room.id, status: room.status })) },
       afterSnapshot: { status: updated.status, roomStatus: status === 'checked_in' ? 'occupied' : status === 'checked_out' ? 'cleaning' : null, folioId },
-      metadata: { confirmationNumber: booking.confirmationNumber, guestProfileId: booking.guestProfileId },
+      metadata: { confirmationNumber: booking.confirmationNumber, guestProfileId: booking.guestProfileId, ...(earlyDeparture ? { earlyDeparture: true, bookedDeparture: booking.checkOutDate, lastNightRetained: true } : {}) },
     });
     if (status === 'confirmed') {
       await queueBookingCommunication(prisma, {

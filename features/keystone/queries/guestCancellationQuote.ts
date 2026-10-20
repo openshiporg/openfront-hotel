@@ -33,6 +33,14 @@ export default async function guestCancellationQuote(
   const stayNights = Math.max(1, Math.round((booking.checkOutDate.getTime() - booking.checkInDate.getTime()) / 86_400_000));
   const bookingTotalMinor = Number(booking.totalAmountMinor || Math.round(Number(booking.totalAmount || 0) * 100));
   const firstNightMinor = Number(firstRoomNight?.totalPrice || 0) || Math.ceil(bookingTotalMinor / stayNights);
+  // A channel reservation without recorded terms is cancelled through the channel.
+  if (!policy && booking.source === 'ota') {
+    return {
+      policy: 'flexible', refundableMinor: 0, cancellationFeeMinor: 0, capturedMinor,
+      summary: 'This reservation was booked through a channel. Cancel it with the channel; its own terms apply.',
+      fullRefundDeadline: null, canCancel: false, currencyCode: booking.currencyCode || 'USD',
+    };
+  }
   const terms = calculateCancellationTerms({
     policy,
     checkInDate: (booking.pricingSnapshot as any)?.arrivalInstant || booking.checkInDate,
