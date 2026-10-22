@@ -1,3 +1,4 @@
+import { s3ForcePathStyle } from "./lib/s3-storage";
 import { createAuth } from "@keystone-6/auth";
 import { config } from "@keystone-6/core";
 import "dotenv/config";
@@ -150,7 +151,7 @@ const baseConfig = config({
       secretAccessKey,
       endpoint,
       signed: { expiry: 5000 },
-      forcePathStyle: true,
+      forcePathStyle: s3ForcePathStyle(endpoint),
     } : {
       kind: 'local' as const,
       type: 'image' as const,
