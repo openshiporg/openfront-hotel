@@ -1,11 +1,7 @@
+# Railway can't access internal databases during build, so we move
+# npm run migrate from build to start command
 [build]
-builder = "RAILPACK"
 buildCommand = "keystone build --no-ui && next build"
 
 [deploy]
-# Match the canonical Openfront E-commerce/Restaurant migration-start grammar.
 startCommand = "npm run migrate && next start"
-# Liveness permits first-admin/property setup on a fresh database. Do not open
-# public booking traffic until the stricter /api/ready endpoint returns 200.
-healthcheckPath = "/api/health"
-healthcheckTimeout = 300
