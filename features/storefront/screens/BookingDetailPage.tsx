@@ -17,7 +17,7 @@ import { useHotelSettings } from '@/features/storefront/components/HotelSettings
 import { useGuestAccount } from '@/features/storefront/components/GuestAccountProvider';
 import type { HotelIdentity } from '@/features/storefront/lib/hotel-settings';
 import { operationAttempt } from '@/lib/operationAttempt';
-import { calendarDay, stayNights, reservationPresentation, money } from '../lib/stay-context';
+import { calendarDay, stayNights, reservationPresentation, money, paymentStatusLabel } from '../lib/stay-context';
 import { BookedStayTermsPanel } from '../components/BookedStayTermsPanel';
 import type { StayPriceSummary } from '@/lib/types';
 import { modificationDateToIso, safeGuestWorkflowFailure } from '@/features/storefront/lib/qa-workflows';
@@ -310,7 +310,7 @@ export default function BookingDetailPage() {
         </div>
         <div className="sf-row" style={{ gap: 10 }}>
           <CopyReference value={booking.confirmationNumber} />
-          <span className="sf-badge"><CreditCard aria-hidden="true" />Payment: {booking.refundPendingMinor ? 'refund pending' : booking.paymentStatus?.replaceAll('_', ' ') || 'not available'}</span>
+          <span className="sf-badge"><CreditCard aria-hidden="true" />Payment: {paymentStatusLabel(booking.paymentStatus, booking.refundPendingMinor) || 'not available'}</span>
         </div>
       </div>
       <div className="sf-pass__media">

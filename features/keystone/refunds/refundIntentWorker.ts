@@ -184,13 +184,16 @@ export async function settleRefundIntent(context: any, intent: RefundIntentClaim
       }
       if (current.sourcePayment.paymentMethod === 'cash') cashierShiftId = await assertActiveCashierShift(prisma, context.session.itemId, sourceCurrencyCode);
     }
-    const refundId = `refund_${createHash('sha256').update(current.intentKey).digest('hex').slice(0, 24)}`;
+    const refundHash = createHash('sha256').update(current.intentKey).digest('hex');
+    const refundId = `refund_${refundHash.slice(0, 24)}`;
     let refund = await prisma.bookingPayment.findUnique({ where: { id: refundId }, include: { booking: true } });
     if (refund) assertExistingRefundPaymentMatchesIntent(refund, current, providerRefundId);
     if (!refund) {
       refund = await prisma.bookingPayment.create({
         data: {
           id: refundId,
+          // paymentReference is unique; left empty, every refund after the first collides and never settles.
+          paymentReference: `RFD-${refundHash.slice(0, 16).toUpperCase()}`,
           bookingId: current.bookingId,
           paymentProviderId: current.paymentProviderId,
           amountMinor: -current.amountMinor,
@@ -321,6 +324,15 @@ export async function dispatchRefundIntentBatch(context: any, options: { workerI
             idempotencyKey: intent.intentKey,
             metadata: { bookingId: intent.bookingId, sourcePaymentId: intent.sourcePaymentId, refundIntentKey: intent.intentKey },
           });
+      // Keep the provider's refund identity before settling. If settlement fails, the retry polls
+      // this refund instead of asking for a new one after the provider's idempotency window ends.
+      const providerRefundId = String(providerResult?.data?.id || providerResult?.data?.refund_id || '').trim();
+      if (!intent.providerRefundId && providerRefundId) {
+        await context.prisma.refundIntent.updateMany({
+          where: { id: intent.id, status: 'processing', leaseToken: intent.leaseToken },
+          data: { providerRefundId },
+        });
+      }
       const outcome = await settleRefundIntent(context, intent, providerResult);
       if (outcome.settled) result.succeeded += 1;
       else if (outcome.failed) result.deadLettered += 1;

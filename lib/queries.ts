@@ -298,6 +298,7 @@ export const VERIFY_GUEST_BOOKING = gql`
       balanceDue
       status
       paymentStatus
+      refundPendingMinor
       specialRequests
       roomAssignments {
         id

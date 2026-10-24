@@ -1,5 +1,6 @@
-import { Skeleton } from '@/features/storefront/components/ui';
-export default function StorefrontLoading() {
+import { Skeleton } from './ui';
+/** Shown while a server-rendered storefront page loads. */
+export function StorefrontLoading() {
   return <div className="sf-wrap sf-section" aria-busy="true">
     <p role="status" className="sf-eyebrow">Preparing the details of your stay…</p>
     <div style={{ height: 20 }} />

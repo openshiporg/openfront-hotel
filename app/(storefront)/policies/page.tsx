@@ -1,7 +1,5 @@
-import type { Metadata } from 'next';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
-export const metadata: Metadata = {
-  title: 'Policies',
-};
+export const generateMetadata = () => storefrontPageMetadata('Policies', 'Check-in, cancellation, payment and house policies.');
 
 export { default } from '@/features/storefront/screens/PoliciesPage';

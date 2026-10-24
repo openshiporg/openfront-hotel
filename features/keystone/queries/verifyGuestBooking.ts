@@ -36,7 +36,12 @@ async function verifyGuestBooking(
     if (error instanceof Error && error.message === BOOKING_ACCESS_DENIED_MESSAGE) return null;
     throw error;
   }
-  return booking;
+  // Same refund state the reservation page shows, so the lookup card agrees with it.
+  const pending = await context.prisma.refundIntent.aggregate({
+    where: { bookingId: booking.id, status: { in: ['pending', 'processing', 'failed', 'dead_letter'] } },
+    _sum: { amountMinor: true },
+  });
+  return { ...booking, refundPendingMinor: Number(pending._sum.amountMinor || 0) };
 }
 
 export default verifyGuestBooking;

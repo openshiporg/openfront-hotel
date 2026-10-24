@@ -1,9 +1,6 @@
-import type { Metadata } from 'next';
 import StripeReturnPage from '@/features/storefront/screens/StripeReturnPage';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
-export const metadata: Metadata = {
-  title: 'Payment',
-  robots: { index: false },
-};
+export const generateMetadata = () => storefrontPageMetadata('Payment', 'Payment status for your reservation.', { index: false });
 
 export default StripeReturnPage;

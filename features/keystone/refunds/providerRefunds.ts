@@ -78,9 +78,11 @@ export async function recordVerifiedProviderRefund(context: any, provider: any, 
       if (refund.amountMinor > await refundablePaymentMinor(prisma, capture)) {
         throw new Error('Provider refund exceeds the refundable balance on record; reconcile it manually.');
       }
+      const refundHash = createHash('sha256').update(`${provider.code}:${refund.id}`).digest('hex');
       const created = await prisma.bookingPayment.create({
         data: {
-          id: `refund_ext_${createHash('sha256').update(`${provider.code}:${refund.id}`).digest('hex').slice(0, 24)}`,
+          id: `refund_ext_${refundHash.slice(0, 24)}`,
+          paymentReference: `RFX-${refundHash.slice(0, 16).toUpperCase()}`,
           bookingId: capture.bookingId,
           paymentProviderId: provider.id,
           amountMinor: -refund.amountMinor,

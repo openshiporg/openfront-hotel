@@ -1,5 +1,7 @@
 import { getStorefrontBookingQuote } from '../bookings/createStorefrontBooking';
+import { GraphQLError } from 'graphql';
 import { enforceAbuseLimit } from '../lib/abuseControl';
+import { isGuestRuleError } from '../lib/guestRuleError';
 
 async function storefrontQuote(
   _root: unknown,
@@ -10,7 +12,14 @@ async function storefrontQuote(
   context: any,
 ) {
   await enforceAbuseLimit(context, { scope: 'storefront-quote', identity: args.roomTypeId, limit: 60, windowMs: 60_000 });
-  const quote = await getStorefrontBookingQuote(args, context);
+  let quote: Awaited<ReturnType<typeof getStorefrontBookingQuote>>;
+  try {
+    quote = await getStorefrontBookingQuote(args, context);
+  } catch (error) {
+    // Rate rules a guest can act on are returned as-is; everything else stays masked.
+    if (isGuestRuleError(error)) throw new GraphQLError(error.message, { extensions: { code: 'HOTEL_BOOKING_RULE' } });
+    throw error;
+  }
   return {
     roomTypeId: quote.roomType.id,
     roomTypeName: quote.roomType.name,

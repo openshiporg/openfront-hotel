@@ -13,6 +13,7 @@ import {
 import { GuestSearchStatus } from '@/features/storefront/components/GuestSearchStatus';
 import { GuestSearchSubmitButton } from '@/features/storefront/components/GuestSearchSubmitButton';
 import { GuestPortalNav } from '@/features/storefront/components/GuestPortalNav';
+import { paymentStatusLabel } from '@/features/storefront/lib/stay-context';
 
 interface LookupBooking {
   id: string;
@@ -23,6 +24,7 @@ interface LookupBooking {
   checkOutDate: string;
   status?: string | null;
   paymentStatus?: string | null;
+  refundPendingMinor?: number | null;
   totalAmount?: number | null;
   roomAssignments?: Array<{
     roomType?: { name: string } | null;
@@ -137,8 +139,8 @@ export default function BookingLookupPage() {
               <div className="sf-row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div className="sf-stack" style={{ '--stack': '8px', minWidth: 0 } as React.CSSProperties}>
                   <div className="sf-row" style={{ gap: 8 }}>
-                    {result.status ? <span className="sf-badge sf-badge--accent sf-badge--dot">{result.status.replace('_', ' ')}</span> : null}
-                    {result.paymentStatus ? <span className="sf-badge">{result.paymentStatus.replace('_', ' ')}</span> : null}
+                    {result.status ? <span className="sf-badge sf-badge--accent sf-badge--dot">{result.status.replaceAll('_', ' ')}</span> : null}
+                    {paymentStatusLabel(result.paymentStatus, result.refundPendingMinor) ? <span className="sf-badge">{paymentStatusLabel(result.paymentStatus, result.refundPendingMinor)}</span> : null}
                   </div>
                   <h2 ref={resultRef} tabIndex={-1} className="sf-h3">{result.guestName}</h2>
                   <p className="sf-code" style={{ width: 'fit-content', paddingRight: 14 }}>{result.confirmationNumber}</p>

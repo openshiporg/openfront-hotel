@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
-export const metadata: Metadata = {
-  title: 'Book your stay',
-  robots: { index: false },
-};
+export const generateMetadata = () => storefrontPageMetadata('Book your stay', 'Review the full stay price and complete your direct reservation.', { index: false });
 
 export { default } from '@/features/storefront/screens/BookPage';

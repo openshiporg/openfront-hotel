@@ -1,7 +1,5 @@
-import type { Metadata } from 'next';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
-export const metadata: Metadata = {
-  title: 'Gallery',
-};
+export const generateMetadata = () => storefrontPageMetadata('Gallery', 'Photos of the rooms and spaces around the house.');
 
 export { default } from '@/features/storefront/screens/GalleryPage';

@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
-export const metadata: Metadata = {
-  title: 'Your reservation',
-  robots: { index: false },
-};
+export const generateMetadata = () => storefrontPageMetadata('Your reservation', 'Reservation status, statement and trip tools.', { index: false });
 
 export { default } from '@/features/storefront/screens/BookingDetailPage';

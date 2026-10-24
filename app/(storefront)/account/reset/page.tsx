@@ -1,8 +1,5 @@
-import type { Metadata } from 'next';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
-export const metadata: Metadata = {
-  title: 'Reset password',
-  robots: { index: false },
-};
+export const generateMetadata = () => storefrontPageMetadata('Reset password', 'Reset the password for your guest account.', { index: false });
 
 export { default } from '@/features/storefront/screens/PasswordResetPage';

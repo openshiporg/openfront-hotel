@@ -69,7 +69,15 @@ export async function completePaymentFunction({ paymentId, providerCredentials }
 
 export async function refundPaymentFunction({ paymentId, amount, metadata = {}, idempotencyKey, providerCredentials }: any) {
   if (!idempotencyKey) throw new Error('Stripe refund idempotency key is required');
-  const refund = await getStripeClient(providerCredentials).refunds.create({
+  const stripe = getStripeClient(providerCredentials);
+  // Stripe forgets idempotency keys after 24 hours. A retry after that must find the refund
+  // this intent already made instead of asking for a second one.
+  if (metadata?.refundIntentKey) {
+    const existing = (await stripe.refunds.list({ payment_intent: paymentId, limit: 100 })).data
+      .find(candidate => candidate.metadata?.refundIntentKey === metadata.refundIntentKey);
+    if (existing) return { status: existing.status, amount: existing.amount, currencyCode: existing.currency.toUpperCase(), data: existing };
+  }
+  const refund = await stripe.refunds.create({
     payment_intent: paymentId,
     amount: amount ? normalizeAmount(Math.abs(amount)) : undefined,
     metadata,

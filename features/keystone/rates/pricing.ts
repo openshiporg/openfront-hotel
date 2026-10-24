@@ -4,6 +4,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { hotelStayDates } from '../inventory/roomAvailability';
 import { propertyArrivalInstant, propertyCalendarDate } from '../lib/hotelBusinessTime';
 import { hashLifecycleRequest } from '../lib/hotelLifecycle';
+import { GuestRuleError } from '../lib/guestRuleError';
 
 const QUOTE_TTL_MS = 15 * 60_000;
 
@@ -57,27 +58,33 @@ export async function calculateHotelPrice(context: any, input: HotelPriceInput, 
     }),
   ]);
   if (!roomType || !ratePlan || ratePlan.roomTypeId !== roomType.id || ratePlan.status !== 'active' || !ratePlan.isPublic) {
-    throw new Error('Selected rate plan is not bookable.');
+    throw new GuestRuleError('Selected rate plan is not bookable.');
   }
   if (!settings) throw new Error('Hotel pricing settings are not configured.');
-  if (adults + children > roomType.maxOccupancy) throw new Error(`${roomType.name} supports up to ${roomType.maxOccupancy} guests.`);
-  if (days.length < Number(ratePlan.minimumStay || 1) || (ratePlan.maximumStay && days.length > ratePlan.maximumStay)) {
-    throw new Error('Stay length does not satisfy the selected rate plan.');
+  if (adults + children > roomType.maxOccupancy) throw new GuestRuleError(`${roomType.name} supports up to ${roomType.maxOccupancy} guests.`);
+  if (days.length < Number(ratePlan.minimumStay || 1)) {
+    throw new GuestRuleError(`This rate requires at least ${Number(ratePlan.minimumStay || 1)} nights.`);
+  }
+  if (ratePlan.maximumStay && days.length > ratePlan.maximumStay) {
+    throw new GuestRuleError(`This rate allows at most ${ratePlan.maximumStay} nights.`);
   }
   const now = new Date(); const advanceDays = Math.floor((checkIn.getTime() - propertyCalendarDate(now, settings.timeZone || 'UTC').getTime()) / 86_400_000);
-  if (!options.existingStay && (advanceDays < Number(ratePlan.advanceBookingMin || 0) || (ratePlan.advanceBookingMax && advanceDays > ratePlan.advanceBookingMax))) {
-    throw new Error('Booking window does not satisfy the selected rate plan.');
+  if (!options.existingStay && advanceDays < Number(ratePlan.advanceBookingMin || 0)) {
+    throw new GuestRuleError(`This rate must be booked at least ${Number(ratePlan.advanceBookingMin || 0)} days ahead.`);
+  }
+  if (!options.existingStay && ratePlan.advanceBookingMax && advanceDays > ratePlan.advanceBookingMax) {
+    throw new GuestRuleError(`This rate can be booked up to ${ratePlan.advanceBookingMax} days ahead.`);
   }
   if ((ratePlan.validFrom && checkIn < ratePlan.validFrom) || (ratePlan.validTo && checkOut > ratePlan.validTo)) {
-    throw new Error('Selected rate plan is not valid for the complete stay.');
+    throw new GuestRuleError('This rate is not available for every night of the stay.');
   }
   const expectedPromo = String(ratePlan.promoCode || '').trim().toLowerCase();
   if (ratePlan.isPromotional && (!expectedPromo || String(input.promoCode || '').trim().toLowerCase() !== expectedPromo)) {
-    throw new Error('A valid promotional code is required for this rate plan.');
+    throw new GuestRuleError('A valid promotional code is required for this rate.');
   }
   const applicableDays = (ratePlan.applicableDays || {}) as Record<string, boolean>;
   const weekdays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
-  if (days.some(day => applicableDays[weekdays[day.getUTCDay()]] === false)) throw new Error('Selected rate plan is unavailable on one or more stay nights.');
+  if (days.some(day => applicableDays[weekdays[day.getUTCDay()]] === false)) throw new GuestRuleError('This rate is not available on one or more nights of the stay.');
 
   const { derivedConfig, economicsHash: ratePlanEconomicsHash } = await loadRateEconomics(context.prisma, ratePlan.id);
   // Recurse through the actual parent quote so inherited occupancy, window,
@@ -92,11 +99,11 @@ export async function calculateHotelPrice(context: any, input: HotelPriceInput, 
     if (season) {
       if (season.priceMultiplier !== null && season.priceMultiplier !== undefined) amount = Math.round(amount * Number(season.priceMultiplier));
       amount += Number(season.priceAdjustment || 0);
-      if (days.length < Number(season.minimumStay || 1)) throw new Error(`Stay does not satisfy seasonal rule ${season.name}.`);
+      if (days.length < Number(season.minimumStay || 1)) throw new GuestRuleError(`Stays on these dates require at least ${Number(season.minimumStay || 1)} nights.`);
     }
     if (parentQuote) amount = resolveDerivedRateAmount(ratePlan.id, new Map([[ratePlan.id, ratePlan], [parentQuote.ratePlan.id, parentQuote.ratePlan]]), new Map([[ratePlan.id, derivedConfig]]), () => parentQuote.nightlyRates.find((night: any) => night.date === day.toISOString().slice(0, 10)).amountMinor);
     if (!Number.isSafeInteger(amount) || amount < 0) throw new Error('Seasonal pricing produced an invalid amount.');
-    if (amount > MAX_STORED_MINOR) throw new Error(STAY_TOO_LARGE);
+    if (amount > MAX_STORED_MINOR) throw new GuestRuleError(STAY_TOO_LARGE);
     return { date: day.toISOString().slice(0, 10), amountMinor: amount, seasonalRateId: season?.id || null, seasonalRateName: season?.name || null };
   });
   const roomSubtotalMinor = nightlyRates.reduce((sum, night) => sum + night.amountMinor, 0);
@@ -107,7 +114,7 @@ export async function calculateHotelPrice(context: any, input: HotelPriceInput, 
   // Every stored and GraphQL money field is a 32-bit integer; refuse a stay that cannot be
   // represented before any quote token, booking or payment is created.
   if ([roomSubtotalMinor, taxMinor, feesMinor, totalMinor, Number(settings.securityDepositMinor ?? 0)].some(value => !Number.isSafeInteger(value) || value < 0 || value > MAX_STORED_MINOR)) {
-    throw new Error(STAY_TOO_LARGE);
+    throw new GuestRuleError(STAY_TOO_LARGE);
   }
   const currencyCode = String(ratePlan.currencyCode || roomType.currencyCode || settings.currencyCode || 'USD').toUpperCase();
   if (new Set([ratePlan.currencyCode, roomType.currencyCode, settings.currencyCode].filter(Boolean).map((v: string) => v.toUpperCase())).size > 1) {

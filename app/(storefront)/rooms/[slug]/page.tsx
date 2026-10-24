@@ -5,6 +5,7 @@ import { graphqlQuery } from '@/lib/graphql-client';
 import { primaryRoomImage } from '@/lib/hotel-storefront';
 import type { RoomType } from '@/lib/types';
 import RoomDetailPage from '@/features/storefront/screens/RoomDetailPage';
+import { storefrontPageMetadata } from '@/features/storefront/lib/page-metadata';
 
 const ROOM_SUMMARY_QUERY = String.raw`
   query StorefrontRoomSummary($id: ID!) {
@@ -31,13 +32,9 @@ const loadRoom = cache(async (id: string): Promise<RoomSummary | null | undefine
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const room = await loadRoom((await params).slug);
+  if (room === null) return { title: 'Page not found' };
   if (!room) return { title: 'Room' };
-  const description = room.shortDescription || undefined;
-  return {
-    title: room.name,
-    description,
-    openGraph: { title: room.name, description, images: [primaryRoomImage(room)] },
-  };
+  return storefrontPageMetadata(room.name, room.shortDescription || `Rates, amenities and stay details for ${room.name}.`, { image: primaryRoomImage(room) });
 }
 
 export default async function RoomPage({ params }: { params: Promise<{ slug: string }> }) {

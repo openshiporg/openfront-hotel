@@ -50,6 +50,11 @@ export function reservationPresentation(status?: string | null, refundPendingMin
   const result = states[status || ''] || { title: 'Review your reservation.', label: 'Status unavailable', copy: 'Refresh the reservation or contact the property before making travel or payment decisions.' };
   return { ...result, copy: `${result.copy}${refundPendingMinor > 0 ? ' A refund is awaiting settlement; it has not yet been recorded as completed.' : ''}` };
 }
+/** Payment chip text: a pending refund outranks the recorded payment status. */
+export function paymentStatusLabel(paymentStatus?: string | null, refundPendingMinor?: number | null) {
+  if (refundPendingMinor) return 'refund pending';
+  return paymentStatus ? paymentStatus.replaceAll('_', ' ') : '';
+}
 export function bookingGroup(status?: string | null) {
   if (['cancelled', 'cancellation_pending', 'no_show'].includes(status || '')) return 'cancelled';
   if (status === 'checked_out') return 'past';
