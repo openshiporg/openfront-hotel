@@ -46,11 +46,13 @@ export default async function HomePage() {
 
     <section className="sf-band sf-section" aria-labelledby="home-house">
       <div className="sf-wrap sf-split">
-        <div className="sf-band__media"><img src={identity.media.amenity.imagePath} alt={identity.media.amenity.altText} loading="lazy" /></div>
+        <figure className="sf-band__figure">
+          <div className="sf-band__media"><img src={identity.media.amenity.imagePath} alt={identity.media.amenity.altText} loading="lazy" /></div>
+          {identity.media.amenity.caption && <figcaption>{identity.media.amenity.caption}</figcaption>}
+        </figure>
         <div className="sf-stack" style={{ '--stack': '22px' } as React.CSSProperties}>
           <p className="sf-eyebrow">The house</p>
           <h2 id="home-house" className="sf-h2">Before you arrive, <em>get to know the house.</em></h2>
-          {identity.media.amenity.caption && <p className="sf-body">{identity.media.amenity.caption}</p>}
           <p className="sf-lead">Browse the spaces, compare room comforts, and find the practical details for your arrival.</p>
           <div className="sf-row" style={{ gap: '8px 28px' }}>
             <StayLink href="/gallery" className="sf-link">View the gallery <ArrowUpRight aria-hidden="true" /></StayLink>

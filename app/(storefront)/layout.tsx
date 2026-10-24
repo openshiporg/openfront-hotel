@@ -11,6 +11,7 @@ import { resolveStorefrontBrand, storefrontBrandCssVariables } from '@/features/
 import { wordmarkFont } from '@/features/storefront/lib/wordmark-font';
 import { GuestAccountProvider } from '@/features/storefront/components/GuestAccountProvider';
 import { getGuestAccountStatus } from '@/features/storefront/lib/guest-account';
+import { configuredSiteOrigin } from '@/features/keystone/lib/productionConfig';
 
 const display = Fraunces({
   subsets: ['latin'],
@@ -29,18 +30,31 @@ export const dynamic = 'force-dynamic';
 export async function generateMetadata(): Promise<Metadata> {
   const identity = await getHotelSettings();
   const configured = identity.state === 'configured';
+  const siteName = configured ? identity.name : 'Direct reservations';
+  const description = configured
+    ? `Reserve directly at ${identity.name}. Review live room rates, stay details, and reservation information from the property.`
+    : 'Review live room rates, stay details, and direct reservation information.';
+  const origin = configuredSiteOrigin();
+  let metadataBase: URL | undefined;
+  try { metadataBase = origin ? new URL(origin) : undefined; } catch { metadataBase = undefined; }
 
   return {
+    metadataBase,
     title: configured
       ? {
           default: `${identity.name} · Direct reservations`,
           template: `%s · ${identity.name}`,
         }
-      : 'Direct hotel reservations',
-    description: configured
-      ? `Reserve directly at ${identity.name}. Review live room rates, stay details, and reservation information from the property.`
-      : 'Review live room rates, stay details, and direct reservation information.',
-    applicationName: configured ? identity.name : 'Direct reservations',
+      : { default: 'Direct hotel reservations', template: '%s · Direct reservations' },
+    description,
+    applicationName: siteName,
+    openGraph: {
+      type: 'website',
+      siteName,
+      title: configured ? `${identity.name} · Direct reservations` : 'Direct hotel reservations',
+      description,
+      images: [{ url: identity.media.hero.imagePath, alt: identity.media.hero.altText }],
+    },
     other: {
       'storefront-accent-preset': identity.accentPreset,
       'storefront-settings-state': identity.state,

@@ -115,7 +115,7 @@ export const StayCalendar = forwardRef<StayCalendarHandle, StayCalendarProps>(fu
       const nights = daysBetween(validIn, day);
       setHover('');
       if (nights < minimum) { setMessage(`This stay needs at least ${minimum} nights. Choose a later check-out.`); return; }
-      if (nights > maxNights) { setMessage(`Online reservations cover up to ${maxNights} nights. Choose an earlier check-out, or contact the property.`); return; }
+      if (nights > maxNights) { setMessage(maxNights < MAX_ONLINE_NIGHTS ? `This rate allows at most ${maxNights} nights. Choose an earlier check-out.` : `Online reservations cover up to ${maxNights} nights. Choose an earlier check-out, or contact the property.`); return; }
       if (!openNights(validIn, day)) { setMessage('These dates include a night that is sold out. Adjust your check-in or check-out.'); return; }
       const range = { checkIn: validIn, checkOut: day };
       onChange(range);

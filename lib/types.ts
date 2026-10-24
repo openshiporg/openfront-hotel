@@ -36,6 +36,8 @@ export interface RatePlan {
   baseRateMinor?: number;
   currencyCode?: string;
   minimumStay: number;
+  maximumStay?: number | null;
+  advanceBookingMax?: number | null;
   cancellationPolicy: string;
   mealPlan: string;
   isPromotional?: boolean;

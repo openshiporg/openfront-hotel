@@ -320,6 +320,8 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         baseRateMinor: Int!
         currencyCode: String!
         minimumStay: Int
+        maximumStay: Int
+        advanceBookingMax: Int
         cancellationPolicy: String
         mealPlan: String
         isPromotional: Boolean!

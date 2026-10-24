@@ -74,8 +74,8 @@ export default function ContactPage() {
           <span className="sf-state__icon"><CircleCheck aria-hidden="true" /></span>
           <p className="sf-eyebrow">Request recorded</p>
           <p className="sf-h3">Thank you for getting in touch.</p>
-          <p>Reference <span className="sf-code" style={{ paddingRight: 14 }}>{receipt.reference}</span></p>
-          <Notice tone="info">Delivery status: {receipt.status.replaceAll('_', ' ')}. Your inquiry is recorded; this is not confirmation that a staff member has read it or approved a request.</Notice>
+          <p>Reference <span className="sf-code" style={{ paddingRight: 14 }} title={receipt.reference}>{`MSG-${receipt.reference.replace(/[^a-z0-9]/gi, '').slice(0, 8).toUpperCase()}`}</span></p>
+          <Notice tone="info">Your message is recorded. The property replies by email or phone; this isn’t yet confirmation that a staff member has read it.</Notice>
           <button type="button" onClick={() => setReceipt(null)} className="sf-btn sf-btn--ghost" style={{ width: 'fit-content' }}>Write another message</button>
         </div> : <form onSubmit={submit} className="sf-stack" style={{ '--stack': '20px' } as React.CSSProperties}>
           <fieldset disabled={pending} className="sf-formgrid">

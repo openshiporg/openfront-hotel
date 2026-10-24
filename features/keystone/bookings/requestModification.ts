@@ -45,10 +45,13 @@ export default async function requestBookingModification(
     const existing = await tx.prisma.bookingModificationRequest.findFirst({
       where: { bookingId, status: 'pending' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+    // A request without dates is a note for the property; it keeps no dates of its own.
+    const storedIn = requestedIn || requestedOut ? nextIn : null;
+    const storedOut = requestedIn || requestedOut ? nextOut : null;
     if (existing) {
       if (
-        existing.requestedCheckInDate?.getTime() === nextIn.getTime() &&
-        existing.requestedCheckOutDate?.getTime() === nextOut.getTime() &&
+        (existing.requestedCheckInDate?.getTime() ?? null) === (storedIn?.getTime() ?? null) &&
+        (existing.requestedCheckOutDate?.getTime() ?? null) === (storedOut?.getTime() ?? null) &&
         String(existing.guestMessage || '') === guestMessage
       ) return { booking, request: existing };
       throw new Error('This reservation already has a change request waiting for the property to review.');
@@ -57,8 +60,8 @@ export default async function requestBookingModification(
     const request = await tx.prisma.bookingModificationRequest.create({ data: {
       requestKey: `guest-modification:${randomUUID()}`,
       bookingId,
-      requestedCheckInDate: nextIn,
-      requestedCheckOutDate: nextOut,
+      requestedCheckInDate: storedIn,
+      requestedCheckOutDate: storedOut,
       guestMessage: guestMessage || null,
       requestedByEmailHash: createHash('sha256').update(normalizedEmail).digest('hex'),
       status: 'pending',

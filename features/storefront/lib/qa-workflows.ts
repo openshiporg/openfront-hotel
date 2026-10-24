@@ -5,7 +5,19 @@ import type { DateRange } from 'react-day-picker';
 export interface PublicRatePlanRules {
   minimumStay?: number | null;
   maximumStay?: number | null;
+  advanceBookingMax?: number | null;
   isPromotional?: boolean | null;
+}
+
+/** The rate's own stay-length and booking-window rules, checked before asking for a price. Dates are `YYYY-MM-DD`. */
+export function ratePlanStayMessage(plan: PublicRatePlanRules, checkIn: string, checkOut: string, today: string): string | null {
+  const nights = stayNights(checkIn, checkOut);
+  const minimum = Math.max(1, Number(plan.minimumStay || 1));
+  if (nights < minimum) return `This rate requires at least ${minimum} night${minimum === 1 ? '' : 's'}. Choose another rate or extend your stay.`;
+  const maximum = Number(plan.maximumStay || 0);
+  if (maximum > 0 && nights > maximum) return `This rate allows at most ${maximum} nights. Choose another rate or a shorter stay.`;
+  if (plan.advanceBookingMax != null && stayNights(today, checkIn) > plan.advanceBookingMax) return `This rate can be booked up to ${plan.advanceBookingMax} days ahead. Choose earlier dates or contact the property.`;
+  return null;
 }
 
 export function selectInitialPublicRatePlan<T extends { id: string; isPromotional?: boolean | null }>(

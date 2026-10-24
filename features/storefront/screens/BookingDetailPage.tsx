@@ -310,7 +310,7 @@ export default function BookingDetailPage() {
         </div>
         <div className="sf-row" style={{ gap: 10 }}>
           <CopyReference value={booking.confirmationNumber} />
-          <span className="sf-badge"><CreditCard aria-hidden="true" />Payment: {booking.paymentStatus?.replaceAll('_', ' ') || 'not available'}</span>
+          <span className="sf-badge"><CreditCard aria-hidden="true" />Payment: {booking.refundPendingMinor ? 'refund pending' : booking.paymentStatus?.replaceAll('_', ' ') || 'not available'}</span>
         </div>
       </div>
       <div className="sf-pass__media">
@@ -330,8 +330,7 @@ export default function BookingDetailPage() {
         <div className="sf-row"><Link href={`/book?bookingId=${encodeURIComponent(booking.id)}`} className="sf-btn sf-btn--sm sf-btn--ghost">Check current payment amount</Link></div>
       </Notice>}
       {Boolean(booking.refundPendingMinor) && <Notice tone="info" role="status" title="Refund awaiting settlement">{bookingAmount(booking.refundPendingMinor, null, booking.currencyCode)} has not yet been recorded as a completed refund. Check your statement or contact the property.</Notice>}
-      {modificationSuccess && <Notice tone="success" role="status">{modificationSuccess}</Notice>}
-      {booking.changeRequest && <ChangeRequestNotice request={booking.changeRequest} />}
+      {booking.changeRequest && !['cancelled', 'cancellation_pending', 'no_show'].includes(booking.status) && <ChangeRequestNotice request={booking.changeRequest} />}
       {!account && <Notice tone="accent" title="Keep this stay in a guest account" className="sf-noprint">
         <p>Create an account with {booking.guestEmail ? 'this reservation’s email' : 'your booking email'} and this stay is added to it, along with your future bookings.</p>
         <div className="sf-row">
@@ -381,6 +380,7 @@ export default function BookingDetailPage() {
 
         <section id="manage" className="sf-block sf-noprint">
           <div className="sf-block__head"><p className="sf-eyebrow">Trip tools</p><h2 className="sf-h2">Make a plan. <em>Keep it close.</em></h2></div>
+          {modificationSuccess && <Notice tone="success" role="status" className="sf-noprint">{modificationSuccess}</Notice>}
           <div className="sf-actions">
             <button type="button" className="sf-action" onClick={() => window.print()}><Printer aria-hidden="true" /><span>Print stay details<small>Reservation and statement</small></span></button>
             {activeStay && <button type="button" className="sf-action" onClick={() => generateCalendarFile(booking, identity)}><CalendarPlus aria-hidden="true" /><span>Add to calendar<small>Download an .ics file</small></span></button>}
@@ -427,7 +427,7 @@ export default function BookingDetailPage() {
                     <div className="sf-stack" style={{ '--stack': '16px' } as React.CSSProperties}>
                       {quoteLoading ? <div role="status" aria-label="Checking your cancellation terms" className="sf-stack"><Skeleton height={18} /><Skeleton height={110} radius={14} /></div> : cancellationQuote ? <>
                         <p>{cancellationQuote.summary}</p>
-                        {cancellationQuote.fullRefundDeadline && Number.isFinite(Date.parse(cancellationQuote.fullRefundDeadline)) && <p className="sf-small sf-muted"><b>Full-refund deadline:</b> <time dateTime={cancellationQuote.fullRefundDeadline}>{new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' }).format(new Date(cancellationQuote.fullRefundDeadline))}</time>. The deadline above is shown in UTC.</p>}
+                        {cancellationQuote.fullRefundDeadline && Number.isFinite(Date.parse(cancellationQuote.fullRefundDeadline)) && <p className="sf-small sf-muted"><b>Full-refund deadline:</b> <time dateTime={cancellationQuote.fullRefundDeadline}>{propertyDeadline(cancellationQuote.fullRefundDeadline, identity.timeZone)}</time>.</p>}
                         <dl className="sf-dl sf-panel" style={{ padding: '4px 18px' }}>
                           <div><dt>Estimated refund</dt><dd>{money(cancellationQuote.refundableMinor, cancellationQuote.currencyCode)}</dd></div>
                           <div><dt>Cancellation fee</dt><dd>{money(cancellationQuote.cancellationFeeMinor, cancellationQuote.currencyCode)}</dd></div>
@@ -478,6 +478,13 @@ export default function BookingDetailPage() {
       </aside>
     </div>
   </div>;
+}
+
+/** A deadline instant in the property's own time zone, as the rest of the site shows times. */
+function propertyDeadline(instant: string, timeZone: string) {
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' };
+  try { return new Intl.DateTimeFormat('en-US', { ...options, timeZone: timeZone || 'UTC' }).format(new Date(instant)); }
+  catch { return new Intl.DateTimeFormat('en-US', { ...options, timeZone: 'UTC' }).format(new Date(instant)); }
 }
 
 function ChangeRequestNotice({ request }: { request: GuestChangeRequest }) {

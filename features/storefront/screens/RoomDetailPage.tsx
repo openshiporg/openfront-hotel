@@ -9,7 +9,7 @@ import type { RatePlan, RoomType } from '@/lib/types';
 import type { StayQuote } from '../lib/quote';
 import { roomCopy, roomImages } from '@/lib/hotel-storefront';
 import { StayEstimate, StayPrice } from '../components/StayPrice';
-import { roomSearchValidationMessage, selectInitialPublicRatePlan, safeQuoteFailureMessage } from '../lib/qa-workflows';
+import { ratePlanStayMessage, roomSearchValidationMessage, selectInitialPublicRatePlan, safeQuoteFailureMessage } from '../lib/qa-workflows';
 import { cancellationHeadline, cancellationTerms, mealPlanLabel, money, nightMoney, stayNights } from '../lib/stay-context';
 import { addDays, dayParts, propertyToday } from '../lib/calendar';
 import { useScrollSpy } from '../lib/use-scroll-spy';
@@ -38,7 +38,8 @@ function preflightMessage(form: StayForm, room: RoomType, plan: RatePlan | undef
   if (!form.checkIn || !form.checkOut) return 'Choose arrival and departure dates for a full stay price.';
   if (form.checkIn < today) return 'Choose a check-in date from today onward.';
   if (!plan) return 'No published rate is available. Contact the property for help reserving this room.';
-  if (stayNights(form.checkIn, form.checkOut) < plan.minimumStay) return `This rate requires at least ${plan.minimumStay} nights. Choose another rate or extend your stay.`;
+  const ruleMessage = ratePlanStayMessage(plan, form.checkIn, form.checkOut, today);
+  if (ruleMessage) return ruleMessage;
   if (Number(form.adults) + Number(form.children) > room.maxOccupancy) return `This room accommodates up to ${room.maxOccupancy} guests. Adjust your party or compare other rooms.`;
   if (plan.isPromotional && !form.promoCode.trim()) return 'Enter the promotion code for this rate.';
   return '';
@@ -116,7 +117,7 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
   // Nightly charges for the month on screen, from the same quote contract the booking uses.
   const adults = Number(form.adults); const children = Number(form.children);
   const rates = useRateCalendar(room && plan && month && Number.isInteger(adults) && adults >= 1 && Number.isInteger(children) && children >= 0 && adults + children <= room.maxOccupancy && !(plan.isPromotional && !form.promoCode.trim())
-    ? { roomTypeId: room.id, ratePlanId: plan.id, minimumStay: plan.minimumStay || 1, maxNights: MAX_ONLINE_NIGHTS, adults, children, promoCode: plan.isPromotional ? form.promoCode : '', month, today }
+    ? { roomTypeId: room.id, ratePlanId: plan.id, minimumStay: plan.minimumStay || 1, maximumStay: plan.maximumStay ?? null, advanceBookingMax: plan.advanceBookingMax ?? null, maxNights: MAX_ONLINE_NIGHTS, adults, children, promoCode: plan.isPromotional ? form.promoCode : '', month, today }
     : null);
   // Sold-out nights for this room type, from live inventory.
   const availability = useStayAvailability(room && month ? { roomTypeId: room.id, month, today } : null);
@@ -227,7 +228,7 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
                 : base ? <><span className="sf-amount">{base}</span><span>base rate / night · varies by date</span></>
                   : <span className="sf-h4">Live rates for your dates</span>}
           </div>
-          <StayPicker checkIn={form.checkIn} checkOut={form.checkOut} today={today} minNights={plan?.minimumStay || 1} nightPrices={nightPrices} availability={availability}
+          <StayPicker checkIn={form.checkIn} checkOut={form.checkOut} today={today} minNights={plan?.minimumStay || 1} maxNights={Math.min(MAX_ONLINE_NIGHTS, plan?.maximumStay || MAX_ONLINE_NIGHTS)} nightPrices={nightPrices} availability={availability}
             onViewChange={setMonth} onPreview={setPreview}
             onChange={range => setForm(previous => ({ ...previous, ...range }))} />
           <div className="sf-bookcard__guests">

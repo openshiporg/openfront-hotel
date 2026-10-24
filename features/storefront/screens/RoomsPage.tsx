@@ -57,7 +57,7 @@ function RoomsContent() {
   return <>
     <PageHead eyebrow="Rooms & suites" title={<>Find your place <em>in the house.</em></>} lead="Compare the details that matter. Choose dates to see live availability and the full stay price, including taxes and fees." />
     <div className="sf-wrap" id="choose-dates"><StayPlanner query={query} variant="bar" /></div>
-    <section className="sf-wrap sf-section--tight" id="results" aria-label="Room results">
+    <section className="sf-wrap sf-section--tight" id="results" aria-label="Room results" data-comparebar={comparison.length > 0 ? '' : undefined}>
       <div data-qa-layout="room-results-grid" className="sf-results">
         <aside className="sf-filters" data-open={filtersOpen} aria-label="Refine rooms">
           <button type="button" className="sf-btn sf-btn--ghost sf-filters__toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(value => !value)}><SlidersHorizontal aria-hidden="true" />Filters{filterCount ? ` · ${filterCount}` : ''}</button>

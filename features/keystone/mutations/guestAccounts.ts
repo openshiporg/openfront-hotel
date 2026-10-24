@@ -1,5 +1,6 @@
 import { enforceAbuseLimit } from '../lib/abuseControl';
 import { guestAccessTokenMatches, listGuestBookingAccess } from '../lib/guestBookingAccess';
+import { guessablePassword } from '../lib/guessablePassword';
 import { hotelMailInfrastructureConfigured } from '../lib/mail';
 import { STOREFRONT_BOOKING_QUERY } from '../lib/storefrontBooking';
 
@@ -110,6 +111,7 @@ export function createGuestAccountResolvers(mapGuestBooking: (booking: any) => a
         if (!EMAIL.test(email)) return { account: null, error: 'Enter a valid email address.' };
         if (phone === null || !PHONE.test(phone)) return { account: null, error: 'Enter a valid phone number, or leave it blank.' };
         if (password.length < 10 || password.length > 1000) return { account: null, error: 'Choose a password of at least 10 characters.' };
+        if (guessablePassword(password, email)) return { account: null, error: 'Choose a less common password of at least 10 characters.' };
         if (await limited(context, 'guest-account-register', email, 5, 60 * 60_000)) return { account: null, error: 'Too many attempts. Please wait and try again.' };
         const existing = await context.prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true } });
         if (existing) return { account: null, error: 'An account already exists for this email. Sign in, or reset your password.' };
@@ -157,6 +159,7 @@ export function createGuestAccountResolvers(mapGuestBooking: (booking: any) => a
         const next = String(args.newPassword || '');
         if (next.length < 10 || next.length > 1000) return { account: null, error: 'Choose a new password of at least 10 characters.' };
         const user = await context.prisma.user.findUnique({ where: { id } });
+        if (guessablePassword(next, user?.email)) return { account: null, error: 'Choose a less common password of at least 10 characters.' };
         const field = context.graphql.schema.getType('User')?.getFields()?.password?.extensions?.keystoneSecretField;
         const current = String(args.currentPassword || '');
         if (!user || !field?.compare || current.length > 1000 || !(await field.compare(current, user.password))) return { account: null, error: 'Your current password is incorrect.' };

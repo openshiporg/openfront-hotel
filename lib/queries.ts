@@ -99,7 +99,7 @@ export const GET_ROOM_TYPES = gql`
       amenities
       squareFeet
       roomsCount
-      ratePlans { id name description baseRate baseRateMinor currencyCode minimumStay cancellationPolicy mealPlan isPromotional }
+      ratePlans { id name description baseRate baseRateMinor currencyCode minimumStay maximumStay advanceBookingMax cancellationPolicy mealPlan isPromotional }
       roomImages {
         id
         url
@@ -213,6 +213,8 @@ export const GET_ROOM_TYPE = gql`
         baseRateMinor
         currencyCode
         minimumStay
+        maximumStay
+        advanceBookingMax
         cancellationPolicy
         mealPlan
         isPromotional

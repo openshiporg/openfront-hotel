@@ -18,7 +18,8 @@ import { useGuestAccount } from '../components/GuestAccountProvider';
 import { StayPrice } from '../components/StayPrice';
 import { Notice, Skeleton, StatePanel } from '../components/ui';
 import { money, reservationPresentation } from '../lib/stay-context';
-import { roomSearchValidationMessage, selectInitialPublicRatePlan, safeQuoteFailureMessage } from '../lib/qa-workflows';
+import { ratePlanStayMessage, roomSearchValidationMessage, selectInitialPublicRatePlan, safeQuoteFailureMessage } from '../lib/qa-workflows';
+import { propertyToday } from '../lib/calendar';
 import { stripeAppearance } from '../lib/stripe-appearance';
 import { settleBookingPayment } from '../lib/payment-settlement';
 interface Provider { id: string; name: string; code: string; displayName?: string | null; publicClientKey?: string | null }
@@ -28,25 +29,25 @@ function BookContent() {
   const params = useSearchParams(); const router = useRouter(); const identity = useHotelSettings(); const { account } = useGuestAccount(); const originalQuery = params?.toString() || '';
   const [resumeId] = useState(() => params?.get('bookingId') || '');
   const roomTypeId = params?.get('roomTypeId') || ''; const checkIn = params?.get('checkIn') || ''; const checkOut = params?.get('checkOut') || ''; const adults = params?.get('adults') || '2'; const children = params?.get('children') || '0'; const requestedRate = params?.get('ratePlanId') || ''; const promoCode = params?.get('promoCode') || '';
-  const [room, setRoom] = useState<RoomType | null>(null); const [quote, setQuote] = useState<StayQuote | null>(null); const [bookedTerms, setBookedTerms] = useState<Booking['bookedStayTerms']>(null); const [held, setHeld] = useState<Booking | null>(null); const [bookingId, setBookingId] = useState(resumeId); const [reference, setReference] = useState(''); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(''); const [revision, setRevision] = useState(0);
+  const [room, setRoom] = useState<RoomType | null>(null); const [quote, setQuote] = useState<StayQuote | null>(null); const [bookedTerms, setBookedTerms] = useState<Booking['bookedStayTerms']>(null); const [held, setHeld] = useState<Booking | null>(null); const [bookingId, setBookingId] = useState(resumeId); const [reference, setReference] = useState(''); const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState(''); const [selectionError, setSelectionError] = useState(false); const [revision, setRevision] = useState(0);
   const [providers, setProviders] = useState<Provider[]>([]); const [providerCode, setProviderCode] = useState(''); const [providerError, setProviderError] = useState(''); const [session, setSession] = useState<Session | null>(null); const [paymentError, setPaymentError] = useState(''); const [busy, setBusy] = useState(false); const [confirming, setConfirming] = useState(false); const actionLock = useRef(false); const confirmationLock = useRef(false); const [accepted, setAccepted] = useState(false); const [verification, setVerification] = useState<'idle' | 'checking' | 'unknown'>('idle');
   // Signed-in guests book with their account details filled in; they can still edit them.
   const [form, setForm] = useState(() => ({ guestName: resumeId ? '' : account?.name || '', guestEmail: resumeId ? '' : account?.email || '', guestPhone: resumeId ? '' : account?.phone || '', specialRequests: '' }));
   const selectedProvider = providers.find(provider => provider.code === providerCode); const stripe = useMemo(() => session?.clientSecret && selectedProvider?.code === 'pp_stripe_stripe' && selectedProvider.publicClientKey ? loadStripe(selectedProvider.publicClientKey) : null, [session?.clientSecret, selectedProvider]);
   useEffect(() => {
-    let active = true; setLoading(true); setLoadError('');
+    let active = true; setLoading(true); setLoadError(''); setSelectionError(false);
     async function load() {
       try {
         if (resumeId) { const data = await graphqlClient.request<{ booking: Booking | null }>(GET_GUEST_BOOKING, { bookingId: resumeId }); if (!data.booking) throw new Error('access'); if (!active) return; setHeld(data.booking); setBookedTerms(data.booking.bookedStayTerms || null); setReference(data.booking.confirmationNumber); setRoom(data.booking.roomAssignments?.[0]?.roomType || null); setForm({ guestName: data.booking.guestName, guestEmail: data.booking.guestEmail, guestPhone: data.booking.guestPhone || '', specialRequests: data.booking.specialRequests || '' }); }
         else {
-          const invalid = roomSearchValidationMessage(checkIn, checkOut, adults, children); if (invalid || !roomTypeId || !checkIn || !checkOut) { if (active) setLoadError(invalid || 'Choose a room and stay dates before reserving.'); return; }
-          const data = await graphqlClient.request<{ roomType: RoomType }>(GET_ROOM_TYPE, { id: roomTypeId }); const plan = selectInitialPublicRatePlan(data.roomType?.ratePlans, requestedRate); if (!plan) throw new Error('rate'); const priced = await graphqlClient.request<{ storefrontQuote: StayQuote }>(GET_STOREFRONT_QUOTE, { roomTypeId, ratePlanId: plan.id, checkInDate: `${checkIn}T00:00:00Z`, checkOutDate: `${checkOut}T00:00:00Z`, numberOfAdults: Number(adults), numberOfChildren: Number(children), promoCode: promoCode.trim() || null }); if (active) { setRoom(data.roomType); setQuote(priced.storefrontQuote); }
+          const invalid = roomSearchValidationMessage(checkIn, checkOut, adults, children); if (invalid || !roomTypeId || !checkIn || !checkOut) { if (active) { setLoadError(invalid || 'Choose a room and stay dates before reserving.'); setSelectionError(true); } return; }
+          const data = await graphqlClient.request<{ roomType: RoomType }>(GET_ROOM_TYPE, { id: roomTypeId }); const plan = selectInitialPublicRatePlan(data.roomType?.ratePlans, requestedRate); if (!plan) throw new Error('rate'); const ruleMessage = ratePlanStayMessage(plan, checkIn, checkOut, propertyToday(identity.timeZone)); if (ruleMessage) { if (active) { setLoadError(ruleMessage); setSelectionError(true); } return; } const priced = await graphqlClient.request<{ storefrontQuote: StayQuote }>(GET_STOREFRONT_QUOTE, { roomTypeId, ratePlanId: plan.id, checkInDate: `${checkIn}T00:00:00Z`, checkOutDate: `${checkOut}T00:00:00Z`, numberOfAdults: Number(adults), numberOfChildren: Number(children), promoCode: promoCode.trim() || null }); if (active) { setRoom(data.roomType); setQuote(priced.storefrontQuote); }
         }
         const methods = await graphqlClient.request<{ bookingPaymentProviders: Provider[] }>(GET_BOOKING_PAYMENT_PROVIDERS); if (!active) return; const available = (methods.bookingPaymentProviders || []).filter(provider => provider.code === 'pp_paypal_paypal' || (provider.code === 'pp_stripe_stripe' && provider.publicClientKey)); setProviders(available); setProviderCode(current => available.some(item => item.code === current) ? current : available[0]?.code || ''); setProviderError(available.length ? '' : 'Online payment is unavailable. Contact the property before reserving.');
       } catch { if (active) setLoadError(resumeId ? 'This reservation cannot be opened in this guest session. Use secure lookup to restore access.' : safeQuoteFailureMessage()); } finally { if (active) setLoading(false); }
     }
     void load(); return () => { active = false; };
-  }, [resumeId, roomTypeId, requestedRate, checkIn, checkOut, adults, children, promoCode, revision]);
+  }, [resumeId, roomTypeId, requestedRate, checkIn, checkOut, adults, children, promoCode, revision, identity.timeZone]);
   const keepReservation = (id: string) => { setBookingId(id); const next = new URLSearchParams(window.location.search); next.set('bookingId', id); window.history.replaceState(null, '', `/book?${next}`); };
   const startPayment = async (event: React.FormEvent) => {
     event.preventDefault(); if (actionLock.current || confirmationLock.current) return; if (!providerCode || (!bookingId && !accepted)) return; actionLock.current = true; setBusy(true); setPaymentError('');
@@ -79,13 +80,15 @@ function BookContent() {
     <div className="sf-checkout"><div className="sf-stack"><Skeleton height={56} width="60%" /><Skeleton height={52} /><Skeleton height={52} /><Skeleton height={120} /></div><Skeleton height={520} radius={22} /></div>
   </div>;
   if (loadError) return <StatePanel role="alert" icon={TriangleAlert} eyebrow="Your reservation" title="Let’s check the details."
-    actions={<><button type="button" className="sf-btn" onClick={() => setRevision(value => value + 1)}><RefreshCw aria-hidden="true" />Try again</button><Link href={resumeId ? '/bookings/lookup' : `/rooms?${originalQuery}`} className="sf-link">{resumeId ? 'Secure booking lookup' : 'Review rooms & dates'}</Link></>}>{loadError}</StatePanel>;
+    actions={<>{!selectionError && <button type="button" className="sf-btn" onClick={() => setRevision(value => value + 1)}><RefreshCw aria-hidden="true" />Try again</button>}<Link href={resumeId ? '/bookings/lookup' : `/rooms?${originalQuery}`} className="sf-link">{resumeId ? 'Secure booking lookup' : 'Review rooms & dates'}</Link></>}>{loadError}</StatePanel>;
 
   const arrival = held?.checkInDate || checkIn; const departure = held?.checkOutDate || checkOut; const canPay = !held || held.status === 'pending' || held.status === 'confirmed'; const displayedTerms = selectDisplayedStayPrice(bookingId, quote, bookedTerms); const paymentCurrency = displayedTerms?.currencyCode || held?.currencyCode || 'USD';
   const roomHref = `/rooms/${room?.id || roomTypeId}?${originalQuery}`;
   const guestCount = held?.numberOfGuests || Number(adults) + Number(children);
   const nights = displayedTerms?.nights || held?.numberOfNights || 0;
   const presentation = held ? reservationPresentation(held.status) : null;
+  // Dates outside the current year carry it; within the year it is noise.
+  const otherYear = String(departure).slice(0, 4) !== propertyToday(identity.timeZone).slice(0, 4);
 
   return <div className="sf-wrap" style={{ paddingBottom: 'clamp(56px, 8vw, 96px)' }}>
     <header className="sf-pagehead" style={{ paddingBottom: 'clamp(24px, 3vw, 36px)' }}>
@@ -147,7 +150,7 @@ function BookContent() {
           {bookingId && held?.status === 'pending' && <Notice tone="info" className="sf-noprint" title="This reservation is not confirmed yet."><p>It is subject to the latest availability and payment checks. A pending booking or an open payment form is not confirmation.</p><div className="sf-row"><Link href={`/booking/${bookingId}`} className="sf-link">Check reservation status <ExternalLink aria-hidden="true" /></Link></div></Notice>}
           {bookingId && !held && <Notice tone="warn" className="sf-noprint" title="We couldn’t check this reservation’s status."><p>Refresh the page, or open the reservation to see its current status before paying.</p><div className="sf-row"><Link href={`/booking/${bookingId}`} className="sf-link">Check reservation status <ExternalLink aria-hidden="true" /></Link></div></Notice>}
           {session && <section aria-label="Secure payment" className="sf-paybox" style={{ marginTop: 20 }}>
-            <div className="sf-bill__total" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}><b>Payment amount<small>Returned by the current payment session. Final status appears after verification.</small></b><span className="sf-amount">{money(session.amount, paymentCurrency)}</span></div>
+            <div className="sf-bill__total" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}><b>Payment amount<small>Due now</small></b><span className="sf-amount">{money(session.amount, paymentCurrency)}</span></div>
             {session.approveLink ? <a className="sf-btn sf-btn--lg sf-btn--block" href={session.approveLink}>Continue to PayPal <ArrowRight className="sf-btn__go" aria-hidden="true" /></a>
               : verification !== 'idle' ? null
               : stripe && session.clientSecret ? <Elements stripe={stripe} options={{ clientSecret: session.clientSecret, appearance: stripeAppearance(identity.accentPreset, identity.logo) }}><StripeCheckoutForm amount={session.amount / 100} currencyCode={paymentCurrency} bookingId={bookingId} paymentSessionId={session.id} onSuccess={completePayment} onError={setPaymentError} /></Elements>
@@ -174,11 +177,11 @@ function BookContent() {
               <h2 className="sf-h3" style={{ marginTop: 6 }}>{room?.name || 'Your room'}</h2>
             </div>
             <div className="sf-stayline">
-              <div><small>Check-in</small><b>{formatStayDate(arrival, { weekday: 'short', month: 'short', day: 'numeric' })}</b><span>From {identity.checkIn}</span></div>
+              <div><small>Check-in</small><b>{formatStayDate(arrival, { weekday: 'short', month: 'short', day: 'numeric', ...(otherYear ? { year: 'numeric' } : {}) })}</b><span>From {identity.checkIn}</span></div>
               <div className="sf-stayline__mid"><Moon aria-hidden="true" />{nights ? `${nights} ${nights === 1 ? 'night' : 'nights'}` : ''}</div>
-              <div><small>Check-out</small><b>{formatStayDate(departure, { weekday: 'short', month: 'short', day: 'numeric' })}</b><span>By {identity.checkOut}</span></div>
+              <div><small>Check-out</small><b>{formatStayDate(departure, { weekday: 'short', month: 'short', day: 'numeric', ...(otherYear ? { year: 'numeric' } : {}) })}</b><span>By {identity.checkOut}</span></div>
             </div>
-            <p className="sf-row sf-small sf-muted" style={{ gap: 8 }}><Users aria-hidden="true" style={{ width: 16 }} />{guestCount} {guestCount === 1 ? 'guest' : 'guests'} in one room · {formatStayDate(arrival, { year: 'numeric' })}</p>
+            <p className="sf-row sf-small sf-muted" style={{ gap: 8 }}><Users aria-hidden="true" style={{ width: 16 }} />{guestCount} {guestCount === 1 ? 'guest' : 'guests'} in one room</p>
             {displayedTerms ? <StayPrice quote={displayedTerms} paymentAmountMinor={session?.amount} /> : held && <section aria-label="Recorded booking total" className="sf-bill">
               <div className="sf-bill__row"><span>Taxes included</span><span>{money(held.taxAmountMinor ?? Math.round((held.taxAmount || 0) * 100), paymentCurrency)}</span></div>
               <div className="sf-bill__row"><span>Fees included</span><span>{money(held.feesAmountMinor ?? Math.round((held.feesAmount || 0) * 100), paymentCurrency)}</span></div>

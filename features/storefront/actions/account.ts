@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { guessablePassword } from '@/features/keystone/lib/guessablePassword';
 import { hotelResetActionSecret } from '@/features/keystone/lib/hotelResetActionSecret';
 import { GUEST_SESSION_COOKIE, storefrontServerGraphql } from '../lib/storefront-server-graphql';
 import { getGuestAccountBookings, type GuestAccountStaysPage } from '../lib/guest-account';
@@ -165,6 +166,7 @@ export async function redeemGuestPasswordResetAction(_previous: AccountFormState
   const email = field(form, 'email').toLowerCase();
   const password = String(form.get('password') || '');
   if (password !== String(form.get('confirmPassword') || '')) return { status: 'error', message: 'The two passwords don’t match.', email };
+  if (guessablePassword(password, email)) return { status: 'error', message: 'Choose a less common password of at least 10 characters.', email };
   try {
     const result = await storefrontServerGraphql<{ redeemHotelPasswordResetToken: { code?: string | null; message?: string | null } }>(REDEEM_RESET, { email, token: field(form, 'token'), password });
     const outcome = result.data?.redeemHotelPasswordResetToken;

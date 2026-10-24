@@ -326,6 +326,12 @@
 .sf-tabs a[aria-current='true'] { color: var(--ink); }
 .sf-tabs a::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--ink); transform: scaleX(0); transition: transform var(--sf-mid) var(--sf-ease); }
 .sf-tabs a[aria-current='true']::after { transform: scaleX(1); }
+/* Phones: tighter tabs, and a fade at the edge shows the row scrolls. */
+@media (max-width: 560px) {
+  .sf-tabs__row { gap: 2px; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: 32px; }
+  .sf-tabs a { padding: 14px 9px; font-size: 0.86rem; }
+  .sf-tabs a::after { left: 9px; right: 9px; }
+}
 
 /* ─── Home hero & planner ────────────────────────────────────────────── */
 .sf-hero { position: relative; min-height: clamp(560px, 92dvh, 900px); display: grid; align-items: end; color: oklch(99% 0.004 85); overflow: hidden; background: var(--night); }
@@ -554,6 +560,9 @@
 .sf-comparebar__thumbs img { width: 34px; height: 34px; border-radius: 999px; object-fit: cover; border: 2px solid var(--night); margin-left: -10px; }
 .sf-comparebar__thumbs img:first-child { margin-left: 0; }
 .sf-comparebar .sf-btn--sm { min-height: 40px; }
+/* Room for the fixed compare bar, so the last card's controls can scroll clear of it and focus never lands under it. */
+#results[data-comparebar] { padding-bottom: calc(var(--sf-comparebar-space, 96px) + env(safe-area-inset-bottom)); }
+html:has(.sf-comparebar) { scroll-padding-bottom: 96px; }
 .sf-compare { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--sf-radius-lg); background: var(--card); }
 .sf-compare table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 0.9rem; }
 .sf-compare :is(th, td) { padding: 16px 18px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
@@ -604,6 +613,8 @@
 .sf-band .sf-empty { border-color: oklch(100% 0 0 / 0.2); }
 .sf-band__media { aspect-ratio: 5 / 4; border-radius: var(--sf-radius-xl); overflow: hidden; }
 .sf-band__media img { width: 100%; height: 100%; object-fit: cover; }
+.sf-band__figure { margin: 0; min-width: 0; }
+.sf-band__figure figcaption { padding: 10px 2px 0; font-size: 0.86rem; color: oklch(76% 0.012 78); }
 .sf-feature { display: grid; gap: 12px; align-content: start; padding: 26px; border-radius: var(--sf-radius-lg); background: var(--card); border: 1px solid var(--line); }
 .sf-feature__icon { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--tint); color: var(--accent-deep); }
 .sf-feature__icon svg { width: 21px; height: 21px; stroke-width: 1.7; }

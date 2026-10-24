@@ -89,7 +89,7 @@ export default function BookingLookupPage() {
           <form action={formAction} className="sf-float sf-pad-lg sf-stack" style={{ '--stack': '20px' } as React.CSSProperties}>
             <div>
               <p className="sf-eyebrow sf-eyebrow--plain" style={{ gap: 8 }}><ShieldCheck aria-hidden="true" style={{ width: 16 }} /> Secure reservation lookup</p>
-              <p className="sf-muted sf-small" style={{ marginTop: 8 }}>Your confirmation number starts with BK- and appears in your booking confirmation email.</p>
+              <p className="sf-muted sf-small" style={{ marginTop: 8 }}>Your confirmation number starts with BK- and is shown on your reservation page and in your confirmation email.</p>
             </div>
 
             <label className="sf-field" htmlFor="confirmationNumber">

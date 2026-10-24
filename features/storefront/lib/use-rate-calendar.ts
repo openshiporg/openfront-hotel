@@ -10,6 +10,10 @@ export interface RateCalendarInput {
   roomTypeId: string;
   ratePlanId: string;
   minimumStay: number;
+  /** The rate's longest stay; no limit when absent. */
+  maximumStay?: number | null;
+  /** Furthest arrival the rate accepts, in days from today; no limit when absent. */
+  advanceBookingMax?: number | null;
   maxNights: number;
   adults: number;
   children: number;
@@ -46,21 +50,31 @@ async function quoteWindow(input: RateCalendarInput, from: string, to: string) {
 
 async function priceMonth(input: RateCalendarInput): Promise<RateCalendar> {
   const from = input.month < input.today ? input.today : input.month;
+  const monthEnd = monthStart(input.month, 1);
   const minimum = Math.max(1, input.minimumStay || 1);
-  let to = monthStart(input.month, 1);
-  if (daysBetween(from, to) < minimum) to = addDays(from, minimum);
-  if (daysBetween(from, to) > input.maxNights) to = addDays(from, input.maxNights);
-  const span = daysBetween(from, to);
-  if (span < 1) return { prices: {}, currencyCode: '', complete: false };
+  // The server refuses any stay longer than the rate allows, so each window stays inside it.
+  const maximum = Math.max(minimum, Math.min(input.maxNights, input.maximumStay || input.maxNights));
+  const lastArrival = input.advanceBookingMax != null ? addDays(input.today, input.advanceBookingMax) : null;
 
-  const windows: Array<[string, string]> = [[from, to]];
-  let quotes = await Promise.allSettled(windows.map(([start, end]) => quoteWindow(input, start, end)));
-  // One unavailable night or rate rule fails the whole window; split once so the
-  // rest of the month can still show its charges.
-  if (quotes[0].status === 'rejected' && span >= minimum * 2) {
-    const middle = addDays(from, Math.floor(span / 2));
-    quotes = await Promise.allSettled([quoteWindow(input, from, middle), quoteWindow(input, middle, to)]);
+  const windows: Array<[string, string]> = [];
+  for (let start = from; start < monthEnd; start = addDays(start, maximum)) {
+    if (lastArrival && start > lastArrival) break;
+    let end = addDays(start, maximum);
+    if (end > monthEnd) end = monthEnd;
+    if (daysBetween(start, end) < minimum) end = addDays(start, minimum);
+    windows.push([start, end]);
   }
+  if (!windows.length) return { prices: {}, currencyCode: '', complete: false };
+
+  // One unavailable night or rate rule fails a whole window; split it once so the
+  // rest of it can still show its charges.
+  const quotes = (await Promise.all(windows.map(async ([start, end]) => {
+    const [whole] = await Promise.allSettled([quoteWindow(input, start, end)]);
+    const span = daysBetween(start, end);
+    if (whole.status === 'fulfilled' || span < minimum * 2) return [whole];
+    const middle = addDays(start, Math.floor(span / 2));
+    return Promise.allSettled([quoteWindow(input, start, middle), quoteWindow(input, middle, end)]);
+  }))).flat();
   const prices: Record<string, number> = {};
   let currencyCode = '';
   for (const result of quotes) {
@@ -71,7 +85,7 @@ async function priceMonth(input: RateCalendarInput): Promise<RateCalendar> {
       if (Number.isSafeInteger(night.amountMinor) && night.amountMinor >= 0) prices[night.date] = night.amountMinor;
     }
   }
-  return { prices, currencyCode, complete: Object.keys(prices).length >= daysBetween(from, monthStart(input.month, 1)) };
+  return { prices, currencyCode, complete: Object.keys(prices).length >= daysBetween(from, monthEnd) };
 }
 
 /**

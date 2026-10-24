@@ -296,6 +296,11 @@ export async function requestBookingCancellation({
           },
     }));
     await recomputeBookingPaymentState(prisma, bookingId);
+    // Nothing is left to change on a cancelled stay; close any request still waiting for review.
+    await prisma.bookingModificationRequest.updateMany({
+      where: { bookingId, status: 'pending' },
+      data: { status: 'declined', resolvedAt: now, staffNote: 'Closed because the reservation was cancelled.', updatedAt: now },
+    });
     if (['cancelled', 'no_show'].includes(updated.status)) await releaseCancelledGroupPickup(prisma, bookingId, eventKey);
     await recordHotelLifecycleEvent({
       prisma, eventKey, actorId: actorId || null, identity,

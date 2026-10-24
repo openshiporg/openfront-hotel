@@ -5,8 +5,13 @@ async function storefrontAvailability(
   { checkInDate, checkOutDate }: { checkInDate: string; checkOutDate: string },
   context: any,
 ) {
-  const rows = await getHotelAvailability(context, { checkInDate, checkOutDate });
-  return rows.map((roomType: any) => ({
+  const [rows, bookablePlans] = await Promise.all([
+    getHotelAvailability(context, { checkInDate, checkOutDate }),
+    context.prisma.ratePlan.findMany({ where: { status: 'active', isPublic: true }, select: { roomTypeId: true } }),
+  ]);
+  // Same rule as the catalogue: a room type without a public rate is not shown.
+  const bookable = new Set(bookablePlans.map((plan: { roomTypeId: string | null }) => plan.roomTypeId));
+  return rows.filter((roomType: any) => bookable.has(roomType.id)).map((roomType: any) => ({
     id: roomType.id,
     name: roomType.name,
     shortDescription: roomType.shortDescription,
