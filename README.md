@@ -6,14 +6,14 @@ Openfront Hotel is a self-hostable hotel property-management and direct-booking 
 
 ## Demo
 
-<a href="https://alder.openship.org"><img src="public/images/hotel/the-alder-house-lobby-hero.webp" alt="Lobby image used by The Alder House storefront" width="600"></a>
+<a href="https://hotel.openship.org"><img src="public/images/hotel/the-alder-house-lobby-hero.webp" alt="Lobby image used by The Alder House storefront" width="600"></a>
 
 The Alder House
 
 | | |
 |---|---|
-| **Storefront** | [alder.openship.org](https://alder.openship.org) |
-| **Dashboard** | [alder.openship.org/dashboard](https://alder.openship.org/dashboard) |
+| **Storefront** | [hotel.openship.org](https://hotel.openship.org) |
+| **Dashboard** | [hotel.openship.org/dashboard](https://hotel.openship.org/dashboard) |
 | **User** | `alder@openship.org` |
 | **Password** | `yxKiycgc2Qxagi5rPtbA` |
 
