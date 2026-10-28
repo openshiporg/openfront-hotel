@@ -506,6 +506,11 @@
 .sf-media img { width: 100%; height: 100%; object-fit: cover; transition: transform 900ms var(--sf-ease); }
 .sf-media__badges { position: absolute; left: 14px; top: 14px; right: 14px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; pointer-events: none; }
 .sf-roomgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(20px, 2.5vw, 36px); }
+/* Two rooms share the row instead of leaving an empty third column. */
+@media (min-width: 768px) {
+  .sf-roomgrid[data-count='2'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sf-roomgrid[data-count='2'] .sf-roomcard .sf-media { aspect-ratio: 4 / 3; }
+}
 .sf-roomcard { position: relative; display: grid; gap: 18px; align-content: start; min-width: 0; }
 .sf-roomcard .sf-media { aspect-ratio: 4 / 4.6; }
 .sf-roomcard:hover .sf-media img { transform: scale(1.045); }
@@ -646,6 +651,11 @@ html:has(.sf-comparebar) { scroll-padding-bottom: 96px; }
 @media (min-width: 1024px) and (max-height: 1179px) { .sf-checkout__aside--tall { position: static; } }
 .sf-formsection { display: grid; gap: 20px; padding-bottom: 32px; }
 .sf-formsection + .sf-formsection { padding-top: 32px; border-top: 1px solid var(--line); }
+/* `.sf fieldset` resets padding, and a fieldset's legend is drawn over its top border,
+ * so a section divides from the next one with its own bottom edge. */
+.sf .sf-formsection { padding-bottom: 32px; }
+.sf .sf-formsection + .sf-formsection { padding-top: 0; border-top: 0; }
+.sf .sf-formsection:has(+ .sf-formsection) { margin-bottom: 32px; border-bottom: 1px solid var(--line); }
 .sf-formsection__head { display: flex; gap: 14px; align-items: baseline; }
 .sf-formsection__head i { font-style: normal; font-family: var(--display); color: var(--accent-deep); font-size: 1.1rem; }
 .sf-formgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }

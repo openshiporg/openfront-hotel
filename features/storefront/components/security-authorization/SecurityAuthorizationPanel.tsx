@@ -6,7 +6,7 @@ import { RefreshCw, ShieldCheck } from 'lucide-react';
 import { graphqlClient } from '@/lib/graphql-client';
 import { operationAttempt } from '@/lib/operationAttempt';
 import { money } from '../../lib/stay-context';
-import { stripeAppearance } from '../../lib/stripe-appearance';
+import { STRIPE_FONTS, stripeAppearance } from '../../lib/stripe-appearance';
 import { useHotelSettings } from '../HotelSettingsProvider';
 import { Notice } from '../ui';
 const query = 'query($bookingId:ID!){hotelSecurityAuthorization(bookingId:$bookingId) bookingPaymentProviders{id code publicClientKey}}';
@@ -59,7 +59,7 @@ export function SecurityAuthorizationPanel({ bookingId }: { bookingId: string })
       {data?.authorization && <button type="button" className="sf-btn sf-btn--ghost sf-btn--sm" disabled={busy} onClick={() => void run('sync')}><RefreshCw aria-hidden="true" className={busy ? 'sf-spinner' : undefined} />Refresh hold status</button>}
       {loadFailed && <button type="button" className="sf-btn sf-btn--ghost sf-btn--sm" disabled={busy} onClick={() => void retryLoad()}><RefreshCw aria-hidden="true" className={busy ? 'sf-spinner' : undefined} />Try again</button>}
     </div>
-    {secret && stripe && <div className="sf-paybox"><Elements stripe={stripe} options={{ clientSecret: secret, appearance: stripeAppearance(accentPreset, logo) }}><AuthorizeCard onDone={() => run('sync')} /></Elements></div>}
+    {secret && stripe && <div className="sf-paybox"><Elements stripe={stripe} options={{ clientSecret: secret, appearance: stripeAppearance(accentPreset, logo), fonts: STRIPE_FONTS }}><AuthorizeCard onDone={() => run('sync')} /></Elements></div>}
     {error && <Notice tone="danger" role="alert">{error}</Notice>}
   </section>;
 }

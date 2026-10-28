@@ -4,9 +4,9 @@ import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-import { ArrowLeft, ArrowRight, Check, CreditCard, ExternalLink, Lock, Moon, RefreshCw, TriangleAlert, Users, Wallet } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, CreditCard, ExternalLink, Lock, Moon, RefreshCw, TriangleAlert, Users, Wallet } from 'lucide-react';
 import { graphqlClient } from '@/lib/graphql-client';
-import { CREATE_STOREFRONT_BOOKING, GET_BOOKING_PAYMENT_PROVIDERS, GET_ROOM_TYPE, GET_STOREFRONT_QUOTE, GET_GUEST_BOOKING, INITIATE_BOOKING_PAYMENT_SESSION } from '@/lib/queries';
+import { CREATE_STOREFRONT_BOOKING, GET_BOOKING_PAYMENT_PROVIDERS, GET_ROOM_TYPE, GET_ROOM_TYPES, GET_STOREFRONT_QUOTE, GET_GUEST_BOOKING, INITIATE_BOOKING_PAYMENT_SESSION } from '@/lib/queries';
 import type { Booking, RoomType } from '@/lib/types';
 import { selectDisplayedStayPrice, type StayQuote } from '../lib/quote';
 import { primaryRoomImage } from '@/lib/hotel-storefront';
@@ -16,14 +16,41 @@ import { StripeCheckoutForm } from '@/components/booking/StripeCheckoutForm';
 import { useHotelSettings } from '../components/HotelSettingsProvider';
 import { useGuestAccount } from '../components/GuestAccountProvider';
 import { StayPrice } from '../components/StayPrice';
-import { Notice, Skeleton, StatePanel } from '../components/ui';
+import { Notice, PageHead, Skeleton, StatePanel } from '../components/ui';
+import { StayPlanner } from '../components/stay/StayPlanner';
+import { RoomCard } from '../components/room/RoomCard';
 import { money, reservationPresentation } from '../lib/stay-context';
 import { ratePlanStayMessage, roomSearchValidationMessage, selectInitialPublicRatePlan, safeQuoteFailureMessage } from '../lib/qa-workflows';
 import { propertyToday } from '../lib/calendar';
-import { stripeAppearance } from '../lib/stripe-appearance';
+import { STRIPE_FONTS, stripeAppearance } from '../lib/stripe-appearance';
 import { settleBookingPayment } from '../lib/payment-settlement';
 interface Provider { id: string; name: string; code: string; displayName?: string | null; publicClientKey?: string | null }
 interface Session { id: string; amount: number; clientSecret?: string | null; approveLink?: string | null }
+
+/** /book opened without a room or dates: help the guest start a reservation here. */
+function BookStart() {
+  const [rooms, setRooms] = useState<RoomType[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    graphqlClient.request<{ roomTypes: RoomType[] }>(GET_ROOM_TYPES).then(data => { if (active) setRooms(data.roomTypes || []); }).catch(() => { if (active) setRooms([]); });
+    return () => { active = false; };
+  }, []);
+  return <div style={{ paddingBottom: 'clamp(56px, 8vw, 96px)' }}>
+    <PageHead eyebrow="Direct reservation" title={<>Start with your <em>dates.</em></>} lead="Choose your stay dates to see live availability and the full stay price, including taxes and fees. Or open a room first and pick dates from its rate calendar." />
+    <div className="sf-wrap" id="choose-dates"><StayPlanner variant="bar" /></div>
+    <section className="sf-wrap sf-section--tight" aria-labelledby="book-rooms" style={{ paddingBottom: 0 }}>
+      <div className="sf-pagehead__row" style={{ marginBottom: 'clamp(24px, 3vw, 36px)' }}>
+        <h2 id="book-rooms" className="sf-h3">Or start from a room</h2>
+        <Link href="/bookings/lookup" className="sf-link">Already booked? Find a reservation <ArrowUpRight aria-hidden="true" /></Link>
+      </div>
+      {rooms === null
+        ? <div className="sf-roomgrid" data-count="2" role="status" aria-label="Loading rooms"><Skeleton height={360} radius={22} /><Skeleton height={360} radius={22} /></div>
+        : rooms.length
+          ? <div className="sf-roomgrid sf-roomgrid--scroll" data-count={Math.min(rooms.length, 3)}>{rooms.slice(0, 3).map(room => <RoomCard key={room.id} room={room} href={`/rooms/${room.id}`} />)}</div>
+          : <div className="sf-row"><Link href="/rooms" className="sf-btn sf-btn--ghost">Browse rooms & suites</Link><Link href="/contact" className="sf-link">Contact the property</Link></div>}
+    </section>
+  </div>;
+}
 
 function BookContent() {
   const params = useSearchParams(); const router = useRouter(); const identity = useHotelSettings(); const { account } = useGuestAccount(); const originalQuery = params?.toString() || '';
@@ -38,6 +65,7 @@ function BookContent() {
     let active = true; setLoading(true); setLoadError(''); setSelectionError(false);
     async function load() {
       try {
+        if (!resumeId && !roomTypeId && !checkIn && !checkOut) return;
         if (resumeId) { const data = await graphqlClient.request<{ booking: Booking | null }>(GET_GUEST_BOOKING, { bookingId: resumeId }); if (!data.booking) throw new Error('access'); if (!active) return; setHeld(data.booking); setBookedTerms(data.booking.bookedStayTerms || null); setReference(data.booking.confirmationNumber); setRoom(data.booking.roomAssignments?.[0]?.roomType || null); setForm({ guestName: data.booking.guestName, guestEmail: data.booking.guestEmail, guestPhone: data.booking.guestPhone || '', specialRequests: data.booking.specialRequests || '' }); }
         else {
           const invalid = roomSearchValidationMessage(checkIn, checkOut, adults, children); if (invalid || !roomTypeId || !checkIn || !checkOut) { if (active) { setLoadError(invalid || 'Choose a room and stay dates before reserving.'); setSelectionError(true); } return; }
@@ -75,6 +103,7 @@ function BookContent() {
     } finally { confirmationLock.current = false; setConfirming(false); }
   };
 
+  if (!resumeId && !roomTypeId && !checkIn && !checkOut) return <BookStart />;
   if (loading) return <div className="sf-wrap sf-section--tight" role="status" aria-label="Preparing your stay details">
     <Skeleton height={14} width={220} /><div style={{ height: 28 }} />
     <div className="sf-checkout"><div className="sf-stack"><Skeleton height={56} width="60%" /><Skeleton height={52} /><Skeleton height={52} /><Skeleton height={120} /></div><Skeleton height={520} radius={22} /></div>
@@ -153,7 +182,7 @@ function BookContent() {
             <div className="sf-bill__total" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}><b>Payment amount<small>Due now</small></b><span className="sf-amount">{money(session.amount, paymentCurrency)}</span></div>
             {session.approveLink ? <a className="sf-btn sf-btn--lg sf-btn--block" href={session.approveLink}>Continue to PayPal <ArrowRight className="sf-btn__go" aria-hidden="true" /></a>
               : verification !== 'idle' ? null
-              : stripe && session.clientSecret ? <Elements stripe={stripe} options={{ clientSecret: session.clientSecret, appearance: stripeAppearance(identity.accentPreset, identity.logo) }}><StripeCheckoutForm amount={session.amount / 100} currencyCode={paymentCurrency} bookingId={bookingId} paymentSessionId={session.id} onSuccess={completePayment} onError={setPaymentError} /></Elements>
+              : stripe && session.clientSecret ? <Elements stripe={stripe} options={{ clientSecret: session.clientSecret, appearance: stripeAppearance(identity.accentPreset, identity.logo), fonts: STRIPE_FONTS }}><StripeCheckoutForm amount={session.amount / 100} currencyCode={paymentCurrency} bookingId={bookingId} paymentSessionId={session.id} onSuccess={completePayment} onError={setPaymentError} /></Elements>
                 : <p role="status" className="sf-muted">Preparing the secure payment form…</p>}
             {confirming && <p role="status" className="sf-muted">Verifying payment and reservation status… Keep this page open and don’t pay again.</p>}
             {verification === 'unknown' && <Notice tone="accent" role="status" title="Payment submitted. Confirmation is still in progress.">

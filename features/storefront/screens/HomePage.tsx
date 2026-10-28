@@ -34,7 +34,7 @@ export default async function HomePage() {
           <StayLink href="/rooms" className="sf-link">{rooms.length > 3 ? `All ${rooms.length} rooms` : 'Compare rooms & rates'} <ArrowUpRight aria-hidden="true" /></StayLink>
         </div>
         {rooms.length
-          ? <div className="sf-roomgrid sf-roomgrid--scroll">{rooms.slice(0, 3).map((room, index) => <RoomCard key={room.id} room={room} href={`/rooms/${room.id}`} priority={index === 0} />)}</div>
+          ? <div className="sf-roomgrid sf-roomgrid--scroll" data-count={Math.min(rooms.length, 3)}>{rooms.slice(0, 3).map((room, index) => <RoomCard key={room.id} room={room} href={`/rooms/${room.id}`} priority={index === 0} />)}</div>
           : <div className="sf-empty">
             <span className="sf-state__icon"><BedDouble aria-hidden="true" /></span>
             <h3 className="sf-h3">{unavailable ? 'Rooms are temporarily unavailable.' : 'The room collection is being prepared.'}</h3>
