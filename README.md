@@ -1,4 +1,4 @@
-![Openfront Hotel](https://openship.org/og/openfront-hotel.png)
+![openfront-hotel](.github/logo.svg)
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fopenshiporg%2Fopenfront-hotel&env=DATABASE_URL%2CSESSION_SECRET%2CHOTEL_DATA_ENCRYPTION_KEY%2CHOTEL_QUOTE_SECRET%2CNEXT_PUBLIC_SITE_URL)
 
