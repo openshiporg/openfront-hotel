@@ -2,6 +2,8 @@
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fopenshiporg%2Fopenfront-hotel&env=DATABASE_URL%2CSESSION_SECRET%2CHOTEL_DATA_ENCRYPTION_KEY%2CHOTEL_QUOTE_SECRET%2CNEXT_PUBLIC_SITE_URL)
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/openfront-hotel)
+
 Openfront Hotel is a self-hostable hotel property-management and direct-booking application. Guests can browse rooms, compare stay quotes, book direct, and review their booking and folio. Staff use the dashboard for reservations, room assignments, rates, housekeeping, maintenance, guest bills, and daily hotel operations.
 
 **Documentation:** [docs.openship.org/docs/openfront/hotel](https://docs.openship.org/docs/openfront/hotel)
