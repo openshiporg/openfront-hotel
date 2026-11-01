@@ -1,27 +1,29 @@
 import '@/features/storefront/styles/tokens.css';
 import '@/features/storefront/styles/storefront.css';
+import '@/features/storefront/styles/rigel.css';
 import { StayProvider } from '@/features/storefront/components/StayProvider';
 import type { Metadata, Viewport } from 'next';
-import { Fraunces, Instrument_Sans } from 'next/font/google';
+import { EB_Garamond, Jost } from 'next/font/google';
 import { SiteHeader } from '@/features/storefront/components/chrome/SiteHeader';
 import { SiteFooter } from '@/features/storefront/components/chrome/SiteFooter';
+import { TabBar } from '@/features/storefront/components/chrome/TabBar';
 import { HotelSettingsProvider } from '@/features/storefront/components/HotelSettingsProvider';
 import { getHotelSettings } from '@/features/storefront/lib/hotel-settings';
-import { resolveStorefrontBrand, storefrontBrandCssVariables } from '@/features/storefront/lib/storefront-theme';
-import { wordmarkFont } from '@/features/storefront/lib/wordmark-font';
+import { STOREFRONT_THEME_PRIMARY } from '@/features/storefront/lib/storefront-theme';
 import { GuestAccountProvider } from '@/features/storefront/components/GuestAccountProvider';
 import { getGuestAccountStatus } from '@/features/storefront/lib/guest-account';
 import { configuredSiteOrigin } from '@/features/keystone/lib/productionConfig';
 
-const display = Fraunces({
+// Rigel: a book serif for headings, room copy and prices; a geometric sans for labels and controls.
+const display = EB_Garamond({
   subsets: ['latin'],
-  axes: ['opsz', 'SOFT'],
-  style: ['normal', 'italic'],
+  weight: ['400', '500'],
   display: 'swap',
 });
 
-const sans = Instrument_Sans({
+const sans = Jost({
   subsets: ['latin'],
+  weight: ['400', '500', '600'],
   display: 'swap',
 });
 
@@ -63,22 +65,19 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export async function generateViewport(): Promise<Viewport> {
-  const identity = await getHotelSettings();
   return {
     colorScheme: 'light',
-    themeColor: resolveStorefrontBrand(identity.accentPreset, identity.logo).swatch,
+    themeColor: STOREFRONT_THEME_PRIMARY,
   };
 }
 
-/** Theme tokens live on :root so dialogs and popovers portalled outside the shell match it.
- * Values come only from the accent presets, the normalized saved logo hue and next/font,
- * never from request input. */
-function storefrontRootStyle(identity: Awaited<ReturnType<typeof getHotelSettings>>) {
+/** Font tokens live on :root so dialogs and popovers portalled outside the shell match it.
+ * The Rigel palette is fixed in tokens.css; the saved logo keeps its own colour in the header. */
+function storefrontRootStyle() {
   const tokens = {
-    ...storefrontBrandCssVariables(resolveStorefrontBrand(identity.accentPreset, identity.logo)),
     '--sf-font-display': display.style.fontFamily,
     '--sf-font-sans': sans.style.fontFamily,
-    '--sf-font-wordmark': wordmarkFont.style.fontFamily,
+    '--sf-font-wordmark': display.style.fontFamily,
   };
   return `:root{${Object.entries(tokens).map(([name, value]) => `${name}:${value}`).join(';')}}`;
 }
@@ -94,7 +93,7 @@ export default async function StorefrontLayout({
     <HotelSettingsProvider identity={identity}>
       <GuestAccountProvider status={account}>
       <StayProvider>
-        <style dangerouslySetInnerHTML={{ __html: storefrontRootStyle(identity) }} />
+        <style dangerouslySetInnerHTML={{ __html: storefrontRootStyle() }} />
         <div
           className="sf"
           data-storefront-accent={identity.accentPreset}
@@ -103,6 +102,7 @@ export default async function StorefrontLayout({
           <SiteHeader />
           <main id="storefront-content" tabIndex={-1} className="sf-main">{children}</main>
           <SiteFooter />
+          <TabBar />
         </div>
       </StayProvider>
       </GuestAccountProvider>

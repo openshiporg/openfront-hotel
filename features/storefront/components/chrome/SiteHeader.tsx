@@ -13,14 +13,15 @@ import type { HotelLogo } from '../../lib/hotel-settings';
 import { DEFAULT_STORE_LOGO_ICON, effectiveStoreLogoHue } from '@/features/platform/property/lib/store-logo';
 
 const primary = [
-  { href: '/rooms', label: 'Rooms & suites' },
-  { href: '/amenities', label: 'The house' },
+  { href: '/', label: 'Hotel' },
+  { href: '/rooms', label: 'Rooms' },
+  { href: '/amenities', label: 'Amenities' },
   { href: '/gallery', label: 'Gallery' },
   { href: '/location', label: 'Location' },
+  { href: '/contact', label: 'Contact' },
 ];
 const secondary = [
   { href: '/bookings/lookup', label: 'Find a reservation' },
-  { href: '/contact', label: 'Contact the house' },
   { href: '/policies', label: 'Stay policies' },
 ];
 
@@ -60,7 +61,7 @@ export function SiteHeader() {
   const guests = Number(dates.get('adults') || 2) + Number(dates.get('children') || 0);
   const hasStay = calendarDay(arrival) && calendarDay(departure) && arrival < departure;
   const showStay = hasStay && !pathname.startsWith('/booking/') && !pathname.startsWith('/book');
-  const current = (href: string) => pathname === href || pathname.startsWith(`${href}/`) ? 'page' as const : undefined;
+  const current = (href: string) => pathname === href || (href !== '/' && pathname.startsWith(`${href}/`)) ? 'page' as const : undefined;
   const phone = identity.phone.replace(/[^+\d]/g, '');
 
   return <header className="sf-header" data-overlay={overlay} data-scrolled={scrolled}>
@@ -75,7 +76,7 @@ export function SiteHeader() {
           <CalendarDays aria-hidden="true" /><b>{rangeLabel(arrival, departure)}</b><span aria-hidden="true">·</span>{guests} {guests === 1 ? 'guest' : 'guests'}
         </StayLink>}
         <Link className="sf-header__manage" href="/account" aria-current={current('/account')}><UserRound aria-hidden="true" />{accountLabel}</Link>
-        <StayLink className="sf-btn sf-btn--sm sf-header__book" href="/rooms">Book a room</StayLink>
+        <StayLink className="sf-btn sf-btn--sm sf-header__book" href="/rooms">Book now</StayLink>
         <button type="button" className="sf-menu-btn" aria-label="Open menu" aria-haspopup="dialog" onClick={() => drawer.current?.showModal()}><Menu aria-hidden="true" /></button>
       </div>
     </div>
@@ -89,7 +90,7 @@ export function SiteHeader() {
           <CalendarDays aria-hidden="true" /><b>{rangeLabel(arrival, departure)}</b> · {guests} {guests === 1 ? 'guest' : 'guests'}
         </StayLink>}
         <nav className="sf-drawer__primary" aria-label="Explore">
-          {primary.map(link => <StayLink key={link.href} href={link.href} aria-current={current(link.href)} onClick={() => drawer.current?.close()}>{link.label}<ArrowUpRight aria-hidden="true" /></StayLink>)}
+          {primary.filter(link => link.href !== '/').map(link => <StayLink key={link.href} href={link.href} aria-current={current(link.href)} onClick={() => drawer.current?.close()}>{link.label}<ArrowUpRight aria-hidden="true" /></StayLink>)}
         </nav>
         <nav className="sf-drawer__secondary" aria-label="Your stay">
           <Link href="/account" aria-current={current('/account')} onClick={() => drawer.current?.close()}>{account ? 'Your account' : 'Sign in or create an account'}</Link>

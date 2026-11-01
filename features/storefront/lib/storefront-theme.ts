@@ -2,6 +2,10 @@ import { normalizeStoreLogoColor, storeLogoIsCustomized } from '../../platform/p
 
 export const DEFAULT_STOREFRONT_ACCENT_PRESET = 'brass' as const;
 
+/** Rigel storefront: buttons, links and chrome are set in this deep navy on white.
+ * The property's accent (preset or saved logo colour) tints the quieter details. */
+export const STOREFRONT_THEME_PRIMARY = '#1f3150';
+
 export const STOREFRONT_ACCENT_PRESETS = [
   {
     key: 'brass',

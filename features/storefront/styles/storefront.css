@@ -333,34 +333,7 @@
   .sf-tabs a::after { left: 9px; right: 9px; }
 }
 
-/* ─── Home hero & planner ────────────────────────────────────────────── */
-.sf-hero { position: relative; min-height: clamp(560px, 92dvh, 900px); display: grid; align-items: end; color: oklch(99% 0.004 85); overflow: hidden; background: var(--night); }
-.sf-hero__media { position: absolute; inset: 0; }
-.sf-hero__media img { width: 100%; height: 100%; object-fit: cover; transform: scale(1.04); animation: sf-hero-settle 1.6s var(--sf-ease) both; }
-@keyframes sf-hero-settle { from { transform: scale(1.1); opacity: 0.6; } }
-.sf-hero__media::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, oklch(12% 0.01 60 / 0.5) 0%, oklch(12% 0.01 60 / 0) 24%, oklch(12% 0.01 60 / 0.06) 48%, oklch(12% 0.01 60 / 0.72) 100%); }
-.sf-hero__content { position: relative; padding-top: calc(var(--sf-header-h) + 40px); padding-bottom: clamp(120px, 14vw, 168px); display: grid; gap: 22px; }
-.sf-hero__content .sf-eyebrow { color: oklch(93% 0.02 80); }
-.sf-hero__content .sf-display { max-width: 11ch; color: oklch(99% 0.004 85); text-shadow: 0 2px 30px oklch(10% 0.01 60 / 0.25); }
-.sf-hero__content .sf-lead { color: oklch(93% 0.01 80); max-width: 46ch; }
-.sf-hero__caption { position: absolute; right: var(--sf-gutter); bottom: clamp(120px, 14vw, 168px); font-size: 0.78rem; color: oklch(90% 0.01 80 / 0.8); display: flex; align-items: center; gap: 8px; }
-.sf-hero__caption::before { content: ''; width: 24px; height: 1px; background: currentColor; }
-.sf-planner-dock { position: relative; z-index: 5; margin-top: calc(clamp(56px, 7vw, 84px) * -1); }
-
-.sf-planner { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr) auto; align-items: stretch; gap: 6px; padding: 8px; border-radius: var(--sf-radius-xl); background: var(--card); box-shadow: var(--sf-shadow-lg); border: 1px solid color-mix(in oklch, var(--line) 60%, transparent); }
-.sf-planner--flat { box-shadow: var(--sf-shadow-sm); }
-.sf-planner__field { position: relative; display: grid; align-content: center; gap: 3px; text-align: left; min-height: 68px; padding: 10px 20px; border-radius: calc(var(--sf-radius-xl) - 8px); transition: background var(--sf-fast) var(--sf-ease); min-width: 0; }
-.sf-planner__field:hover, .sf-planner__field[data-state='open'] { background: var(--paper-2); }
-.sf-planner__field + .sf-planner__field::before { content: ''; position: absolute; left: -4px; top: 18px; bottom: 18px; width: 1px; background: var(--line); }
-.sf-planner__field small { font-size: 0.74rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
-.sf-planner__field > span { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 1.04rem; font-weight: 600; }
-.sf-planner__field > span > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sf-planner__field > span svg { width: 18px; height: 18px; color: var(--accent-deep); flex: none; }
-.sf-planner__field i { font-style: normal; font-weight: 500; color: var(--ink-3); }
-.sf-planner__submit { min-height: 68px; padding: 0 30px; border-radius: calc(var(--sf-radius-xl) - 8px); }
-.sf-planner__note { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 18px; margin-top: 14px; padding-inline: 12px; font-size: 0.82rem; color: var(--ink-3); }
-.sf-planner__error { margin-top: 12px; }
-
+/* ─── Popovers, sheets, dialogs ─────────────────────────────────────── */
 .sf-pop { z-index: 60; width: min(760px, calc(100vw - var(--sf-gutter) * 2)); padding: 24px; border-radius: var(--sf-radius-xl); background: var(--card); border: 1px solid var(--line); box-shadow: var(--sf-shadow-lg); transform-origin: var(--radix-popover-content-transform-origin); animation: sf-pop-in var(--sf-mid) var(--sf-ease); }
 .sf-pop--guests { width: min(380px, calc(100vw - var(--sf-gutter) * 2)); padding: 8px 22px 18px; }
 /* The date popover is the Oil stay card: 372px wide, 19px × 21px padding, 8px radius. */
@@ -809,17 +782,6 @@ html:has(.sf-comparebar) { scroll-padding-bottom: 96px; }
 @media (max-width: 767px) {
   .sf-split, .sf-pass, .sf-roomrow { grid-template-columns: minmax(0, 1fr); }
   .sf-pass__media { min-height: 200px; order: -1; }
-  .sf-planner { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 6px; border-radius: var(--sf-radius-lg); }
-  .sf-planner__field { min-height: 62px; padding: 10px 14px; border-radius: 16px; }
-  .sf-planner__field:first-child { grid-column: 1 / -1; }
-  .sf-planner__field + .sf-planner__field::before { display: none; }
-  .sf-planner__field:first-child { border-bottom: 1px solid var(--line); border-radius: 16px 16px 0 0; }
-  .sf-planner__submit { grid-column: 1 / -1; min-height: 54px; border-radius: 14px; }
-  .sf-planner__field span { font-size: 0.98rem; }
-  .sf-planner-dock { margin-top: -52px; }
-  .sf-hero { min-height: clamp(520px, 86dvh, 760px); }
-  .sf-hero__content { padding-bottom: 92px; }
-  .sf-hero__caption { display: none; }
   .sf-roomgrid { grid-template-columns: minmax(0, 1fr); }
   /* The carousel bleeds to the screen edge but every card snaps to the page gutter. */
   .sf-roomgrid--scroll { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: var(--sf-gutter); gap: 14px; margin-inline: calc(var(--sf-gutter) * -1); padding-inline: var(--sf-gutter); scrollbar-width: none; }
@@ -868,7 +830,6 @@ html:has(.sf-comparebar) { scroll-padding-bottom: 96px; }
 
 @media (prefers-reduced-motion: reduce) {
   .sf *, .sf *::before, .sf *::after, .sf-portal *, .sf-portal *::before, .sf-portal *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
-  .sf-hero__media img { transform: none; }
 }
 
 @media print {
