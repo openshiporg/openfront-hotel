@@ -15,13 +15,13 @@
     "serviceFeeMinor": 0,
     "storefrontAccentPreset": "brass",
     "heroImagePath": "/images/hotel/the-alder-house-lobby-hero.webp",
-    "heroImageAltText": "Warm wood reception and lounge at The Alder House",
+    "heroImageAltText": "Sunlit lobby lounge and oak reception desk at The Alder House",
     "heroImageCaption": "The lobby at The Alder House",
     "amenityImagePath": "/images/hotel/the-alder-house-breakfast-lounge-amenity.webp",
     "amenityImageAltText": "Breakfast buffet and lounge seating at The Alder House",
     "amenityImageCaption": "Breakfast in The Alder House lounge",
     "locationImagePath": "/images/hotel/the-alder-house-exterior-neighborhood-location.webp",
-    "locationImageAltText": "Brick city hotel exterior on the tree-lined Alder Street neighborhood",
+    "locationImageAltText": "Red-brick entrance of The Alder House on tree-lined Alder Street",
     "locationImageCaption": "The Alder House neighborhood",
     "logoIcon": "galileo",
     "logoColor": "159"
@@ -41,7 +41,7 @@
       "roomImages": [
         {
           "imagePath": "/images/hotel/the-alder-house-room-classic-queen.webp",
-          "altText": "Classic Queen room with a queen bed, writing desk, and city-facing window",
+          "altText": "Classic Queen room with a queen bed, writing desk, and a window onto the green courtyard",
           "caption": "Classic Queen guest room",
           "order": 0,
           "isPrimary": true
