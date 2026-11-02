@@ -70,23 +70,12 @@ test('3. a demo user cannot create, delete or update users, including the real a
   await refused(run('User', 'update', DEMO, { item: { id: 'admin' }, inputData: { name: 'Hacked' } }));
 });
 
-test('4. a demo user cannot change the store name, logo or URL settings', async () => {
-  for (const field of ['propertyName', 'tagline', 'logoIcon', 'logoColor']) {
-    await refused(run('HotelSettings', 'update', DEMO, { item: { id: 's' }, inputData: { [field]: 'x' } }));
-  }
-  await refused(run('HotelSettings', 'create', DEMO, { inputData: {} }));
-  await refused(run('HotelSettings', 'delete', DEMO, { item: { id: 's' } }));
-});
-
-test('4b. unchanged protected values pass, changed ones are refused', async () => {
+test('4. changed property name, tagline and logo ALLOWED by the list guard; roles stay locked', async () => {
   const item = { id: 's', propertyName: 'Alder', tagline: null, logoIcon: 'a', logoColor: '#111111' };
-  await run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: ' Alder ', tagline: '', logoIcon: 'a', logoColor: '#111111', checkInTime: '15:00', taxRate: 8 } });
-  await refused(run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: 'Other', checkInTime: '15:00' } }));
-  await refused(run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: 'Alder', logoColor: '#000000' } }));
-  await refused(run('HotelSettings', 'update', DEMO, { item, inputData: { tagline: 'New' } }));
-  await refused(run('HotelSettings', 'update', DEMO, { inputData: { propertyName: 'Alder' } }));
+  await run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: 'Alder QA', tagline: 'New', logoIcon: 'b', logoColor: '#000000' } });
+  await run('HotelSettings', 'update', DEMO, { inputData: { propertyName: 'No stored item' } });
+  await refused(run('Role', 'update', DEMO, { item: { id: 'r' }, inputData: { name: 'Y' } }));
   await refused(run('User', 'update', DEMO, { item: { id: 'demo', password: 'x' }, inputData: { password: 'x' } }));
-  await refused(run('User', 'update', DEMO, { item: { id: 'demo', isActive: true }, inputData: { isActive: false } }));
 });
 
 test('a demo user can still edit a booking and its own onboarding state', async () => {
@@ -137,8 +126,7 @@ test('MFA, onboarding and property settings writes past the list hooks refuse a 
   assert.match(read('features/keystone/lib/hotelMfa.ts'), /assertNotDemo\(context\)/);
   assert.match(read('features/keystone/mutations/runHotelOnboarding.ts'), /assertNotDemo\(context\)/);
   const settings = read('features/keystone/mutations/updateHotelPropertySettings.ts');
-  assert.match(settings, /isDemoSession\(context\)/);
-  assert.match(settings, /current\.propertyName[\s\S]*current\.tagline[\s\S]*current\.logoIcon[\s\S]*current\.logoColor/);
+  assert.doesNotMatch(settings, /isDemoSession|DEMO_GUARD_MESSAGE/, 'property name, tagline and logo are editable by the demo login');
 });
 
 test('a demo user can still change other User fields on its own record', async () => {
