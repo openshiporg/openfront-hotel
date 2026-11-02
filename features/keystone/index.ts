@@ -13,7 +13,7 @@ import { createHotelMfaSessionStrategy } from './lib/hotelMfa';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const capabilities = validateProductionConfig();
-const databaseURL = process.env.DATABASE_URL || (isProduction ? '' : 'postgresql://postgres:postgres@127.0.0.1:5432/runtime_hotel');
+const databaseURL = process.env.DATABASE_URL || (isProduction ? '' : 'postgresql://postgres:postgres@localhost/runtime_hotel');
 const sessionSecret = process.env.SESSION_SECRET || (isProduction ? '' : 'local-development-session-secret-change-me');
 if (!databaseURL) throw new Error('DATABASE_URL is required outside local development.');
 if (sessionSecret.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters.');

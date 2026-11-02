@@ -13,7 +13,9 @@ function getBaseUrlForEmails(): string {
   const configured = process.env.PASSWORD_RESET_ORIGIN || configuredSiteOrigin();
   if (configured) return configured.replace(/\/$/, '');
   if (process.env.NODE_ENV === 'production') throw new Error('Email origin is not configured.');
-  return 'http://localhost:3001';
+  // Local development: the origin follows PORT rather than a literal port.
+  const port = process.env.PORT?.trim();
+  return port && /^\d+$/.test(port) ? `http://localhost:${port}` : 'http://localhost';
 }
 
 function mailFrom() {
