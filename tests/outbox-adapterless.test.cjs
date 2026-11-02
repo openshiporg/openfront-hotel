@@ -110,3 +110,16 @@ test('undeliverable dead letters close as skipped; a real recipient stays dead-l
   assert.equal(rows[2].status, 'delivered'); assert.equal(rows[3].status, 'dead_letter');
   assert.equal(await closeUndeliverableDeadLetters(prisma, 'the-alder-house'), 0);
 });
+
+test('readiness accepts a fictional contact email on a Stripe TEST (demo) store and rejects it on a live store', () => {
+  const { realContactEmail, stripeTestModeStore } = require('../features/keystone/queries/hotelReadiness.ts');
+  assert.equal(stripeTestModeStore({ STRIPE_SECRET_KEY: 'sk_test_abc' }), true);
+  assert.equal(stripeTestModeStore({ STRIPE_SECRET_KEY: 'sk_live_abc' }), false);
+  assert.equal(stripeTestModeStore({}), false);
+  for (const a of ['stay@thealderhouse.example', 'a@example.com', 'a@b.test']) {
+    assert.equal(realContactEmail(a, true), true, `${a} on a demo store`);
+    assert.equal(realContactEmail(a, false), false, `${a} on a live store`);
+  }
+  for (const a of ['', '   ', 'no-at-sign', undefined]) assert.equal(realContactEmail(a, true), false, `${String(a)} is never valid`);
+  assert.equal(realContactEmail('front@thealderhouse.com', false), true);
+});

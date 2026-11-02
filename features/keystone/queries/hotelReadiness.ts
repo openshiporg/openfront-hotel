@@ -7,10 +7,23 @@ function realPropertyName(value: string | null | undefined) {
   return Boolean(String(value || '').trim());
 }
 
-function realContactEmail(value: string | null | undefined) {
+const RESERVED_DOMAINS = ['example.com', 'example.net', 'example.org'];
+const RESERVED_SUFFIX = /\.(?:example|test|invalid)$/;
+
+/**
+ * A demo store (payments run on Stripe TEST keys) keeps fictional contact addresses on purpose, so a
+ * reserved example domain is accepted there. A live store still needs a real address.
+ */
+export function stripeTestModeStore(env: NodeJS.ProcessEnv = process.env) {
+  return String(env.STRIPE_SECRET_KEY || '').startsWith('sk_test_');
+}
+
+export function realContactEmail(value: string | null | undefined, allowExampleDomains = stripeTestModeStore()) {
   const address = String(value || '').trim().toLowerCase();
   const domain = address.split('@')[1] || '';
-  return Boolean(address) && !['example.com', 'example.net', 'example.org'].includes(domain) && !/\.(?:example|test|invalid)$/.test(domain);
+  if (!address || !domain) return false;
+  const reserved = RESERVED_DOMAINS.includes(domain) || RESERVED_SUFFIX.test(domain);
+  return allowExampleDomains || !reserved;
 }
 
 /**
