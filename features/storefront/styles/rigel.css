@@ -241,7 +241,9 @@
   .sf-header[data-overlay='true'] { margin-bottom: calc(var(--sf-header-h) * -1); }
   .sf-header[data-overlay='true']:not([data-scrolled='true']) { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; color: #fff; }
   .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { color: #fff; }
-  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark__name { display: none; }
+  /* Mark and name both stay visible over the hero; the name truncates before it reaches the actions. */
+  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { max-width: calc(100vw - 150px); }
+  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-header__row { justify-content: center; }
   .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-header__actions { position: absolute; right: 20px; }
   .sf-header__manage { display: none; }
