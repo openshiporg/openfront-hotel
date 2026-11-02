@@ -190,11 +190,11 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
               <span className="sf-choice__body">
                 <span className="sf-choice__title"><span>{rate.name}</span>{Number.isSafeInteger(rate.baseRateMinor) && rate.currencyCode && <span className="sf-num sf-muted" style={{ fontWeight: 500 }}>{money(rate.baseRateMinor!, rate.currencyCode)} <small>base / night</small></span>}</span>
                 {rate.description && <span className="sf-choice__meta">{rate.description}</span>}
-                <span className="sf-choice__tags">
-                  <span className="sf-badge"><CalendarClock aria-hidden="true" />{cancellationHeadline(rate.cancellationPolicy)}</span>
-                  {rate.mealPlan && <span className="sf-badge"><Utensils aria-hidden="true" />{mealPlanLabel(rate.mealPlan)}</span>}
-                  {rate.minimumStay > 1 && <span className="sf-badge"><Clock aria-hidden="true" />{rate.minimumStay}-night minimum</span>}
-                  {rate.isPromotional && <span className="sf-badge sf-badge--accent"><Tag aria-hidden="true" />Promotion code required</span>}
+                <span className="sf-choice__terms">
+                  <span><CalendarClock aria-hidden="true" />{cancellationHeadline(rate.cancellationPolicy)}</span>
+                  {rate.mealPlan && <span><Utensils aria-hidden="true" />{mealPlanLabel(rate.mealPlan)}</span>}
+                  {rate.minimumStay > 1 && <span><Clock aria-hidden="true" />{rate.minimumStay}-night minimum</span>}
+                  {rate.isPromotional && <span data-tone="accent"><Tag aria-hidden="true" />Promotion code required</span>}
                 </span>
               </span>
             </label>)}

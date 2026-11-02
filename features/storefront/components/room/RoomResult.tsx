@@ -34,19 +34,16 @@ export function RoomResult({ room, query, quote, dated, pricing, availableCount,
   return <article className="sf-card sf-result">
     <Link href={href} className="sf-media" aria-label={`Explore ${room.name}`} tabIndex={-1}>
       <img src={primaryRoomImage(room)} alt={room.roomImages?.[0]?.altText || room.name} loading="lazy" />
-      <div className="sf-media__badges">
-        {room.eyebrow ? <span className="sf-badge sf-badge--onphoto">{room.eyebrow}</span> : <span />}
-        {dated && typeof availableCount === 'number' && (availableCount > 0 && hasPublicRate
-          ? <span className="sf-badge sf-badge--onphoto sf-badge--dot">Available for your dates</span>
-          : availableCount > 0 ? <span className="sf-badge sf-badge--onphoto">Reserve by contacting the property</span>
-          : <span className="sf-badge sf-badge--onphoto">Unavailable for these dates</span>)}
-      </div>
     </Link>
     <div className="sf-result__body">
       <div className="sf-result__info">
+        {room.eyebrow && <p className="sf-eyebrow">{room.eyebrow}</p>}
         <h3 className="sf-h3"><Link href={href}>{room.name}</Link></h3>
         <p className="sf-muted sf-small">{roomCopy(room)}</p>
         <RoomFacts room={room} />
+        {dated && typeof availableCount === 'number' && <p className="sf-avail" data-tone={availableCount > 0 && hasPublicRate ? 'open' : 'closed'}>
+          {availableCount > 0 && hasPublicRate ? 'Available for your dates' : availableCount > 0 ? 'Reserve by contacting the property' : 'Unavailable for these dates'}
+        </p>}
         {amenities.length > 0 && <div className="sf-result__amenities">{amenities.map(item => <span key={item}><AmenityIcon amenity={item} />{amenityLabel(item)}</span>)}{room.amenities.length > amenities.length && <span>+{room.amenities.length - amenities.length} more</span>}</div>}
       </div>
       <div className="sf-result__offer">

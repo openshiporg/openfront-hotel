@@ -26,9 +26,9 @@ export function RoomCard({ room, href, priority = false }: { room: RoomType; hre
   return <article className="sf-roomcard">
     <div className="sf-media">
       <img src={primaryRoomImage(room)} alt={room.roomImages?.[0]?.altText || room.name} loading={priority ? 'eager' : 'lazy'} />
-      {room.eyebrow && <div className="sf-media__badges"><span className="sf-badge sf-badge--onphoto">{room.eyebrow}</span></div>}
     </div>
     <div className="sf-roomcard__body">
+      {room.eyebrow && <p className="sf-eyebrow">{room.eyebrow}</p>}
       <div className="sf-roomcard__title"><h3 className="sf-h3"><StayLink href={href}>{room.name}</StayLink></h3></div>
       <p className="sf-roomcard__copy">{roomCopy(room)}</p>
       <RoomFacts room={room} />
