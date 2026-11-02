@@ -9,6 +9,7 @@ import { cancellationHeadline, money } from '../../lib/stay-context';
 import { AmenityIcon, amenityLabel } from './AmenityIcon';
 import { RoomFacts, referenceRate } from './RoomCard';
 import { Skeleton } from '../ui';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface RoomResultProps {
   room: RoomType;
@@ -67,7 +68,7 @@ export function RoomResult({ room, query, quote, dated, pricing, availableCount,
           </>}
         </div>
         <div className="sf-offer__actions">
-          <label className="sf-compare-toggle"><input type="checkbox" checked={compared} disabled={compareDisabled} onChange={onCompare} />Compare<span className="sf-sr"> {room.name}</span></label>
+          <label className="sf-compare-toggle"><Checkbox checked={compared} disabled={compareDisabled} onCheckedChange={() => onCompare()} />Compare<span className="sf-sr"> {room.name}</span></label>
           <Link href={href} className="sf-btn">{quote ? 'Select room' : 'View room'} <ArrowRight className="sf-btn__go" aria-hidden="true" /></Link>
         </div>
       </div>

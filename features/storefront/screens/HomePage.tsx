@@ -18,7 +18,7 @@ function fromRate(room: RoomType) {
   try { return nightMoney(lowest.baseRateMinor!, lowest.currencyCode); } catch { return null; }
 }
 
-const SHORT_BEDS: Record<string, string> = { king: 'King bed', queen: 'Queen bed', double_queen: '2 queens', twin: 'Twin bed', double_twin: '2 twins', king_sofa: 'King + sofa', queen_sofa: 'Queen + sofa', suite: 'Suite' };
+const SHORT_BEDS: Record<string, string> = { king: 'King', queen: 'Queen', double_queen: '2 queens', twin: 'Twin', double_twin: '2 twins', king_sofa: 'King + sofa', queen_sofa: 'Queen + sofa', suite: 'Suite' };
 
 function bedLabel(room: RoomType) {
   if (!room.bedConfiguration) return `Sleeps ${room.maxOccupancy}`;

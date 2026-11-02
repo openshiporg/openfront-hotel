@@ -17,6 +17,7 @@ import { useHotelSettings } from '../components/HotelSettingsProvider';
 import { useGuestAccount } from '../components/GuestAccountProvider';
 import { StayPrice } from '../components/StayPrice';
 import { Notice, PageHead, Skeleton, StatePanel } from '../components/ui';
+import { Checkbox } from '@/components/ui/checkbox';
 import { StayPlanner } from '../components/stay/StayPlanner';
 import { RoomCard } from '../components/room/RoomCard';
 import { money, reservationPresentation } from '../lib/stay-context';
@@ -169,7 +170,7 @@ function BookContent() {
             </fieldset>
 
             {!bookingId && <div className="sf-formsection">
-              <label className="sf-check"><input type="checkbox" required checked={accepted} onChange={event => setAccepted(event.target.checked)} /><span>I have reviewed the full stay price, payment amounts and cancellation terms for the selected rate. <Link href="/policies" target="_blank">Booking policies (new tab)</Link></span></label>
+              <label className="sf-check"><Checkbox required aria-required="true" checked={accepted} onCheckedChange={value => setAccepted(value === true)} /><span>I have reviewed the full stay price, payment amounts and cancellation terms for the selected rate. <Link href="/policies" target="_blank">Booking policies (new tab)</Link></span></label>
             </div>}
             {!session && <button className="sf-btn sf-btn--lg sf-btn--block sf-btn--split" disabled={busy || !providerCode || (!bookingId && !accepted)}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}><Lock aria-hidden="true" />{busy ? 'Preparing secure payment…' : bookingId ? 'Check current amount & continue' : 'Continue to secure payment'}</span>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { CircleCheck, Clock, Mail, MapPin, Phone, Send } from 'lucide-react';
 import { useHotelSettings } from '../components/HotelSettingsProvider';
 import { Notice } from '../components/ui';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { graphqlClient } from '@/lib/graphql-client';
 import { operationAttempt } from '@/lib/operationAttempt';
 
@@ -84,8 +85,9 @@ export default function ContactPage() {
             <label className="sf-field" htmlFor="contact-email"><span className="sf-label">Email</span><input id="contact-email" name="email" type="email" autoComplete="email" required maxLength={254} value={form.email} onChange={update} className="sf-input" /></label>
             <label className="sf-field" htmlFor="contact-phone"><span className="sf-label">Telephone <small>(optional)</small></span><input id="contact-phone" name="phone" type="tel" autoComplete="tel" maxLength={40} value={form.phone} onChange={update} className="sf-input" /></label>
             <label className="sf-field" htmlFor="contact-subject"><span className="sf-label">What can we help with?</span>
-              <select id="contact-subject" name="subject" required value={form.subject} onChange={update} className="sf-select">
-                <option value="">Choose a topic</option>{topics.map(topic => <option key={topic.value} value={topic.value}>{topic.label}</option>)}</select>
+              <Select name="subject" required value={form.subject || undefined} onValueChange={value => setForm(previous => ({ ...previous, subject: value }))}>
+                <SelectTrigger id="contact-subject" className="sf-select"><SelectValue placeholder="Choose a topic" /></SelectTrigger>
+                <SelectContent className="sf-portal">{topics.map(topic => <SelectItem key={topic.value} value={topic.value}>{topic.label}</SelectItem>)}</SelectContent></Select>
             </label>
             <label className="sf-field sf-span" htmlFor="contact-message"><span className="sf-label">Message</span>
               <textarea id="contact-message" name="message" required maxLength={4000} value={form.message} onChange={update} rows={6} aria-describedby="contact-privacy" className="sf-textarea" />

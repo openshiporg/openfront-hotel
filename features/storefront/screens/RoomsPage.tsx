@@ -15,6 +15,9 @@ import { StayPlanner } from '../components/stay/StayPlanner';
 import { RoomResult } from '../components/room/RoomResult';
 import { AmenityIcon, amenityLabel } from '../components/room/AmenityIcon';
 import { PageHead, Skeleton } from '../components/ui';
+import { Input } from '@/components/ui/input';
+import { Toggle } from '@/components/ui/toggle';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type AvailableRoom = RoomType & { availableCount?: number };
 const SORTS = (dated: boolean) => [['price_asc', dated ? 'Stay total: low to high' : 'Base rate: low to high'], ['price_desc', dated ? 'Stay total: high to low' : 'Base rate: high to low'], ['occupancy_asc', 'Guests: fewer to more'], ['occupancy_desc', 'Guests: more to fewer'], ['size_asc', 'Size: smaller first'], ['size_desc', 'Size: larger first']];
@@ -64,13 +67,13 @@ function RoomsContent() {
           <div className="sf-filters__body">
             {options.length > 0 && <fieldset>
               <legend><h2>Room comforts</h2></legend>
-              <div className="sf-chips">{options.map(item => <button key={item} type="button" className="sf-chip" aria-pressed={amenities.includes(item)} onClick={() => update({ amenities: (amenities.includes(item) ? amenities.filter(a => a !== item) : [...amenities, item]).join(',') })}>{amenities.includes(item) ? <Check aria-hidden="true" /> : <AmenityIcon amenity={item} />}{amenityLabel(item)}</button>)}</div>
+              <div className="sf-chips">{options.map(item => <Toggle key={item} type="button" className="sf-chip" pressed={amenities.includes(item)} onPressedChange={() => update({ amenities: (amenities.includes(item) ? amenities.filter(a => a !== item) : [...amenities, item]).join(',') })}>{amenities.includes(item) ? <Check aria-hidden="true" /> : <AmenityIcon amenity={item} />}{amenityLabel(item)}</Toggle>)}</div>
             </fieldset>}
             <form key={price} className="sf-stack" style={{ '--stack': '12px' } as React.CSSProperties} onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); update({ priceRange: `${data.get('min') || 0}-${data.get('max') || 100000}` }); }}>
               <h2>Base nightly rate</h2>
               <div className="sf-formgrid" style={{ gap: 10 }}>
-                <label className="sf-field"><span className="sf-label">Minimum</span><input className="sf-input" name="min" type="number" min="0" inputMode="numeric" defaultValue={price.split('-')[0] || ''} /></label>
-                <label className="sf-field"><span className="sf-label">Maximum</span><input className="sf-input" name="max" type="number" min="0" inputMode="numeric" defaultValue={price.split('-')[1] || ''} /></label>
+                <label className="sf-field"><span className="sf-label">Minimum</span><Input className="sf-input" name="min" type="number" min="0" inputMode="numeric" defaultValue={price.split('-')[0] || ''} /></label>
+                <label className="sf-field"><span className="sf-label">Maximum</span><Input className="sf-input" name="max" type="number" min="0" inputMode="numeric" defaultValue={price.split('-')[1] || ''} /></label>
               </div>
               <p className="sf-hint">Reference rate only; the dated total may differ.</p>
               <button className="sf-btn sf-btn--ghost sf-btn--sm sf-btn--block">Apply budget</button>
@@ -85,7 +88,7 @@ function RoomsContent() {
               <span>{dated ? `${rangeLabel(from, to)} · ${nights} ${nights === 1 ? 'night' : 'nights'} · ${guests} ${guests === 1 ? 'guest' : 'guests'}${pricing ? ' · pricing your stay…' : ''}` : 'Add dates for live availability and full stay prices'}</span>
             </div>
             <label className="sf-field" style={{ minWidth: 230 }}><span className="sf-sr">Sort available rooms</span>
-              <select data-qa-layout="room-results-sort" className="sf-select" value={sort} onChange={event => update({ sortBy: event.target.value })} aria-label="Sort available rooms">{SORTS(dated).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+              <Select value={sort} onValueChange={value => update({ sortBy: value })}><SelectTrigger data-qa-layout="room-results-sort" className="sf-select" aria-label="Sort available rooms"><SelectValue /></SelectTrigger><SelectContent className="sf-portal">{SORTS(dated).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
             </label>
           </div>
           {filterCount > 0 && <div className="sf-active-filters">

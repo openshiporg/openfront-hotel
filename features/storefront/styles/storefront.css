@@ -846,3 +846,10 @@ html:has(.sf-comparebar) { scroll-padding-bottom: 96px; }
   .sf-card, .sf-float { box-shadow: none; border-color: #bbb; }
   .sf-reservation { grid-template-columns: 1fr; }
 }
+
+/* shadcn controls inside the storefront */
+.sf-chip[data-state='on'] { background: var(--btn-primary) !important; border-color: var(--btn-primary) !important; color: var(--btn-on-primary); }
+button.sf-select { display: flex; align-items: center; justify-content: space-between; text-align: left; background-image: none; padding-right: 16px; }
+.sf-compare-toggle button[role='checkbox'] { width: 18px; height: 18px; border-color: var(--line-2); background: var(--card); }
+.sf-compare-toggle button[role='checkbox'][data-state='checked'], .sf-check button[role='checkbox'][data-state='checked'] { background: var(--btn-primary); border-color: var(--btn-primary); color: var(--btn-on-primary); }
+.sf-check button[role='checkbox'] { flex: none; width: 22px; height: 22px; margin-top: 1px; border: 1.5px solid var(--line-2); border-radius: 7px; background: var(--card); }
