@@ -63,7 +63,9 @@
 .sf-nav a { padding: 8px 9px; font-size: 0.75rem; font-weight: 500; letter-spacing: 0.09em; text-transform: uppercase; border-radius: 0; opacity: 0.9; }
 .sf-nav a:hover { background: none; opacity: 1; }
 .sf-nav a[aria-current='page']::after { left: 9px; right: 9px; bottom: 0; width: auto; height: 1.5px; border-radius: 0; background: var(--navy); transform: none; }
-.sf-header__manage { padding: 8px; font-size: 0; gap: 0; }
+.sf-header__manage { padding: 8px; gap: 0; }
+/* Icon-only account link: the label stays for assistive tech without a zero font size. */
+.sf-header__manage-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .sf-header__manage svg { width: 19px; height: 19px; }
 .sf-header__book { min-height: 32px; padding: 0 18px; font-size: 0.75rem; }
 .sf-staypill { height: 36px; font-size: 0.8rem; }
@@ -249,7 +251,9 @@
   .sf-tabbar a[aria-current='page'] { color: var(--navy); font-weight: 500; }
   .sf-tabbar a[aria-current='page'] svg { fill: var(--navy); stroke: var(--navy); }
   .sf-footer { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-  .sf-mobilebar { bottom: calc(60px + env(safe-area-inset-bottom)); }
+  /* Solid, so the rate cards scrolling underneath never read through the price. */
+  .sf-mobilebar { bottom: calc(60px + env(safe-area-inset-bottom)); background: #fff; }
+  .sf-tabbar { background: #fff; }
   .sf-comparebar { bottom: calc(72px + env(safe-area-inset-bottom)); }
   .sf-sheet { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
   /* Phone date and guest popovers: full gutter width under the planner, scroll inside. */
@@ -300,9 +304,8 @@
   .rg-room { flex: 0 0 100%; scroll-snap-align: start; padding: 6px; border-radius: 14px; box-shadow: 0 1px 2px rgb(20 30 50 / 0.06), 0 10px 26px -14px rgb(20 30 50 / 0.28); }
   .rg-roomgrid[data-count='2'] .rg-room, .rg-roomgrid[data-count='3'] .rg-room { flex-basis: 92%; }
   .rg-room__media { aspect-ratio: 650 / 318; border-radius: 10px; }
-  .rg-room__tag { position: absolute; left: 10px; bottom: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 3px 5px 3px 10px; border-radius: 999px; background: rgb(255 255 255 / 0.86); backdrop-filter: blur(6px); font-family: var(--sans); font-size: 0.75rem; font-weight: 500; color: #1d3a2a; }
-  .rg-room__tag svg { width: 18px; height: 18px; padding: 3px; border-radius: 999px; background: var(--navy); color: #fff; }
-  .rg-room__name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  /* The room name is a heading under the photo, not a pill laid over it. */
+  .rg-room__name { grid-column: 1 / -1; font-size: 1.12rem; }
   .rg-room__body { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px 10px 8px; }
   .rg-room__copy { align-self: start; font-size: 0.78rem; line-height: 1.35; padding-right: 12px; border-right: 1px solid var(--line); -webkit-line-clamp: 3; }
   .rg-room__foot { display: grid; justify-items: end; gap: 8px; margin: 0; padding: 0; border: 0; }

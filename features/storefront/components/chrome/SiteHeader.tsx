@@ -75,7 +75,7 @@ export function SiteHeader() {
         {showStay && <StayLink className="sf-staypill" href="/rooms#results" aria-label={`Your stay: ${rangeLabel(arrival, departure)}, ${guests} guests. Review rooms for these dates.`}>
           <CalendarDays aria-hidden="true" /><b>{rangeLabel(arrival, departure)}</b><span aria-hidden="true">·</span>{guests} {guests === 1 ? 'guest' : 'guests'}
         </StayLink>}
-        <Link className="sf-header__manage" href="/account" aria-current={current('/account')}><UserRound aria-hidden="true" />{accountLabel}</Link>
+        <Link className="sf-header__manage" href="/account" aria-current={current('/account')}><UserRound aria-hidden="true" /><span className="sf-header__manage-label">{accountLabel}</span></Link>
         <StayLink className="sf-btn sf-btn--sm sf-header__book" href="/rooms">Book now</StayLink>
         <button type="button" className="sf-menu-btn" aria-label="Open menu" aria-haspopup="dialog" onClick={() => drawer.current?.showModal()}><Menu aria-hidden="true" /></button>
       </div>
