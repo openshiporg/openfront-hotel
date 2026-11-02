@@ -54,6 +54,7 @@ import storefrontRoomTypes from '../queries/storefrontRoomTypes';
 import storefrontAvailability from '../queries/storefrontAvailability';
 import storefrontStayCalendar from '../queries/storefrontStayCalendar';
 import publicHotelSettings from '../queries/publicHotelSettings';
+import hotelReadiness from '../queries/hotelReadiness';
 import storefrontQuote from '../queries/storefrontQuote';
 import guestCancellationQuote from '../queries/guestCancellationQuote';
 import { ensureBookingHasGuestAccess } from '../lib/guestBookingAccess';
@@ -477,6 +478,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         hotelRoomOutages: String!
         hotelStayRegister(bookingId: ID!): String!
         redirectToInit: Boolean
+        hotelReadiness: JSON!
         publicHotelSettings: PublicHotelSettings!
         bookingPaymentProviders: [BookingCheckoutPaymentProvider!]!
         activeBookingPaymentSession(bookingId: ID!, providerPaymentId: String): ActiveBookingPaymentSession
@@ -890,6 +892,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         hotelStayRegister: getHotelStayRegister,
         ...hotelOperationsResolvers.Query,
         redirectToInit,
+        hotelReadiness,
         publicHotelSettings,
         bookingPaymentProviders: async (root: unknown, args: unknown, context: any) =>
           (await bookingPaymentProviders(root, args, context)).map(mapCheckoutPaymentProvider),

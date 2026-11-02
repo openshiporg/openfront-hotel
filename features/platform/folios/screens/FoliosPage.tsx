@@ -26,6 +26,7 @@ import { humanize, previewMinor } from '@/features/platform/lib/format';
 import { applyWorkspaceView, workspaceResultLabel } from '@/features/platform/lib/workspace';
 import {
   closeReconciledFolioAction,
+  getBusinessDateReadiness,
   getFolioWorkspace,
   postFolioEntryAction,
   recordFolioPaymentAction,
@@ -110,9 +111,7 @@ export function FoliosPage() {
 
   const refreshBusinessDateReadiness = React.useCallback(async () => {
     try {
-      const response = await fetch('/api/ready', { cache: 'no-store' });
-      const readiness = await response.json() as { checks?: { businessDate?: unknown } };
-      setBusinessDateCurrent(typeof readiness.checks?.businessDate === 'boolean' ? readiness.checks.businessDate : null);
+      setBusinessDateCurrent(await getBusinessDateReadiness());
     } catch {
       setBusinessDateCurrent(null);
     }

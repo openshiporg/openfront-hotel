@@ -48,6 +48,15 @@ const CLOSE_FOLIO = String.raw`mutation($bookingId:ID!,$key:String!){closeReconc
 const REVERSE_ENTRY = String.raw`mutation($entryId:ID!,$key:String!,$reason:String!,$approvalId:ID){reverseFolioEntry(entryId:$entryId,postingKey:$key,reason:$reason,approvalId:$approvalId){folioId entryId balanceMinor replayed}}`;
 const RESOLVE_OVERDUE = String.raw`mutation($bookingId:ID!,$key:String!,$reason:String!,$approvalId:ID){resolveOverdueCheckedInBooking(bookingId:$bookingId,idempotencyKey:$key,reason:$reason,approvalId:$approvalId){bookingId folioId status folioStatus writtenOffMinor replayed}}`;
 
+const READINESS = String.raw`query HotelReadiness { hotelReadiness }`;
+
+/** The business-date flag from deployment readiness; `null` when it could not be read. */
+export async function getBusinessDateReadiness(): Promise<boolean | null> {
+  const response = await keystoneClient<{ hotelReadiness: { checks?: { businessDate?: unknown } } }>(READINESS);
+  const flag = response.success ? response.data.hotelReadiness?.checks?.businessDate : undefined;
+  return typeof flag === 'boolean' ? flag : null;
+}
+
 export async function getFolioWorkspace(bookingId?: string | null) {
   const response = await keystoneClient<any>(FOLIO_WORKSPACE, { bookingId: bookingId ? boundedId(bookingId, 'Booking ID') : null });
   return requireActionData(response);

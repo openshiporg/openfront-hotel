@@ -5487,6 +5487,7 @@ type Query {
   hotelRoomOutages: String!
   hotelStayRegister(bookingId: ID!): String!
   redirectToInit: Boolean
+  hotelReadiness: JSON!
   publicHotelSettings: PublicHotelSettings!
   bookingPaymentProviders: [BookingCheckoutPaymentProvider!]!
   activeBookingPaymentSession(bookingId: ID!, providerPaymentId: String): ActiveBookingPaymentSession

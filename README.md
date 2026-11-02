@@ -186,7 +186,7 @@ The [Keystone model registry](features/keystone/models/index.ts) and [Prisma sch
 Use a development database for `migrate:gen`; it generates and applies schema changes.
 
 ### Payment Integration
-The registered [payment adapters](features/integrations/payment/index.ts) are Stripe and PayPal. Configure them in **Dashboard > Payment providers**. Provider callbacks enter through `/api/payment-providers/[providerCode]/webhook`; operator-recorded payments are handled by separate booking-payment commands.
+The registered [payment adapters](features/integrations/payment/index.ts) are Stripe and PayPal. Configure them in **Dashboard > Payment providers**. Provider callbacks enter through `/api/payment-webhooks/[providerId]` (the older `/api/payment-providers/[providerCode]/webhook` URL rewrites there); operator-recorded payments are handled by separate booking-payment commands.
 
 ### Channel Integration
 [Channel mutations](features/keystone/mutations) support inventory push, reservation pull, and retry operations against configured channel endpoints. A local channel row or synchronization record is not proof of an external OTA connection.

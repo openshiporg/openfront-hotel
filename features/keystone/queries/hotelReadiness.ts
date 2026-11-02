@@ -1,15 +1,7 @@
-import { propertyCalendarDate } from '@/features/keystone/lib/hotelBusinessTime';
-import { PrismaClient } from '@prisma/client';
-import { getWorkerReadiness } from '@/features/keystone/lib/workerProgress';
-import { getOutboxDispatchConfig, paymentIntegrationConfigured } from '@/features/keystone/lib/integrationConfig';
-import { hotelMailInfrastructureConfigured } from '@/features/keystone/lib/mail';
-
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-const globalForReadiness = globalThis as unknown as { hotelReadinessPrisma?: PrismaClient };
-const prisma = globalForReadiness.hotelReadinessPrisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForReadiness.hotelReadinessPrisma = prisma;
+import { propertyCalendarDate } from '../lib/hotelBusinessTime';
+import { getWorkerReadiness } from '../lib/workerProgress';
+import { getOutboxDispatchConfig, paymentIntegrationConfigured } from '../lib/integrationConfig';
+import { hotelMailInfrastructureConfigured } from '../lib/mail';
 
 function realPropertyName(value: string | null | undefined) {
   return Boolean(String(value || '').trim());
@@ -21,13 +13,19 @@ function realContactEmail(value: string | null | undefined) {
   return Boolean(address) && !['example.com', 'example.net', 'example.org'].includes(domain) && !/\.(?:example|test|invalid)$/.test(domain);
 }
 
-export async function GET() {
+/**
+ * Deployment readiness over GraphQL: `{ hotelReadiness }` returns `{ status, checks }`.
+ * Public like the probe it replaces (flags only, no records); reads run through the
+ * Keystone context's Prisma client rather than a second standalone client.
+ */
+export default async function hotelReadiness(_root: unknown, _args: unknown, context: any) {
+  const prisma = context.prisma as any;
   const smtpConfigured = hotelMailInfrastructureConfigured();
   let communicationsRequired = smtpConfigured;
   try {
     communicationsRequired = smtpConfigured || getOutboxDispatchConfig().enabled;
     const [settings, clock, providers, sellableRate, activeChannel, enabledRateSync, enabledInventorySync, activeGroupBlock, openGroupFolio, activeGroupBooking] = await Promise.all([
-      (prisma as any).hotelSettings.findUnique({ where: { id: 1 }, select: { groupsEnabled: true, timeZone: true, id: true, propertyName: true, contactEmail: true, contactPhone: true, addressLine1: true } }),
+      prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { groupsEnabled: true, timeZone: true, id: true, propertyName: true, contactEmail: true, contactPhone: true, addressLine1: true } }),
       prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { id: true, currentBusinessDate: true } }),
       // Every supported online provider, judged by the same predicate checkout uses: an empty
       // Stripe record can be configured from the deployment environment without isInstalled.
@@ -76,19 +74,10 @@ export async function GET() {
       businessDateCurrent && sellableRate && !activeChannel && !enabledRateSync && !enabledInventorySync && groupsHealthy && frontDeskClear && mailEnabled && paymentEnabled,
     );
     if (!configured) {
-      return Response.json(
-        { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } },
-        { status: 503, headers: { 'Cache-Control': 'no-store' } },
-      );
+      return { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } };
     }
-    return Response.json(
-      { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } },
-      { status: 200, headers: { 'Cache-Control': 'no-store' } },
-    );
+    return { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } };
   } catch {
-    return Response.json(
-      { status: 'not_ready', checks: { database: false, workers: { holds: false, refunds: false, communications: false, communicationsRequired }, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } },
-      { status: 503, headers: { 'Cache-Control': 'no-store' } },
-    );
+    return { status: 'not_ready', checks: { database: false, workers: { holds: false, refunds: false, communications: false, communicationsRequired }, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } };
   }
 }
