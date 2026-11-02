@@ -252,6 +252,8 @@
   .sf-mobilebar { bottom: calc(60px + env(safe-area-inset-bottom)); }
   .sf-comparebar { bottom: calc(72px + env(safe-area-inset-bottom)); }
   .sf-sheet { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+  /* Phone date and guest popovers: full gutter width under the planner, scroll inside. */
+  .sf-pop--stay, .sf-pop--guests { width: calc(100vw - 24px); max-height: calc(var(--radix-popover-content-available-height, 80dvh) - 8px); overflow-y: auto; overscroll-behavior: contain; padding: 14px 14px 16px; }
 
   /* Search card: check-in | guests | check-out, then the button and the night count. */
   .sf-planner { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-areas: 'in guests out' 'go go go' 'nights nights nights'; padding: 12px 14px 4px; row-gap: 8px; border-radius: 14px; }
