@@ -72,6 +72,7 @@ const STATUS_REGISTRY = {
     processing: { label: 'Processing', tone: 'progress' },
     failed: { label: 'Retrying', tone: 'warning' },
     dead_letter: { label: 'Dead letter', tone: 'danger' },
+    skipped: { label: 'Skipped', tone: 'neutral' },
     completed: { label: 'Delivered', tone: 'success' },
     delivered: { label: 'Delivered', tone: 'success' },
     succeeded: { label: 'Processed', tone: 'success' },

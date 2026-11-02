@@ -52,6 +52,7 @@ export const HotelOutboxEvent = list({
         { label: 'Delivered', value: 'delivered' },
         { label: 'Failed', value: 'failed' },
         { label: 'Dead letter', value: 'dead_letter' },
+        { label: 'Skipped', value: 'skipped' },
       ],
     }),
     attempts: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0 }),

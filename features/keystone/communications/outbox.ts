@@ -35,13 +35,12 @@ export type OutboxHandler = (event: HotelOutboxEventRecord) => Promise<unknown>;
 
 /**
  * Events whose topic has no delivery adapter (audit-style facts such as hotel.night_audit.completed)
- * are closed through the normal path as `delivered` with this result, exactly like a suppressed
- * pre-arrival message: nothing was sent, and the snapshot says why. The status column is limited by a
- * database CHECK constraint, so a separate "skipped" status would need a migration.
+ * are closed through the normal claim path with the terminal status `skipped` (added to the
+ * status CHECK constraint by an additive migration) and this result as the reason. Nothing was sent.
  */
 export const OUTBOX_NO_ADAPTER_RESULT = {
-  suppressed: true,
-  reason: 'No delivery adapter is configured for this topic; nothing was sent.',
+  skipped: true,
+  reason: 'skipped: no delivery adapter is configured for this topic; nothing was sent.',
 } as const;
 export const adapterlessOutboxHandler: OutboxHandler = async () => ({ ...OUTBOX_NO_ADAPTER_RESULT });
 
@@ -241,14 +240,15 @@ async function finishAttempt(prisma: any, eventId: string, attemptNumber: number
 }
 
 async function markDelivered(prisma: any, event: HotelOutboxEventRecord, response: unknown, now: Date) {
+  const skipped = Boolean((response as any)?.skipped);
   const updated = await prisma.hotelOutboxEvent.updateMany({
     where: { id: event.id, propertyKey: event.propertyKey, status: 'processing', leaseToken: event.leaseToken },
     data: {
-      status: 'delivered',
-      deliveredAt: now,
+      status: skipped ? 'skipped' : 'delivered',
+      deliveredAt: skipped ? null : now,
       leaseToken: '',
       leaseExpiresAt: null,
-      lastError: '',
+      lastError: skipped ? String((response as any).reason || '') : '',
       dispatchResultSnapshot: response ?? {},
       updatedAt: now,
     },
@@ -554,4 +554,40 @@ export function createHttpOutboxHandler(options: {
     }
     return ack;
   };
+}
+
+
+const RESERVED_RECIPIENT_DOMAIN = /(^|\.)(example\.(com|net|org)|example|test|invalid|localhost)$/i;
+export function isReservedRecipient(address: unknown) {
+  const domain = String(address || '').trim().toLowerCase().split('@')[1] || '';
+  return Boolean(domain) && RESERVED_RECIPIENT_DOMAIN.test(domain);
+}
+
+/**
+ * A dead-lettered message addressed to a reserved test domain (RFC 2606: example.com, .test, ...) can
+ * never have been delivered, so its "outcome unknown" evidence is settled: close it as `skipped` with a
+ * reason instead of leaving a permanent recovery alarm. Real recipients are never touched; they still
+ * need an operator-reviewed replay.
+ */
+export async function closeUndeliverableDeadLetters(prisma: any, propertyKey: string, now = new Date()) {
+  const rows = await prisma.hotelOutboxEvent.findMany({
+    where: { propertyKey: normalizePropertyKey(propertyKey), status: 'dead_letter', topic: { startsWith: 'hotel.communication.' } },
+    select: { id: true, payloadSnapshot: true },
+    take: 200,
+  });
+  let closed = 0;
+  for (const row of rows) {
+    const to = (row.payloadSnapshot as any)?.to;
+    if (!isReservedRecipient(to)) continue;
+    const updated = await prisma.hotelOutboxEvent.updateMany({
+      where: { id: row.id, status: 'dead_letter' },
+      data: {
+        status: 'skipped',
+        lastError: 'skipped: undeliverable recipient (reserved test domain); nothing could have been delivered.',
+        updatedAt: now,
+      },
+    });
+    closed += updated.count;
+  }
+  return closed;
 }

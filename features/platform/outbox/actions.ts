@@ -29,7 +29,7 @@ const REPLAY_REFUND = String.raw`mutation($id:ID!,$key:String!){replayRefundInte
 export async function getOutboxWorkspace(view: { status?: string; search?: string; eventSkip?: number; refundSkip?: number } = {}) {
   const offset = (value: unknown) => Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 100_000);
   const response = await keystoneClient<any>(OUTBOX_WORKSPACE, {
-    status: view.status && view.status !== 'all' ? boundedEnum(view.status, 'Delivery status', ['pending', 'processing', 'failed', 'dead_letter', 'completed'] as const) : null,
+    status: view.status && view.status !== 'all' ? boundedEnum(view.status, 'Delivery status', ['pending', 'processing', 'failed', 'dead_letter', 'skipped', 'completed'] as const) : null,
     search: view.search ? String(view.search).trim().slice(0, 160) : null,
     eventSkip: offset(view.eventSkip),
     refundSkip: offset(view.refundSkip),

@@ -91,8 +91,8 @@ export default function OutboxPage() {
   const visibleRefunds = data.refundIntents || [];
   const matching = Number(data.eventsTotal || 0) + Number(data.refundIntentsTotal || 0);
   const statusCount = (value: string) => Number(data.statusCounts?.[value] || 0);
-  const total = ['pending', 'processing', 'failed', 'dead_letter', 'completed'].reduce((sum, value) => sum + statusCount(value), 0);
-  const STATUSES = ['dead_letter', 'failed', 'pending', 'processing', 'completed'];
+  const total = ['pending', 'processing', 'failed', 'dead_letter', 'skipped', 'completed'].reduce((sum, value) => sum + statusCount(value), 0);
+  const STATUSES = ['dead_letter', 'failed', 'pending', 'processing', 'skipped', 'completed'];
   const unknownDelivery = (event: any) => String(event.lastError || '').startsWith('SMTP delivery outcome is unknown:');
 
   return (

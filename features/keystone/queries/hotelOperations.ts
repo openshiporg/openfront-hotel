@@ -1081,7 +1081,7 @@ export const hotelOperationsResolvers = {
       const search = String(args.search || '').trim().slice(0, 160);
       const page = (value: unknown) => Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 100_000);
       // Messages record success as 'delivered' and refunds as 'succeeded'; the screen shows both as 'completed'.
-      const status = ['pending', 'processing', 'failed', 'dead_letter', 'completed'].includes(String(args.status)) ? String(args.status) : null;
+      const status = ['pending', 'processing', 'failed', 'dead_letter', 'skipped', 'completed'].includes(String(args.status)) ? String(args.status) : null;
       const eventWhere = { AND: [
         status ? { status: status === 'completed' ? 'delivered' : status } : {},
         search ? { OR: [

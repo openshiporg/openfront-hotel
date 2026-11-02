@@ -6,6 +6,7 @@ import {
   createHttpOutboxHandler,
   dispatchHotelOutboxBatch,
   adapterlessOutboxHandler,
+  closeUndeliverableDeadLetters,
 } from '../communications/outbox';
 import { getOutboxDispatchConfig } from '../lib/integrationConfig';
 import { recordWorkerHeartbeat, recordWorkerProgress } from '../lib/workerProgress';
@@ -83,6 +84,7 @@ export function startHotelOutboxJobs(config: KeystoneConfig) {
           adapterlessOutboxHandler,
         );
       }
+      await closeUndeliverableDeadLetters(context.prisma, 'the-alder-house');
       await recordWorkerHeartbeat(context.prisma, 'outbox');
       // A cycle where deliveries had to be retried or dead-lettered is not progress.
       if (!scheduled.failures && !result.retried && !result.deadLettered) await recordWorkerProgress(context.prisma, 'outbox');
