@@ -83,7 +83,6 @@ export const Channel = list({
       label: 'Credentials',
       ui: {
         description: 'Encrypted bridge configuration; raw API reads are denied.',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'hidden' },
       },
@@ -149,7 +148,6 @@ export const Channel = list({
       label: 'Sync Errors',
       ui: {
         description: 'Array of recent sync errors',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'hidden' },
         itemView: { fieldMode: 'read' },
       },
@@ -161,7 +159,6 @@ export const Channel = list({
       label: 'Mapping Rules',
       ui: {
         description: 'JSON mapping of room types to channel-specific types',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },

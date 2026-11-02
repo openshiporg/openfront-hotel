@@ -79,7 +79,6 @@ export const RatePlan = list({
       label: 'Seasonal Adjustments',
       ui: {
         description: 'JSON object with seasonal rate adjustments (e.g., { "summer": 1.2, "winter": 0.9 })',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },
@@ -177,7 +176,6 @@ export const RatePlan = list({
       label: 'Applicable Days',
       ui: {
         description: 'Days of week when this rate applies',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },

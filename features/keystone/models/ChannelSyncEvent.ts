@@ -80,7 +80,6 @@ export const ChannelSyncEvent = list({
       label: 'Payload',
       ui: {
         description: 'Payload captured during sync for troubleshooting',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'hidden' },
         itemView: { fieldMode: 'read' },
       },

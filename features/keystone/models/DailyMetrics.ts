@@ -108,7 +108,6 @@ export const DailyMetrics = list({
       label: 'Channel Revenue',
       ui: {
         description: 'Revenue breakdown by channel (e.g., { "booking_com": 50000, "direct": 30000 })',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },

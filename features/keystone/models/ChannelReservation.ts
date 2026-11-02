@@ -144,7 +144,6 @@ export const ChannelReservation = list({
       label: 'Raw Data',
       ui: {
         description: 'Full booking payload from channel API',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'hidden' },
         itemView: { fieldMode: 'read' },
       },
@@ -164,7 +163,6 @@ export const ChannelReservation = list({
       label: 'Sync Errors',
       ui: {
         description: 'Any errors during sync',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'hidden' },
         itemView: { fieldMode: 'read' },
       },

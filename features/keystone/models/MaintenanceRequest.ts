@@ -142,7 +142,6 @@ export const MaintenanceRequest = list({
       label: 'Images',
       ui: {
         description: 'Array of S3 image URLs showing the issue',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },

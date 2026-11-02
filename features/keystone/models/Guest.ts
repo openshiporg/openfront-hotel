@@ -61,7 +61,6 @@ export const Guest = list({
       label: 'Guest Preferences',
       ui: {
         description: 'JSON object storing guest preferences (pillow type, floor preference, etc.)',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },
@@ -114,7 +113,6 @@ export const Guest = list({
       label: 'Communication Preferences',
       ui: {
         description: 'How the guest prefers to be contacted',
-        views: './features/keystone/models/fields',
         createView: { fieldMode: 'edit' },
         itemView: { fieldMode: 'edit' },
       },
