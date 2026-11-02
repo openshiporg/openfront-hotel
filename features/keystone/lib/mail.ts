@@ -196,7 +196,9 @@ export async function sendHotelCommunicationEmail(payload: HotelCommunicationPay
     if (!accepted.includes(payload.to.toLowerCase()) || (info.rejected || []).length) {
       throw new HotelOutboxDeliveryError(false);
     }
-    return { messageId: info.messageId, transportStatus: 'accepted_by_smtp', inboxDeliveryVerified: false };
+    // nodemailer's messageId is generated locally; the SMTP reply line is what carries the provider's own id.
+    const providerResponse = typeof (info as any).response === 'string' ? (info as any).response.replace(/[\r\n]+/g, ' ').trim().slice(0, 300) : '';
+    return { messageId: info.messageId, ...(providerResponse ? { providerResponse } : {}), transportStatus: 'accepted_by_smtp', inboxDeliveryVerified: false };
   } catch (error) {
     if (error instanceof HotelOutboxDeliveryError) throw error;
     throw new HotelOutboxDeliveryError(sendStarted);

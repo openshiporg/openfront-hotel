@@ -52,7 +52,7 @@ test('email copy says request/hold received, not confirmed until paid, with the 
   const Module = require('node:module');
   const origLoad = Module._load;
   Module._load = function (request, ...rest) {
-    if (request === 'nodemailer') return { createTransport: () => ({ sendMail: async (m) => { sent.push(m); return { accepted: [m.to], rejected: [], messageId: '<id@test>' }; } }), getTestMessageUrl: () => '' };
+    if (request === 'nodemailer') return { createTransport: () => ({ sendMail: async (m) => { sent.push(m); return { accepted: [m.to], rejected: [], messageId: '<id@test>', response: '250 Accepted\r\n abc-resend-id ' }; } }), getTestMessageUrl: () => '' };
     return origLoad.call(this, request, ...rest);
   };
   Object.assign(process.env, { SMTP_HOST: 'h', SMTP_PORT: '587', SMTP_USER: 'u', SMTP_PASSWORD: 'p', SMTP_FROM: 'stay@alder.test', NEXT_PUBLIC_SITE_URL: 'https://hotel.test', NODE_ENV: 'test' });
@@ -62,10 +62,28 @@ test('email copy says request/hold received, not confirmed until paid, with the 
   const result = await sendHotelCommunicationEmail(event.payloadSnapshot);
   Module._load = origLoad;
   assert.equal(result.messageId, '<id@test>');
+  assert.equal(result.providerResponse, '250 Accepted  abc-resend-id');
   assert.match(sent[0].subject, /Reservation request received/);
   assert.match(sent[0].html, /not confirmed until payment is complete/);
   assert.match(sent[0].html, /BK-ABC123/);
   assert.match(sent[0].html, /2:30 PM CST|2:30 PM/);
   assert.match(sent[0].html, /\/bookings\/lookup\?confirmation=BK-ABC123/);
   assert.doesNotMatch(sent[0].html, /has been confirmed/);
+});
+
+test('a provider that returns no response line leaves the delivery result without providerResponse', async () => {
+  const Module = require('node:module');
+  const origLoad = Module._load;
+  Module._load = function (request, ...rest) {
+    if (request === 'nodemailer') return { createTransport: () => ({ sendMail: async (m) => ({ accepted: [m.to], rejected: [], messageId: '<id@test>' }) }), getTestMessageUrl: () => '' };
+    return origLoad.call(this, request, ...rest);
+  };
+  Object.assign(process.env, { SMTP_HOST: 'h', SMTP_PORT: '587', SMTP_USER: 'u', SMTP_PASSWORD: 'p', SMTP_FROM: 'stay@alder.test', NEXT_PUBLIC_SITE_URL: 'https://hotel.test', NODE_ENV: 'test' });
+  delete require.cache[require.resolve('../features/keystone/lib/mail.ts')];
+  const { sendHotelCommunicationEmail } = require('../features/keystone/lib/mail.ts');
+  const { event } = await queueBookingCommunication(prisma(), { bookingId: 'b1', kind: 'booking_received', eventKey: 'booking:b1:received:v2' });
+  const result = await sendHotelCommunicationEmail(event.payloadSnapshot);
+  Module._load = origLoad;
+  assert.equal(result.messageId, '<id@test>');
+  assert.equal('providerResponse' in result, false);
 });
