@@ -1,4 +1,3 @@
-import { withDemoGuard } from './lib/demo-guard';
 import { s3ForcePathStyle } from "./lib/s3-storage";
 import { createAuth } from "@keystone-6/auth";
 import { config } from "@keystone-6/core";
@@ -141,7 +140,7 @@ const baseConfig = config({
     provider: "postgresql",
     url: databaseURL,
   },
-  lists: withDemoGuard(models),
+  lists: models,
   storage: {
     my_images: capabilities.storageInfrastructureConfigured ? {
       kind: 's3' as const,

@@ -10,7 +10,6 @@ export const HOTEL_PROPERTY_KEY = 'the-alder-house';
 export function requireActionData<T>(response: KeystoneResponse<T>): T {
   if (!response.success) {
     const errors = Array.isArray(response.errors) ? response.errors : [];
-    if (response.error === "Demo accounts can't change this.") throw new Error(response.error);
     throw new Error(errors.length ? safeGraphQLError({ response: { errors } }).message : 'The request could not be completed.');
   }
   return response.data;

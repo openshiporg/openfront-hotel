@@ -1,6 +1,5 @@
 import { keystoneContext } from '../../features/keystone/context'
 import { createYoga } from "graphql-yoga";
-import { useDemoGuardErrors } from '../../features/keystone/lib/demo-guard';
 // @ts-ignore
 import processRequest from "graphql-upload/processRequest.js";
 import { type NextApiRequest, type NextApiResponse } from 'next'
@@ -98,7 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     maskedErrors: {
       maskError: (error: unknown, message: string) => maskHotelGraphqlError(error, message, permissions.canAccessDashboard({ session: requestContext.session as any })),
     },
-    plugins: [hotelGraphqlQueryLimitsPlugin, useDemoGuardErrors()],
+    plugins: [hotelGraphqlQueryLimitsPlugin],
     multipart: false,
   })(req, res);
 }
