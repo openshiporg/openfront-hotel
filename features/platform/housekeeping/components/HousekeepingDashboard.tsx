@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { differenceInMinutes, parseISO } from 'date-fns';
+import { useIsMounted } from '@/features/dashboard/lib/useViewerTime';
 import { Check, Clock3, Flag, Moon, Pause, Play, Sparkles, UserRound, Wrench } from 'lucide-react';
 
 import {
@@ -354,11 +355,12 @@ export function HousekeepingDashboard({
 function TaskRow({ task, onStart, onComplete, onPause }: { task: HousekeepingTask; onStart?: () => void; onComplete?: (notes?: string) => void; onPause?: () => void }) {
   const [checklistOpen, setChecklistOpen] = React.useState(false);
   const [checked, setChecked] = React.useState(false);
+  const mounted = useIsMounted();
   const needsChecklist = requiresInspectionChecklist(task);
   const duration = task.startedAt && task.completedAt
     ? differenceInMinutes(parseISO(task.completedAt), parseISO(task.startedAt))
     : task.startedAt
-      ? differenceInMinutes(new Date(), parseISO(task.startedAt))
+      ? (mounted ? differenceInMinutes(new Date(), parseISO(task.startedAt)) : null)
       : null;
   const priority = task.priority === 1 ? 'urgent' : task.priority === 2 ? 'high' : null;
 
