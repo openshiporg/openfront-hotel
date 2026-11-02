@@ -72,8 +72,8 @@ function RoomsContent() {
             <form key={price} className="sf-stack" style={{ '--stack': '12px' } as React.CSSProperties} onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); update({ priceRange: `${data.get('min') || 0}-${data.get('max') || 100000}` }); }}>
               <h2>Base nightly rate</h2>
               <div className="sf-formgrid" style={{ gap: 10 }}>
-                <label className="sf-field"><span className="sf-label">Minimum</span><Input className="sf-input" name="min" type="number" min="0" inputMode="numeric" defaultValue={price.split('-')[0] || ''} /></label>
-                <label className="sf-field"><span className="sf-label">Maximum</span><Input className="sf-input" name="max" type="number" min="0" inputMode="numeric" defaultValue={price.split('-')[1] || ''} /></label>
+                <label className="sf-field"><span className="sf-label">Minimum</span><Input className="sf-input" name="min" type="text" inputMode="numeric" pattern="[0-9]*" onChange={event => { event.currentTarget.value = event.currentTarget.value.replace(/\D/g, ''); }} defaultValue={price.split('-')[0] || ''} /></label>
+                <label className="sf-field"><span className="sf-label">Maximum</span><Input className="sf-input" name="max" type="text" inputMode="numeric" pattern="[0-9]*" onChange={event => { event.currentTarget.value = event.currentTarget.value.replace(/\D/g, ''); }} defaultValue={price.split('-')[1] || ''} /></label>
               </div>
               <p className="sf-hint">Reference rate only; the dated total may differ.</p>
               <button className="sf-btn sf-btn--ghost sf-btn--sm sf-btn--block">Apply budget</button>
