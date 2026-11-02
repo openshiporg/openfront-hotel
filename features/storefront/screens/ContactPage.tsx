@@ -85,7 +85,7 @@ export default function ContactPage() {
             <label className="sf-field" htmlFor="contact-email"><span className="sf-label">Email</span><input id="contact-email" name="email" type="email" autoComplete="email" required maxLength={254} value={form.email} onChange={update} className="sf-input" /></label>
             <label className="sf-field" htmlFor="contact-phone"><span className="sf-label">Telephone <small>(optional)</small></span><input id="contact-phone" name="phone" type="tel" autoComplete="tel" maxLength={40} value={form.phone} onChange={update} className="sf-input" /></label>
             <label className="sf-field" htmlFor="contact-subject"><span className="sf-label">What can we help with?</span>
-              <Select name="subject" required value={form.subject || undefined} onValueChange={value => setForm(previous => ({ ...previous, subject: value }))}>
+              <Select value={form.subject || undefined} onValueChange={value => setForm(previous => ({ ...previous, subject: value }))}>
                 <SelectTrigger id="contact-subject" className="sf-select"><SelectValue placeholder="Choose a topic" /></SelectTrigger>
                 <SelectContent className="sf-portal">{topics.map(topic => <SelectItem key={topic.value} value={topic.value}>{topic.label}</SelectItem>)}</SelectContent></Select>
             </label>
