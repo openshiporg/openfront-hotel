@@ -122,6 +122,18 @@ function communicationDate(value?: string) {
   }).format(new Date(value));
 }
 
+function holdUntilLabel(payload: HotelCommunicationPayload) {
+  if (!payload.holdExpiresAt) return '';
+  const zone = payload.propertyTimeZone || 'UTC';
+  let label: string;
+  try {
+    label = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: zone, timeZoneName: 'short' }).format(new Date(payload.holdExpiresAt));
+  } catch {
+    label = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' }).format(new Date(payload.holdExpiresAt));
+  }
+  return label;
+}
+
 function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
   const recipient = payload.to;
   if (!recipient) throw new Error('Hotel communication recipient is required.');
@@ -135,7 +147,7 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
 
   const confirmationNumber = payload.confirmationNumber;
   if (!confirmationNumber) throw new Error('Booking communication confirmation number is required.');
-  const title = payload.kind === 'booking_prearrival' ? 'Your upcoming stay' : payload.kind === 'booking_confirmation'
+  const title = payload.kind === 'booking_received' ? 'Reservation request received' : payload.kind === 'booking_prearrival' ? 'Your upcoming stay' : payload.kind === 'booking_confirmation'
     ? 'Reservation confirmed'
     : payload.kind === 'booking_updated'
       ? 'Reservation updated'
@@ -157,7 +169,7 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
   const lookupUrl = `${getBaseUrlForEmails()}/bookings/lookup?confirmation=${encodeURIComponent(confirmationNumber)}&email=${encodeURIComponent(recipient)}`;
   return {
     subject: `${emailHeader(title)} · ${emailHeader(payload.confirmationNumber)} · ${emailHeader(payload.propertyName)}`,
-    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === 'booking_prearrival' ? `We look forward to welcoming you to ${property}. Review your arrival details below.` : payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`,
+    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === 'booking_received' ? `We received your reservation request with ${property}. Your room is held${payload.holdExpiresAt ? ` until ${escapeHtml(holdUntilLabel(payload))}` : ' for a short time'}. It is not confirmed until payment is complete, and the hold lapses if it isn't.` : payload.kind === 'booking_prearrival' ? `We look forward to welcoming you to ${property}. Review your arrival details below.` : payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`,
   };
 }
 

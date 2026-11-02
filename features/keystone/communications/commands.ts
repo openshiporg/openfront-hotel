@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { hashLifecycleRequest, HOTEL_PROPERTY_KEY } from '../lib/hotelLifecycle';
 
 export const HOTEL_COMMUNICATION_TOPICS = [
+  'hotel.communication.booking_received',
   'hotel.communication.booking_confirmation',
   'hotel.communication.booking_prearrival',
   'hotel.communication.booking_updated',
@@ -14,7 +15,7 @@ export const HOTEL_COMMUNICATION_TOPICS = [
 ] as const;
 
 export type HotelCommunicationTopic = (typeof HOTEL_COMMUNICATION_TOPICS)[number];
-export type BookingCommunicationKind = 'booking_prearrival' | 'booking_confirmation' | 'booking_updated' | 'booking_cancelled' | 'booking_no_show' | 'booking_refund' | 'booking_modification_response';
+export type BookingCommunicationKind = 'booking_received' | 'booking_prearrival' | 'booking_confirmation' | 'booking_updated' | 'booking_cancelled' | 'booking_no_show' | 'booking_refund' | 'booking_modification_response';
 
 export type HotelCommunicationPayload = {
   kind: BookingCommunicationKind | 'contact_received';
@@ -32,6 +33,8 @@ export type HotelCommunicationPayload = {
   totalAmountMinor?: number;
   currencyCode?: string;
   cancellationPolicy?: string | null;
+  holdExpiresAt?: string | null;
+  propertyTimeZone?: string | null;
   cancellationSummary?: string | null;
   refundableMinor?: number | null;
   cancellationFeeMinor?: number | null;
@@ -167,6 +170,10 @@ export async function queueBookingCommunication(prisma: any, {
     totalAmountMinor: Number(booking.totalAmountMinor || 0),
     currencyCode: String(booking.currencyCode || 'USD').toUpperCase(),
     cancellationPolicy: policy,
+    ...(kind === 'booking_received' ? {
+      holdExpiresAt: booking.holdExpiresAt ? new Date(booking.holdExpiresAt).toISOString() : null,
+      propertyTimeZone: (booking.pricingSnapshot as any)?.propertyTimeZone || null,
+    } : {}),
     cancellationSummary: cancellation?.summary || null,
     refundableMinor: cancellation?.refundableMinor ?? null,
     cancellationFeeMinor: cancellation?.cancellationFeeMinor ?? null,
@@ -227,6 +234,7 @@ export async function bookingCommunicationStatus(prisma: any, bookingId: string)
   const latest = new Map<string, any>();
   for (const event of events) if (!latest.has(event.topic)) latest.set(event.topic, event);
   return {
+    received: latest.get('hotel.communication.booking_received') || null,
     prearrival: latest.get('hotel.communication.booking_prearrival') || null,
     confirmation: latest.get('hotel.communication.booking_confirmation') || null,
     update: latest.get('hotel.communication.booking_updated') || null,

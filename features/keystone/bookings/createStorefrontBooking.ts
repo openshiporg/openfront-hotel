@@ -13,6 +13,7 @@ import { enforceAbuseLimit } from '../lib/abuseControl';
 import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { STOREFRONT_BOOKING_QUERY } from '../lib/storefrontBooking';
 import { guestAccountId } from '../mutations/guestAccounts';
+import { queueBookingCommunication } from '../communications/commands';
 
 export type StorefrontBookingInput = HotelPriceInput & {
   idempotencyKey: string;
@@ -116,6 +117,17 @@ async function createStorefrontBooking(
     });
   });
   setGuestBookingAccess(context, booking.id, guestAccessToken);
+  // Request/hold received. Queued after the booking commits, deduped by its event key (a replayed
+  // attempt returns the same row), and never allowed to fail the booking.
+  try {
+    await queueBookingCommunication(context.prisma, {
+      bookingId: booking.id,
+      kind: 'booking_received',
+      eventKey: `booking:${booking.id}:received:v1`,
+    });
+  } catch (error) {
+    console.error('Booking received communication was not queued:', error instanceof Error ? error.message : 'unknown error');
+  }
   return booking;
 }
 
