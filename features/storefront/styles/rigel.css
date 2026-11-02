@@ -166,15 +166,16 @@
 .rg-room__body { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; min-width: 0; gap: 0; padding: 7px 8px 7px; }
 .rg-room__name { margin: 0; font-family: var(--display); font-size: 1rem; font-weight: 400; line-height: 1.2; color: var(--ink); }
 .rg-room__copy { font-family: var(--display); font-size: 0.75rem; line-height: 1.35; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.rg-room__foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px solid #eef0f3; }
+.rg-room__foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px solid #eef0f3; }
 .rg-room__bed { display: inline-flex; flex: none; min-width: 0; align-items: center; gap: 5px; font-family: var(--display); font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; }
-.rg-room__bed svg { flex: none; width: 15px; height: 15px; stroke-width: 1.4; }
+.rg-room__bed svg { flex: none; width: 14px; height: 14px; stroke-width: 1.4; }
 .rg-room__price { display: inline-flex; flex: none; align-items: baseline; gap: 4px; margin-left: auto; white-space: nowrap; }
 @media (min-width: 768px) and (max-width: 1240px) { .rg-room__from { display: none; } }
+@media (min-width: 768px) { .rg-room__night { display: none; } .rg-room__foot { gap: 4px; } }
 .rg-room__price small { font-family: var(--display); font-size: 0.75rem; color: var(--ink-3); }
 .rg-room__price b { font-family: var(--display); font-size: 1.12rem; font-weight: 400; line-height: 1; color: var(--ink); font-variant-numeric: lining-nums; }
 .rg-room__night { display: none; }
-.rg-room__go { position: relative; z-index: 2; flex: none; min-height: 24px; padding: 0 13px; font-size: 0.75rem; }
+.rg-room__go { position: relative; z-index: 2; flex: none; min-height: 24px; padding: 0 10px; font-size: 0.75rem; }
 .rg-more { margin-top: 18px; text-align: center; }
 
 .rg-house { padding-block: 0 20px; }
