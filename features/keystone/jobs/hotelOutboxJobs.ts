@@ -5,6 +5,7 @@ import { getHotelWorkerContext } from './runtimeContext';
 import {
   createHttpOutboxHandler,
   dispatchHotelOutboxBatch,
+  adapterlessOutboxHandler,
 } from '../communications/outbox';
 import { getOutboxDispatchConfig } from '../lib/integrationConfig';
 import { recordWorkerHeartbeat, recordWorkerProgress } from '../lib/workerProgress';
@@ -73,6 +74,15 @@ export function startHotelOutboxJobs(config: KeystoneConfig) {
         },
         handler,
       );
+      // With no HTTP receiver, only communication topics have an adapter. Close every other event
+      // through the same claim path instead of leaving it pending (and "stuck") forever.
+      if (!httpHandler) {
+        await dispatchHotelOutboxBatch(
+          context.prisma,
+          { propertyKey: 'the-alder-house', workerId, limit: 50, excludeTopics: HOTEL_COMMUNICATION_TOPICS },
+          adapterlessOutboxHandler,
+        );
+      }
       await recordWorkerHeartbeat(context.prisma, 'outbox');
       // A cycle where deliveries had to be retried or dead-lettered is not progress.
       if (!scheduled.failures && !result.retried && !result.deadLettered) await recordWorkerProgress(context.prisma, 'outbox');

@@ -58,7 +58,7 @@ export default async function hotelReadiness(_root: unknown, _args: unknown, con
     const brokenGroupBilling = await prisma.booking.findFirst({ where: { groupBlock: { billingType: 'master_folio' }, billingFolioId: null, status: { in: ['pending', 'confirmed', 'checked_in'] } }, select: { id: true } });
     const groupsHealthy = settings?.groupsEnabled === true ? !brokenGroupBilling : groupsDisabled;
     const frontDeskClear = !overdueStay && !orphanOccupiedRoom;
-    const progress = await prisma.hotelWorkerLease.findMany({ where: { leaseKey: { in: ['progress:holds', 'progress:refunds', 'progress:outbox'] } } });
+    const progress = await prisma.hotelWorkerLease.findMany({ where: { leaseKey: { in: ['progress:holds', 'progress:refunds', 'progress:outbox', 'heartbeat:outbox'] } } });
     const workers = getWorkerReadiness(progress, communicationsRequired);
     const staleBefore = new Date(Date.now() - 15 * 60_000);
     const [stuckHold, stuckRefund, stuckOutbox] = await Promise.all([

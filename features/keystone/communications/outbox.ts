@@ -33,6 +33,18 @@ export type OutboxDispatchResult = {
 
 export type OutboxHandler = (event: HotelOutboxEventRecord) => Promise<unknown>;
 
+/**
+ * Events whose topic has no delivery adapter (audit-style facts such as hotel.night_audit.completed)
+ * are closed through the normal path as `delivered` with this result, exactly like a suppressed
+ * pre-arrival message: nothing was sent, and the snapshot says why. The status column is limited by a
+ * database CHECK constraint, so a separate "skipped" status would need a migration.
+ */
+export const OUTBOX_NO_ADAPTER_RESULT = {
+  suppressed: true,
+  reason: 'No delivery adapter is configured for this topic; nothing was sent.',
+} as const;
+export const adapterlessOutboxHandler: OutboxHandler = async () => ({ ...OUTBOX_NO_ADAPTER_RESULT });
+
 export class HotelOutboxDeliveryError extends Error {
   constructor(readonly deliveryUnknown: boolean) {
     super(deliveryUnknown
@@ -110,6 +122,8 @@ export async function claimHotelOutboxEvents(
     leaseMs?: number;
     now?: Date;
     topics?: readonly string[];
+    /** Claim everything EXCEPT these topics (used to close events that have no delivery adapter). */
+    excludeTopics?: readonly string[];
     ambiguousTopics?: readonly string[];
   }
 ): Promise<HotelOutboxEventRecord[]> {
@@ -124,9 +138,12 @@ export async function claimHotelOutboxEvents(
   const leaseExpiresAt = new Date(now.getTime() + leaseMs);
   const leaseToken = `${workerId}:${randomUUID()}`;
   const topics = normalizeTopics(options.topics);
+  const excludedTopics = normalizeTopics(options.excludeTopics);
   const topicFilter = topics.length
     ? Prisma.sql`AND "topic" IN (${Prisma.join(topics)})`
-    : Prisma.empty;
+    : excludedTopics.length
+      ? Prisma.sql`AND "topic" NOT IN (${Prisma.join(excludedTopics)})`
+      : Prisma.empty;
   const ambiguousProcessingFilter = ambiguousTopics.length
     ? Prisma.sql`AND "topic" NOT IN (${Prisma.join(ambiguousTopics)})`
     : Prisma.empty;
@@ -281,6 +298,7 @@ export async function dispatchHotelOutboxBatch(
     leaseMs?: number;
     now?: Date;
     topics?: readonly string[];
+    excludeTopics?: readonly string[];
     ambiguousTopics?: readonly string[];
   },
   handler: OutboxHandler,
