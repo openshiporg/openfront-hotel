@@ -78,6 +78,17 @@ test('4. a demo user cannot change the store name, logo or URL settings', async 
   await refused(run('HotelSettings', 'delete', DEMO, { item: { id: 's' } }));
 });
 
+test('4b. unchanged protected values pass, changed ones are refused', async () => {
+  const item = { id: 's', propertyName: 'Alder', tagline: null, logoIcon: 'a', logoColor: '#111111' };
+  await run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: ' Alder ', tagline: '', logoIcon: 'a', logoColor: '#111111', checkInTime: '15:00', taxRate: 8 } });
+  await refused(run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: 'Other', checkInTime: '15:00' } }));
+  await refused(run('HotelSettings', 'update', DEMO, { item, inputData: { propertyName: 'Alder', logoColor: '#000000' } }));
+  await refused(run('HotelSettings', 'update', DEMO, { item, inputData: { tagline: 'New' } }));
+  await refused(run('HotelSettings', 'update', DEMO, { inputData: { propertyName: 'Alder' } }));
+  await refused(run('User', 'update', DEMO, { item: { id: 'demo', password: 'x' }, inputData: { password: 'x' } }));
+  await refused(run('User', 'update', DEMO, { item: { id: 'demo', isActive: true }, inputData: { isActive: false } }));
+});
+
 test('a demo user can still edit a booking and its own onboarding state', async () => {
   await run('Booking', 'update', DEMO, { item: { id: 'p' }, inputData: { status: 'confirmed' } });
   assert.equal(productHookRan, 1, 'the existing Booking hook still runs');
