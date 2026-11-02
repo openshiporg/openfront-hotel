@@ -357,3 +357,6 @@
   .rg-offergrid, .rg-offergrid[data-count='3'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rg-room__bed { display: none; }
 }
+
+/* Header/hero stay planner: date fields size to their text so neither date truncates */
+@media (min-width: 768px) { .sf-planner { grid-template-columns: minmax(max-content, 1fr) minmax(max-content, 1fr) max-content auto; } .sf-planner__text b { overflow: visible; text-overflow: clip; } }
