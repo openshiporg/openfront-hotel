@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createPayment } from '../utils/paymentProviderAdapter';
-import { configuredSiteOrigin } from '../lib/productionConfig';
+import { safePaymentReturnUrl } from '../lib/paymentReturnUrl';
+export { paymentRequestOrigin, safePaymentReturnUrl } from '../lib/paymentReturnUrl';
 import { getBookingCollectibleBalance } from '../folios/bookingFolio';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProviders';
@@ -13,51 +14,6 @@ import {
 
 const PAYABLE_BOOKING_STATUSES = new Set(['pending', 'confirmed']);
 const MAX_PAYMENT_SESSION_MINOR = 2_147_483_647;
-
-function requestHeader(context: any, name: string) {
-  const headers = context?.req?.headers;
-  const value = typeof headers?.get === 'function'
-    ? headers.get(name)
-    : headers?.[name] ?? headers?.[name.toLowerCase()];
-  return Array.isArray(value) ? value[0] : typeof value === 'string' ? value : '';
-}
-
-function canonicalHttpOrigin(value: string) {
-  const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('Payment return origin is invalid.');
-  }
-  return url.origin;
-}
-
-export function paymentRequestOrigin(context: any, env: NodeJS.ProcessEnv = process.env) {
-  const configured = configuredSiteOrigin(env);
-  if (configured) return canonicalHttpOrigin(configured);
-
-  const browserOrigin = requestHeader(context, 'origin');
-  if (browserOrigin) return canonicalHttpOrigin(browserOrigin);
-
-  if (env.NODE_ENV !== 'production') {
-    const host = requestHeader(context, 'x-forwarded-host') || requestHeader(context, 'host');
-    const protocol = requestHeader(context, 'x-forwarded-proto') || 'http';
-    if (host) return canonicalHttpOrigin(`${protocol}://${host}`);
-  }
-  throw new Error('Payment return origin could not be verified from this checkout request.');
-}
-
-export function safePaymentReturnUrl(
-  value: string | null | undefined,
-  context: any,
-  allowedPath: string,
-  env: NodeJS.ProcessEnv = process.env,
-) {
-  if (!value) throw new Error('Payment return URL is required.');
-  const url = new URL(value, paymentRequestOrigin(context, env));
-  if (url.origin !== paymentRequestOrigin(context, env) || url.pathname !== allowedPath || url.username || url.password || url.hash) {
-    throw new Error('Payment return URL is not allowed.');
-  }
-  return url.toString();
-}
 
 const SESSION_PROJECTION = `
   id

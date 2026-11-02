@@ -5,6 +5,8 @@ const s3Hostname = process.env.S3_ENDPOINT ? process.env.S3_ENDPOINT.replace(/^h
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  // Match the canonical dashboard upload transport (Keystone caps each file at 10 MiB).
+  experimental: { serverActions: { bodySizeLimit: '10mb' } },
   serverExternalPackages: ['graphql'],
   // Every inbound callback is served by the reference /api/payment-webhooks/[providerId] route.
   // URLs already registered with Stripe, PayPal, channels and outbox senders keep working
