@@ -20,6 +20,8 @@ export function safeErrorSummary(error: unknown): { message: string; codes: stri
 }
 
 // Keystone codes whose messages are written for the person filling the form.
+// The demo guard's refusal arrives as a business-rule error from custom mutations.
+const DEMO_GUARD_COPY = "Demo accounts can't change this.";
 const USER_FACING_CODES = new Set([
   'KS_VALIDATION_FAILURE', 'KS_USER_INPUT_ERROR', 'KS_ACCESS_DENIED', 'KS_EXTENSION_ERROR',
 ]);
@@ -52,6 +54,7 @@ export function publicGraphQLErrorMessage(error: unknown): string {
       if (names?.length) messages.push(`A record with this ${names.join(' and ')} already exists.`);
       continue;
     }
+    if (message === DEMO_GUARD_COPY) { messages.push(message); continue; }
     if (typeof code !== 'string' || !USER_FACING_CODES.has(code)) continue;
     const cleaned = cleanMessage(message);
     if (cleaned) messages.push(cleaned);
