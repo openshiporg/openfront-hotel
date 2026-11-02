@@ -1,3 +1,6 @@
+import { createElement, type ReactNode } from 'react';
+import { ViewerTime } from '@/features/dashboard/components/ViewerTime';
+
 /**
  * Presentation helpers shared by hotel platform screens. Stay dates are
  * property calendar labels, so date-only values are always rendered in UTC.
@@ -66,18 +69,14 @@ export function pluralize(count: number, singular: string, plural = `${singular}
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-export function formatDateTime(value?: string | null) {
+export function formatDateTime(value?: string | null): ReactNode {
   if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+  return createElement(ViewerTime, { value, style: 'datetime', fallback: String(value) });
 }
 
-export function formatTime(value?: string | null) {
+export function formatTime(value?: string | null): ReactNode {
   if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(date);
+  return createElement(ViewerTime, { value, style: 'datetime', fallback: String(value) });
 }
 
 export function initials(name?: string | null) {

@@ -54,7 +54,7 @@ export default function GuestMessagesPage() {
               <p className="mt-3 whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 text-sm leading-6">{message.message}</p>
               <p className="mt-2 text-xs text-muted-foreground">
                 {message.replyTo ? <>From <span className="break-all">{message.replyTo}</span>{message.phone ? ` · ${message.phone}` : ''} · </> : null}
-                {message.deliveryStatus === 'delivered' ? `Email notification sent${message.deliveredAt ? ` ${formatDateTime(message.deliveredAt)}` : ''}`
+                {message.deliveryStatus === 'delivered' ? <>Email notification sent{message.deliveredAt ? <> {formatDateTime(message.deliveredAt)}</> : ''}</>
                   : data.deliveryConfigured ? `Email notification ${humanize(message.deliveryStatus)}${message.attempts ? ` after ${message.attempts} ${message.attempts === 1 ? 'attempt' : 'attempts'}` : ''}`
                   : 'Email notification not sent'}
               </p>

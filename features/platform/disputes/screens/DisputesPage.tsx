@@ -88,7 +88,7 @@ export function DisputesPage() {
                     <p className="text-xl font-semibold tabular-nums">{new Intl.NumberFormat('en-US', { style: 'currency', currency: dispute.currencyCode }).format(dispute.amountMinor / 100)}</p>
                     <p className={cn('inline-flex items-center gap-1 text-xs', urgent ? 'font-medium text-rose-700 dark:text-rose-400' : 'text-muted-foreground')}>
                       <CalendarClock className="size-3" aria-hidden="true" />
-                      {due ? `Evidence due ${formatDateTime(dispute.evidenceDueBy)}${daysLeft !== null && daysLeft >= 0 ? ` · ${daysLeft}d left` : ''}` : 'No deadline supplied'}
+                      {due ? <>Evidence due {formatDateTime(dispute.evidenceDueBy)}{daysLeft !== null && daysLeft >= 0 ? ` · ${daysLeft}d left` : ''}</> : 'No deadline supplied'}
                     </p>
                   </div>
                 </div>

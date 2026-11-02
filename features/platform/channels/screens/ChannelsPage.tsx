@@ -204,7 +204,7 @@ export function ChannelsPage() {
                           <StatusPill kind="channel" value={channel.syncStatus} />
                           {!channel.isActive ? <StatusPill tone="neutral" label="Inactive" /> : null}
                         </div>
-                        <p className="text-xs text-muted-foreground">{channel.lastSyncAt ? `Last sync ${formatDateTime(channel.lastSyncAt)}` : 'Never synced'}{lastEvent ? ` · last event ${humanize(lastEvent.action)} (${humanize(lastEvent.status)})` : ''}</p>
+                        <p className="text-xs text-muted-foreground">{channel.lastSyncAt ? <>Last sync {formatDateTime(channel.lastSyncAt)}</> : 'Never synced'}{lastEvent ? ` · last event ${humanize(lastEvent.action)} (${humanize(lastEvent.status)})` : ''}</p>
                       </div>
                       <div className="flex shrink-0 flex-wrap gap-2">
                         <Button size="sm" variant="outline" disabled={!channel.isActive || syncingChannelId === `${channel.id}:push`} onClick={() => runChannelSync(channel.id, 'push')}><Send aria-hidden="true" />Push inventory</Button>
