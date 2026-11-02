@@ -360,3 +360,8 @@
 
 /* Header/hero stay planner: date fields size to their text so neither date truncates */
 @media (min-width: 768px) { .sf-planner { grid-template-columns: minmax(max-content, 1fr) minmax(max-content, 1fr) max-content auto; } .sf-planner__text b { overflow: visible; text-overflow: clip; } }
+
+/* Room card footer: never wider than the card; "from" yields first, then the bed label ellipsizes */
+.rg-room__foot { min-width: 0; }
+.rg-room__bed { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+@media (min-width: 768px) { .rg-room__from { display: none; } }
