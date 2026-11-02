@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { isSignedIn } from '../access';
 import { encryptSensitiveText, decryptSensitiveText } from './sensitiveData';
 import { enforceAbuseLimit } from './abuseControl';
+import { assertNotDemo } from './demo-guard';
 import { runSerializableTransaction } from './serializableTransaction';
 import { HOTEL_PROPERTY_KEY, hashLifecycleRequest } from './hotelLifecycle';
 
@@ -103,6 +104,7 @@ export function createHotelMfaResolvers(codec = { encrypt: encryptSensitiveText,
   }
   async function manageHotelMfa(_root: unknown, { action, password, code = '', recovery = false }: { action: string; password: string; code?: string; recovery?: boolean }, context: any) {
     if (!isSignedIn({ session: context.session })) throw new Error('Full authentication is required to manage MFA.');
+    await assertNotDemo(context);
     const id = context.session.itemId; await mfaLimit(context, id);
     return runSerializableTransaction(context, async (tx: any) => {
       const p = tx.prisma; await mfaLock(p, id); const user = await p.user.findUnique({ where: { id } });

@@ -25,6 +25,7 @@ import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { guestBookedStayTerms } from '../lib/storefrontBooking';
 import { encryptChannelCredentials } from '../lib/channelCredentials';
+import { assertNotDemo } from '../lib/demo-guard';
 
 export type HotelOnboardingTemplate = 'full' | 'minimal' | 'custom';
 const SEED_VERSION = 'hotel-seed-v4';
@@ -156,6 +157,8 @@ async function runHotelOnboarding(
   context: any
 ) {
   assertCanRunHotelOnboarding(context.session);
+  // Onboarding rewrites property settings, roles and logo through Prisma, past the list hooks.
+  await assertNotDemo(context);
   const normalizedTemplate = normalizeHotelOnboardingTemplate(template);
   const inputSeed = canonicalSeedForTemplate(normalizedTemplate, data);
   // Bind retries to the original request, before applying a relative calendar.

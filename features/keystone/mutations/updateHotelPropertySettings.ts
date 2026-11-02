@@ -9,6 +9,7 @@ import { ensureDefaultPaymentProviders } from '../utils/ensureDefaultPaymentProv
 import { parseStorefrontAccentPreset } from '../../storefront/lib/storefront-theme';
 import { normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
 import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
+import { isDemoSession, DEMO_GUARD_MESSAGE } from '../lib/demo-guard';
 
 function text(value: unknown, label: string, max: number, required = false) {
   const normalized = String(value || '').trim();
@@ -112,6 +113,17 @@ export default async function updateHotelPropertySettings(
   for (const field of ['refundApprovalThresholdMinor', 'writeOffApprovalThresholdMinor', 'cashVarianceApprovalThresholdMinor', 'securityDepositMinor'] as const) { if (!Number.isInteger(normalized[field]) || normalized[field] < 0 || normalized[field] > 2_147_483_647) throw new Error('Approval thresholds must be non-negative 32-bit minor amounts.'); }
   for (const [pathKey, altKey] of [['heroImagePath', 'heroImageAltText'], ['amenityImagePath', 'amenityImageAltText'], ['locationImagePath', 'locationImageAltText']] as const) {
     if (normalized[pathKey] && !normalized[altKey]) throw new Error(`${altKey} is required when ${pathKey} is set.`);
+  }
+  // Demo logins keep day-to-day property settings, but not the property name, tagline or logo.
+  if (await isDemoSession(context)) {
+    const current = await context.prisma.hotelSettings.findUnique({ where: { id: 1 } });
+    const same = (a: unknown, b: unknown) => (a ?? '') === (b ?? '');
+    const branding = logoBranding(data);
+    if (!current || !same(current.propertyName, normalized.propertyName) || !same(current.tagline, normalized.tagline)
+      || (branding.logoIcon !== undefined && !same(current.logoIcon, branding.logoIcon))
+      || (branding.logoColor !== undefined && !same(current.logoColor, branding.logoColor))) {
+      throw new Error(DEMO_GUARD_MESSAGE);
+    }
   }
   const identity = { request: normalized, aggregateType: 'hotel_settings', aggregateId: HOTEL_PROPERTY_KEY, action: 'updated' };
   await context.transaction(async (tx: any) => {
