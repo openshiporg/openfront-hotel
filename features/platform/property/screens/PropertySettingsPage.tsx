@@ -3,7 +3,13 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { BadgeCheck, BellRing, Blocks, Building2, BadgePlus, CircleDollarSign, Gift, ImageIcon, ImageOff, Loader2, Palette, RotateCcw, Save, Wallet } from 'lucide-react';
+import * as SelectPrimitive from '@radix-ui/react-select';
+import { Code } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -16,7 +22,9 @@ import { formatMoneyMinor, previewMinor } from '@/features/platform/lib/format';
 import { DEFAULT_STOREFRONT_ACCENT_PRESET, type StorefrontAccentPreset } from '@/features/storefront/lib/storefront-theme';
 import { getPropertySettingsWorkspace, updatePropertySettingsAction } from '../actions';
 import { StorefrontAccentPicker } from '../components/StorefrontAccentPicker';
-import { LogoHueControl, LogoMark, LogoPicker } from '../components/LogoPicker';
+import { LogoMark } from '../components/LogoMark';
+import { StoreSettingsSaveBar } from '../components/StoreSettingsSaveBar';
+import { HUE_PRESETS, LOGO_ICONS } from '../lib/icon-registry';
 import { DEFAULT_STORE_LOGO_COLOR, DEFAULT_STORE_LOGO_ICON, effectiveStoreLogoHue } from '../lib/store-logo';
 import { wordmarkFont } from '@/features/storefront/lib/wordmark-font';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
@@ -121,6 +129,13 @@ export default function PropertySettingsPage() {
 
   const set = (key: Key, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const logoHue = effectiveStoreLogoHue(form.logoIcon, form.logoColor);
+  // Same names as the E-commerce logo block, over this page's form state.
+  const logoIcon = form.logoIcon || DEFAULT_STORE_LOGO_ICON
+  const logoColor = logoHue
+  const setLogoIcon = (value: string) => setForm((current) => ({ ...current, logoIcon: value, logoColor: logoHue }))
+  const setLogoColor = (value: string) => setForm((current) => ({ ...current, logoIcon: current.logoIcon || DEFAULT_STORE_LOGO_ICON, logoColor: value }))
+  // Find matching preset icon, but don't default to first icon if not found
+  const selectedIcon = LOGO_ICONS.find((icon) => icon.lightSvg === logoIcon)
   // Leaving with unsaved edits asks first.
   React.useEffect(() => {
     if (!dirty) return;
@@ -195,11 +210,11 @@ export default function PropertySettingsPage() {
       ) : null}
       actions={!loading && !error ? <>
         <Button type="button" variant="outline" size="sm" disabled={!dirty || saving} onClick={() => setForm(saved)}><RotateCcw aria-hidden="true" />Discard</Button>
-        <Button type="submit" form="property-settings-form" size="sm" disabled={!dirty || saving}>{saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Save aria-hidden="true" />}Save Changes</Button>
+        <Button type="submit" form="property-settings-form" size="sm" className="hidden md:inline-flex" disabled={!dirty || saving}>{saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Save aria-hidden="true" />}Save Changes</Button>
       </> : null}
     >
       {error ? <WorkspaceError message={error} onRetry={load} title="Property settings unavailable" /> : loading ? <WorkspaceLoading label="Loading property settings" rows={6} /> : (
-          <form id="property-settings-form" onSubmit={(event) => { event.preventDefault(); void save(); }} className="min-w-0 max-w-5xl space-y-6">
+          <form id="property-settings-form" onSubmit={(event) => { event.preventDefault(); void save(); }} className="min-w-0 max-w-5xl space-y-6 pb-24 md:pb-0">
             {settingsState === 'missing' ? (
               <Callout tone="info" icon={Building2} title="Property settings are not set up yet" role="status">
                 Complete the required fields and save. Until then, the storefront shows a generic name and the default theme.
@@ -272,14 +287,132 @@ export default function PropertySettingsPage() {
 
             {section('logo', 'Shown beside the property name in the storefront header, mobile menu and footer. Once you save a logo or logo color, it also sets the storefront accent: buttons, links and focus rings.', (
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,24rem)]">
-                <div className="space-y-5">
-                  <div className="space-y-2">
-                    <label htmlFor="logoIcon" className="text-sm font-medium">Logo</label>
-                    <LogoPicker value={form.logoIcon} hue={logoHue} onChange={(logoIcon) => setForm((current) => ({ ...current, logoIcon, logoColor: logoHue }))} />
+                <div className="space-y-6">
+                {/* Logo Icon Selector */}
+                <div>
+                  <Label>Logo Icon</Label>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Select
+                      value={selectedIcon?.id || ''}
+                      onValueChange={(id) => {
+                        const icon = LOGO_ICONS.find((i) => i.id === id);
+                        if (icon) setLogoIcon(icon.lightSvg);
+                      }}
+                    >
+                      <SelectPrimitive.Trigger
+                        className={cn(
+                          'flex h-12 w-12 shrink-0 rounded-lg border border-input bg-background focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 p-0 overflow-hidden items-center justify-center'
+                        )}
+                      >
+                        <div
+                          dangerouslySetInnerHTML={{ __html: logoIcon }}
+                          style={{ filter: `hue-rotate(${logoColor}deg)` }}
+                          className="[&>svg]:w-6 [&>svg]:h-6"
+                        />
+                      </SelectPrimitive.Trigger>
+                      <SelectContent className="border-border dark:border-blue-700">
+                        {LOGO_ICONS.map((icon) => (
+                          <SelectItem key={icon.id} value={icon.id}>
+                            <span className="flex items-center gap-3">
+                              <div
+                                dangerouslySetInnerHTML={{ __html: icon.lightSvg }}
+                                style={{ filter: `hue-rotate(${logoColor}deg)` }}
+                                className="[&>svg]:w-6 [&>svg]:h-6"
+                              />
+                              <span>
+                                <span className="block font-medium text-gray-900 dark:text-gray-100">
+                                  {icon.name}
+                                </span>
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {/* SVG Code Editor Popover */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-12 w-12 shrink-0"
+                          type="button"
+                        >
+                          <Code className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[min(500px,calc(100vw-2rem))]" align="start">
+                        <div className="space-y-4">
+                          <div>
+                            <h4 className="font-medium mb-2">Edit SVG Code</h4>
+                            <p className="text-sm text-muted-foreground mb-4">
+                              Edit the SVG code directly. Changes will be reflected in the icon preview.
+                            </p>
+                          </div>
+                          <Textarea
+                            value={logoIcon}
+                            onChange={(e) => setLogoIcon(e.target.value)}
+                            className="font-mono text-xs min-h-[300px]"
+                            placeholder="<svg>...</svg>"
+                          />
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm text-muted-foreground">Preview:</div>
+                            <div
+                              dangerouslySetInnerHTML={{ __html: logoIcon }}
+                              style={{ filter: `hue-rotate(${logoColor}deg)` }}
+                              className="[&>svg]:w-8 [&>svg]:h-8 flex items-center justify-center p-2 border rounded"
+                            />
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   </div>
-                  <div>
-                    <LogoHueControl value={logoHue} onChange={(logoColor) => setForm((current) => ({ ...current, logoIcon: current.logoIcon || DEFAULT_STORE_LOGO_ICON, logoColor }))} />
+                </div>
+
+                {/* Logo Color Selector */}
+                <div>
+                  <Label>Logo Color</Label>
+                  <div className="mt-2">
+                    <Select
+                      value={logoColor}
+                      onValueChange={(value) => setLogoColor(value)}
+                    >
+                      <SelectPrimitive.Trigger
+                        className={cn(
+                          'flex h-12 w-12 shrink-0 rounded-lg border border-input bg-background focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 p-0 overflow-hidden items-center justify-center'
+                        )}
+                      >
+                        <SelectValue>
+                          <div
+                            className="w-6 h-6 rounded-full"
+                            style={{
+                              background: `hsl(${(240 + parseInt(logoColor)) % 360}, 70%, 50%)`
+                            }}
+                          />
+                        </SelectValue>
+                      </SelectPrimitive.Trigger>
+                      <SelectContent className="border-border dark:border-blue-700">
+                        <div className="grid grid-cols-4 gap-2 p-2">
+                          {HUE_PRESETS.map((preset) => (
+                            <SelectItem
+                              key={preset.value}
+                              value={preset.value.toString()}
+                              className="cursor-pointer p-0 h-12 w-12 flex items-center justify-center [&>span:first-child]:hidden"
+                            >
+                              <div
+                                className="w-6 h-6 rounded-full"
+                                style={{
+                                  background: `hsl(${(240 + preset.value) % 360}, 70%, 50%)`
+                                }}
+                              />
+                            </SelectItem>
+                          ))}
+                        </div>
+                      </SelectContent>
+                    </Select>
                   </div>
+                </div>
                 </div>
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Storefront preview</p>
@@ -328,6 +461,12 @@ export default function PropertySettingsPage() {
               </div>
             ), '')}
 
+            <div className="md:hidden">
+              <StoreSettingsSaveBar
+                isSaving={saving}
+                button={<Button type="submit" disabled={!dirty || saving}>{saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Save aria-hidden="true" />}Save Changes</Button>}
+              />
+            </div>
           </form>
       )}
     </PlatformPage>

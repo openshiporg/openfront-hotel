@@ -1,6 +1,7 @@
 'use server';
 
 import { randomUUID } from 'node:crypto';
+import { revalidatePath } from 'next/cache';
 
 import { keystoneClient } from '@/features/dashboard/lib/keystoneClient';
 import {
@@ -103,6 +104,9 @@ export async function updatePropertySettingsAction(input: Record<string, unknown
       ...logoInput(input),
     };
     const response = await keystoneClient<any>(UPDATE_SETTINGS, { data, key: randomUUID() });
-    return requireActionData(response).updateHotelPropertySettings;
+    const saved = requireActionData(response).updateHotelPropertySettings;
+    revalidatePath('/dashboard/platform/property');
+    revalidatePath('/', 'layout');
+    return saved;
   });
 }

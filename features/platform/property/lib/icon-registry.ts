@@ -254,15 +254,13 @@ export const LOGO_ICONS = [
   },
 ] as const;
 
-// Saved logo colours are hue rotations of the library's base blue (about 240°), so each
-// preset rotates by (target hue − 240°) to land on the colour its name describes.
+// Preset hue values (0-360 degrees) for common color shifts
 export const HUE_PRESETS = [
-  { name: 'Brass', value: 159 },
-  { name: 'Blue', value: 0 },
-  { name: 'Orange', value: 150 },
-  { name: 'Yellow', value: 175 },
-  { name: 'Green', value: 240 },
-  { name: 'Cyan', value: 305 },
-  { name: 'Purple', value: 35 },
-  { name: 'Pink', value: 90 },
+  { name: 'Original', value: 0 },
+  { name: 'Orange', value: 30 },
+  { name: 'Yellow', value: 60 },
+  { name: 'Green', value: 120 },
+  { name: 'Cyan', value: 180 },
+  { name: 'Purple', value: 270 },
+  { name: 'Pink', value: 330 },
 ] as const;
