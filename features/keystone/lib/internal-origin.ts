@@ -93,3 +93,23 @@ export function applyInternalIdentity(target: Headers, incoming: HeaderReader | 
   for (const [name, value] of Object.entries(internalIdentityHeaders(clientSourceFromHeaders(incoming)))) target.set(name, value)
   return target
 }
+
+/**
+ * A fetch for long-lived server GraphQL clients: the visitor is read from the CURRENT request on every
+ * call, never captured when the client is built, so a singleton client can never pin the first visitor.
+ */
+export function withRequestIdentity(
+  inner: typeof fetch = fetch,
+  currentRequestHeaders: () => Promise<HeaderReader | null | undefined> = async () => (await import('next/headers')).headers(),
+): typeof fetch {
+  return async (input, init) => {
+    if (typeof window !== 'undefined') return inner(input, init)
+    const headers = new Headers(init?.headers)
+    try {
+      applyInternalIdentity(headers, await currentRequestHeaders())
+    } catch {
+      // No request scope: send unsigned, as before.
+    }
+    return inner(input, { ...init, headers })
+  }
+}
