@@ -231,6 +231,7 @@
   .sf { font-size: 15px; }
   .rg-desk { display: none !important; }
   .rg-phone { display: revert !important; }
+  .rg-textlink.rg-phone { display: inline-flex !important; }
   .rg-cancelbar { display: none; }
 
   /* App-style chrome: a quiet header and the tab bar along the bottom. */
