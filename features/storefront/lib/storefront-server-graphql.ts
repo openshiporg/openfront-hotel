@@ -2,6 +2,7 @@ import 'server-only';
 
 import { headers } from 'next/headers';
 import { getServerBaseUrl } from '@/lib/graphql-client';
+import { applyInternalIdentity } from '@/features/keystone/lib/internal-origin';
 import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
 
 export const GUEST_SESSION_COOKIE = 'keystonejs-session';
@@ -26,6 +27,7 @@ export async function storefrontServerGraphql<T>(query: string, variables: Recor
   if (cookie) request.set('cookie', cookie);
   const forwardedProtocol = incoming?.get('x-forwarded-proto');
   if (forwardedProtocol) request.set('x-forwarded-proto', forwardedProtocol);
+  applyInternalIdentity(request, incoming);
   const response = await boundedGraphqlFetch(`${getServerBaseUrl()}/api/graphql`, {
     method: 'POST',
     headers: request,

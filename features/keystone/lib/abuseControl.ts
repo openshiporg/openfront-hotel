@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { verifiedInternalIdentity } from '../security/internalIdentity';
 
 function normalizeIp(value: string) {
   const ip = value.trim().replace(/^::ffff:/, '');
@@ -19,6 +20,10 @@ function trustedProxyIps() {
 export function requestNetworkIdentity(context: any) {
   const req = context?.req;
   const remote = normalizeIp(String(req?.socket?.remoteAddress || 'unknown'));
+  // A server render on this host calls over loopback with the end user's signed identity: key on that
+  // user. It is accepted only from a loopback socket with a fresh HMAC; otherwise the logic below applies.
+  const internal = verifiedInternalIdentity(req?.headers || {}, req?.socket?.remoteAddress, String(process.env.SESSION_SECRET || ''), Date.now());
+  if (internal) return internal;
   const trusted = trustedProxyIps();
   if (!trusted.has(remote)) return remote;
   const chain = String(req?.headers?.['x-forwarded-for'] || '').split(',').map(value => value.trim()).filter(Boolean);

@@ -1,9 +1,11 @@
 import 'server-only';
 
+import { headers } from 'next/headers';
+
 import { getAuthHeaders } from '@/features/dashboard/lib/cookies';
 import type { KeystoneResponse } from '@/features/dashboard/lib/keystoneClient';
 import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
-import { resolveInternalBaseUrl } from '@/features/keystone/lib/internal-origin';
+import { applyInternalIdentity, resolveInternalBaseUrl } from '@/features/keystone/lib/internal-origin';
 
 const boundedGraphqlFetch = createBoundedGraphqlFetch(30_000);
 const FAILURE = 'The request could not be completed.';
@@ -15,9 +17,10 @@ const FAILURE = 'The request could not be completed.';
  */
 export async function secretGraphql<T = any>(query: string, variables: Record<string, unknown>): Promise<KeystoneResponse<T>> {
   try {
+    const incoming = await headers().catch(() => null);
     const response = await boundedGraphqlFetch(`${resolveInternalBaseUrl()}/api/graphql`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(await getAuthHeaders()) },
+      headers: applyInternalIdentity(new Headers({ 'content-type': 'application/json', ...(await getAuthHeaders()) }), incoming),
       body: JSON.stringify({ query, variables }),
     });
     const payload = await response.json().catch(() => null) as { data?: T; errors?: any[] } | null;

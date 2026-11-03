@@ -3,6 +3,7 @@
 import { cookies, headers } from 'next/headers';
 
 import { getServerBaseUrl } from '@/lib/graphql-client';
+import { applyInternalIdentity } from '@/features/keystone/lib/internal-origin';
 import { createBoundedGraphqlFetch } from '@/features/keystone/lib/boundedGraphqlFetch';
 import { GET_BOOKINGS_BY_EMAIL, VERIFY_GUEST_BOOKING } from '@/lib/queries';
 import { storefrontServerGraphql } from '../lib/storefront-server-graphql';
@@ -42,7 +43,7 @@ async function incomingRequestHeaders() {
     const forwardedProtocol = incoming.get('x-forwarded-proto');
     if (cookie) result.set('cookie', cookie);
     if (forwardedProtocol) result.set('x-forwarded-proto', forwardedProtocol);
-    return result;
+    return applyInternalIdentity(result, incoming);
   } catch {
     return new Headers({ 'content-type': 'application/json' });
   }
