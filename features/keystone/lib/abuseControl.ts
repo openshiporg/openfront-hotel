@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import { Prisma } from '@prisma/client';
 import { verifiedInternalIdentity } from '../security/internalIdentity';
 
@@ -9,6 +10,22 @@ function normalizeIp(value: string) {
 
 function trustedProxyIps() {
   return new Set(String(process.env.TRUSTED_PROXY_IPS || '').split(',').map(normalizeIp).filter(ip => ip !== 'unknown'));
+}
+
+/**
+ * Railway's HTTP edge overwrites X-Real-IP with the connecting client before forwarding (a caller-sent value is
+ * replaced; proven live on grocery), while the socket peer is one of several changing edge addresses. So on Railway
+ * (RAILWAY_ENVIRONMENT, set by the platform) one valid X-Real-IP from a non-loopback peer is the client. Loopback
+ * callers are this app's own server and use the signed internal identity instead. X-Forwarded-For is never used here.
+ */
+export function railwayEdgeClientIp(req: any) {
+  if (!process.env.RAILWAY_ENVIRONMENT) return null;
+  const peer = String(req?.socket?.remoteAddress || '').trim().replace(/^::ffff:/, '');
+  if (!peer || /^(?:127\.|::1$)/.test(peer)) return null;
+  const raw = req?.headers?.['x-real-ip'];
+  const value = String(Array.isArray(raw) ? raw[0] ?? '' : raw ?? '').trim().replace(/^::ffff:/, '');
+  if (!value || value.length > 64 || value.includes(',') || isIP(value) === 0) return null;
+  return value.toLowerCase();
 }
 
 /**
@@ -24,6 +41,8 @@ export function requestNetworkIdentity(context: any) {
   // user. It is accepted only from a loopback socket with a fresh HMAC; otherwise the logic below applies.
   const internal = verifiedInternalIdentity(req?.headers || {}, req?.socket?.remoteAddress, String(process.env.SESSION_SECRET || ''), Date.now());
   if (internal) return internal;
+  const edge = railwayEdgeClientIp(req);
+  if (edge) return edge;
   const trusted = trustedProxyIps();
   if (!trusted.has(remote)) return remote;
   const chain = String(req?.headers?.['x-forwarded-for'] || '').split(',').map(value => value.trim()).filter(Boolean);
