@@ -140,7 +140,7 @@
 .rg-eyebrow { margin: 0; font-family: var(--sans); font-size: 0.75rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2); }
 .rg-h2 { margin: 0; font-family: var(--display); font-size: clamp(1.45rem, 1.85vw, 1.7rem); font-weight: 400; line-height: 1.15; letter-spacing: -0.005em; color: var(--ink); }
 .rg-h3 { margin: 0; font-family: var(--display); font-size: 1.35rem; font-weight: 400; line-height: 1.2; }
-.rg-textlink { display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #2a5bb5; }
+.rg-textlink { white-space: nowrap; width: fit-content; display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #2a5bb5; }
 .rg-textlink svg { width: 12px; height: 12px; transition: transform var(--sf-mid) var(--sf-ease); }
 .rg-textlink:hover svg { transform: translateX(3px); }
 
@@ -325,9 +325,9 @@
   .rg-panel { padding: 0; background: none; border: 0; border-radius: 0; }
   .rg-panel .rg-eyebrow { color: var(--navy); font-size: 0.75rem; }
   .rg-amen { grid-area: amen; margin-bottom: 10px; }
-  .rg-amen__title { margin-bottom: 12px; }
-  .rg-amen ul { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 0; }
-  .rg-amen li { display: grid; justify-items: center; gap: 6px; font-family: var(--sans); font-size: 0.75rem; line-height: 1.25; text-align: center; color: var(--ink-2); }
+  .rg-amen .rg-amen__title { margin: 4px 0 18px; }
+  .rg-amen ul { grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; gap: 6px; margin-top: 0; }
+  .rg-amen li { display: grid; justify-items: center; align-content: start; align-self: start; gap: 6px; font-family: var(--sans); font-size: 0.75rem; line-height: 1.25; text-align: center; color: var(--ink-2); }
   .rg-amen li i { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 999px; background: #f6f1ec; }
   .rg-amen li span { max-width: 100%; white-space: normal; }
   .rg-amen li svg { width: 19px; height: 19px; color: var(--ink); }
