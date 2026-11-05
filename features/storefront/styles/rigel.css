@@ -14,6 +14,11 @@
   --btn-primary-active: var(--navy-active);
   --btn-on-primary: #ffffff;
   --tint: #eef2f8;
+  /* Antique gold: the brand mark and display accents only (2.8:1 on white, 4.7:1 on navy),
+   * never small text on white. The deeper tone carries icons on white (3.9:1). */
+  --gold: #b8975a;
+  --gold-deep: #9a7a40;
+  --gold-soft: #d6c09a;
   --display: var(--sf-font-display, Georgia), Georgia, 'Times New Roman', serif;
   font-size: 15px;
   line-height: 1.55;
@@ -178,43 +183,54 @@
 .rg-room__go { position: relative; z-index: 2; flex: none; min-height: 24px; padding: 0 10px; font-size: 0.75rem; }
 .rg-more { margin-top: 18px; text-align: center; }
 
-.rg-house { padding-block: 0 20px; }
-.rg-house__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2.2vw, 31px); align-items: stretch; }
-.rg-house__left { display: grid; gap: 8px; align-content: start; }
-.rg-panel { margin: 0; padding: 10px 12px 11px 16px; border-radius: 6px; background: #f6f7f9; border: 1px solid #eef0f3; }
-.rg-amen ul { display: grid; grid-template-columns: repeat(2, max-content); justify-content: start; gap: 2px 22px; margin: 6px 0 0; padding: 0; list-style: none; }
-.rg-amen li span { display: block; }
-.rg-amen li { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-family: var(--display); font-size: 0.78rem; color: var(--ink); }
-.rg-amen li i { display: contents; }
 
-.rg-amen li svg { flex: none; width: 13px; height: 13px; color: var(--ink-2); stroke-width: 1.5; }
-.rg-loc__line { display: flex; gap: 8px; margin-top: 6px; }
-.rg-loc__line svg { flex: none; width: 15px; height: 15px; margin-top: 3px; color: var(--ink-2); stroke-width: 1.5; }
-.rg-loc__line span { display: grid; font-family: var(--display); line-height: 1.35; }
-.rg-loc__line b { font-weight: 400; font-size: 0.8rem; }
-.rg-loc__line small { font-size: 0.75rem; color: var(--ink-2); }
-.rg-house__mid { display: grid; align-content: start; justify-items: center; gap: 8px; margin: 0; text-align: center; }
-.rg-house__photo { display: block; width: 100%; aspect-ratio: 16 / 7; overflow: hidden; border-radius: 6px; }
-.rg-house__photo img { width: 100%; height: 100%; object-fit: cover; filter: saturate(0.85); }
-.rg-house__mid figcaption { display: grid; gap: 1px; font-family: var(--display); font-size: 0.76rem; line-height: 1.4; color: var(--ink-2); }
-.rg-house__mid figcaption b { font-family: var(--sans); font-size: 0.75rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink); }
-.rg-facts { display: grid; align-content: center; gap: 0; padding: 10px 16px 10px 40px; list-style: none; }
-.rg-facts li { display: flex; gap: 12px; padding-block: 6px; }
-.rg-facts li + li { border-top: 1px solid #e6e9ee; }
-.rg-facts li > svg { flex: none; width: 18px; height: 18px; margin-top: 2px; color: var(--ink-2); stroke-width: 1.3; }
-.rg-facts li span { display: grid; font-family: var(--display); line-height: 1.3; }
-.rg-facts b { font-size: 0.8rem; font-weight: 400; color: var(--ink); }
-.rg-facts small { font-size: 0.75rem; color: var(--ink-2); }
+
+
+/* ─── Home: house bands. Amenities, location and rates each get a full-width row,
+ * alternating white and cool grey with the rooms above and the navy footer below. */
+.rg-band { padding-block: clamp(28px, 3.6vw, 44px); }
+.rg-band--tint { background: #f3f4f6; }
+.rg-bandhead { display: grid; justify-items: center; gap: 2px; margin-bottom: 18px; text-align: center; }
+.rg-bandhead::after { content: ''; width: 36px; height: 1.5px; margin-top: 10px; background: var(--gold); }
+.rg-band__more { margin-top: 16px; text-align: center; }
+
+.rg-amen__list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 28px; margin: 0; padding: 0; list-style: none; }
+.rg-amen__list li { display: flex; align-items: center; gap: 12px; min-width: 0; padding-block: 11px; border-bottom: 1px solid #e3e6eb; font-family: var(--display); font-size: 1rem; line-height: 1.3; color: var(--ink); }
+.rg-amen__list svg { flex: none; width: 20px; height: 20px; color: var(--gold-deep); stroke-width: 1.4; }
+
+.rg-loc__photo { position: relative; display: block; aspect-ratio: 21 / 8; overflow: hidden; border-radius: 10px; background: var(--paper-3); }
+.rg-loc__photo img { width: 100%; height: 100%; object-fit: cover; transition: transform 900ms var(--sf-ease); }
+.rg-loc__photo:hover img { transform: scale(1.03); }
+.rg-loc__addr { position: absolute; left: 14px; bottom: 14px; display: inline-flex; align-items: center; gap: 7px; max-width: calc(100% - 28px); padding: 8px 14px; border-radius: 6px; background: rgb(23 35 58 / 0.86); color: #fff; font-family: var(--display); font-size: 0.92rem; line-height: 1.3; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.rg-loc__addr svg { flex: none; width: 15px; height: 15px; color: var(--gold-soft); stroke-width: 1.6; }
+.rg-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 28px; margin: 18px 0 0; padding: 0; list-style: none; }
+.rg-facts li { display: flex; gap: 12px; min-width: 0; padding-block: 10px; }
+.rg-facts li > svg { flex: none; width: 19px; height: 19px; margin-top: 2px; color: var(--gold-deep); stroke-width: 1.4; }
+.rg-facts li span { display: grid; min-width: 0; font-family: var(--display); line-height: 1.35; }
+.rg-facts b { font-size: 0.92rem; font-weight: 400; color: var(--ink); }
+.rg-facts small { font-size: 0.82rem; color: var(--ink-2); }
 .rg-facts a { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-2); }
 
-.rg-offers { padding-block: 16px 60px; background: #f3f4f6; }
-.rg-offers .rg-head { margin-bottom: 12px; }
-.rg-offergrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.rg-offergrid[data-count='3'] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.rg-offergrid[data-count='2'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.rg-offer { display: grid; align-content: start; gap: 2px; padding: 9px 12px 10px; border-radius: 6px; background: #fff; box-shadow: 0 1px 2px rgb(20 30 50 / 0.04); }
-.rg-offer h3 { margin: 0; font-family: var(--display); font-size: 0.98rem; font-weight: 400; line-height: 1.25; color: var(--ink); }
-.rg-offer p { font-family: var(--display); font-size: 0.76rem; line-height: 1.4; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rg-ratecard { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'text price' 'go go'; gap: 16px 24px; align-items: center; padding: 20px 22px 22px; border-radius: 10px; background: #fff; border-top: 2px solid var(--gold); box-shadow: 0 1px 2px rgb(20 30 50 / 0.05), 0 12px 30px -18px rgb(20 30 50 / 0.25); }
+.rg-ratecard__text { grid-area: text; min-width: 0; }
+.rg-ratecard h3 { margin: 0 0 4px; font-family: var(--display); font-size: 1.45rem; font-weight: 400; line-height: 1.2; color: var(--ink); }
+.rg-ratecard__text p { font-family: var(--display); font-size: 0.95rem; line-height: 1.45; color: var(--ink-2); }
+.rg-ratecard__price { grid-area: price; display: grid; justify-items: center; padding-left: 24px; border-left: 1px solid var(--line); line-height: 1; text-align: center; }
+.rg-ratecard__price small { font-size: 0.75rem; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2); }
+.rg-ratecard__price b { margin: 6px 0; font-family: var(--display); font-size: 2.6rem; font-weight: 400; color: var(--navy); font-variant-numeric: lining-nums; }
+.rg-ratecard__go { grid-area: go; min-height: 48px; }
+.rg-ratelist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+.rg-ratelist a { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; height: 100%; padding: 12px 14px; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgb(20 30 50 / 0.05); transition: box-shadow var(--sf-fast) var(--sf-ease); }
+.rg-ratelist a:hover { box-shadow: 0 1px 2px rgb(20 30 50 / 0.06), 0 8px 20px -12px rgb(20 30 50 / 0.3); }
+.rg-ratelist span { display: grid; min-width: 0; line-height: 1.3; }
+.rg-ratelist b { font-family: var(--display); font-size: 1rem; font-weight: 400; color: var(--ink); }
+.rg-ratelist small { font-size: 0.78rem; color: var(--ink-2); }
+.rg-ratelist em { font-family: var(--display); font-style: normal; font-size: 0.95rem; color: var(--navy); white-space: nowrap; }
+.rg-ratelist svg { width: 14px; height: 14px; color: var(--ink-3); }
+
+/* Brand mark and gold display accents. */
+.sf-wordmark__logo { color: var(--gold); }
+.sf-footer__cta .sf-eyebrow { color: var(--gold-soft); }
 
 .rg-cancelbar { position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; min-height: 32px; padding: 6px 48px; background: var(--navy); color: #fff; }
 .rg-cancelbar p { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-size: 0.82rem; text-align: center; }
@@ -320,34 +336,28 @@
   .rg-room__price b { font-size: 1.2rem; }
   .rg-room__go { min-height: 28px; padding: 0 20px; text-transform: none; letter-spacing: 0.01em; font-size: 0.75rem; font-weight: 500; }
 
-  .rg-house { padding-block: 14px 24px; }
-  .rg-house__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'amen amen' 'loc offer' 'photo offer'; gap: 10px 22px; }
-  .rg-house__left { display: contents; }
-  .rg-panel { padding: 0; background: none; border: 0; border-radius: 0; }
-  .rg-panel .rg-eyebrow { color: var(--navy); font-size: 0.75rem; }
-  .rg-amen { grid-area: amen; margin-bottom: 10px; }
-  .rg-amen .rg-amen__title { margin: 4px 0 18px; }
-  .rg-amen ul { grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; gap: 6px; margin-top: 0; }
-  .rg-amen li { display: grid; justify-items: center; align-content: start; align-self: start; gap: 6px; font-family: var(--sans); font-size: 0.75rem; line-height: 1.25; text-align: center; color: var(--ink-2); }
-  .rg-amen li i { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 999px; background: #f6f1ec; }
-  .rg-amen li span { max-width: 100%; white-space: normal; }
-  .rg-amen li svg { width: 19px; height: 19px; color: var(--ink); }
-  .rg-amen li:nth-child(n+6) { display: none; }
-  .rg-loc { grid-area: loc; display: grid; gap: 4px; align-content: start; }
-  .rg-loc__line svg { color: var(--navy); fill: color-mix(in srgb, var(--navy) 85%, transparent); stroke: #fff; width: 18px; height: 18px; }
-  .rg-loc__line b { font-family: var(--sans); font-size: 0.86rem; }
-  .rg-loc__line small { font-family: var(--sans); font-size: 0.78rem; }
-  .rg-house__mid { grid-area: photo; }
-  .rg-house__photo { aspect-ratio: 16 / 9; border-radius: 8px; }
-  .rg-house__mid figcaption, .rg-facts { display: none; }
-  .rg-offer-mini { grid-area: offer; display: grid !important; align-content: start; gap: 6px; }
-  .rg-offer-mini .rg-eyebrow { color: var(--navy); font-size: 0.75rem; }
-  .rg-offer-mini .rg-h3 { font-size: 1.3rem; }
-  .rg-offer-mini p:not(.rg-eyebrow):not(.rg-h3) { font-family: var(--display); font-size: 0.92rem; line-height: 1.35; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .rg-offer-mini .sf-btn { margin-top: 10px; min-height: 40px; text-transform: none; letter-spacing: 0.01em; font-size: 0.9rem; font-weight: 500; }
 
-  .rg-offers { padding-block: 26px 34px; }
-  .rg-offergrid, .rg-offergrid[data-count='2'], .rg-offergrid[data-count='3'] { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+
+  .rg-band { padding-block: 28px; }
+  .rg-bandhead { justify-items: start; margin-bottom: 14px; text-align: left; }
+  .rg-bandhead .rg-eyebrow { color: var(--navy); }
+  .rg-bandhead::after { margin-top: 8px; }
+  .rg-band__more { margin-top: 14px; text-align: left; }
+  .rg-amen__list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+  .rg-amen__list li { gap: 10px; padding-block: 10px; font-size: 0.92rem; }
+  .rg-amen__list svg { width: 19px; height: 19px; }
+  .rg-loc__photo { aspect-ratio: 4 / 3; }
+  .rg-loc__addr { left: 10px; bottom: 10px; max-width: calc(100% - 20px); padding: 7px 11px; font-size: 0.82rem; }
+  .rg-facts { grid-template-columns: minmax(0, 1fr); margin-top: 10px; }
+  .rg-facts li { padding-block: 9px; }
+  .rg-facts li + li { border-top: 1px solid var(--line); }
+  .rg-ratecard { gap: 14px 16px; padding: 16px 16px 18px; }
+  .rg-ratecard h3 { font-size: 1.25rem; }
+  .rg-ratecard__text p { font-size: 0.86rem; }
+  .rg-ratecard__price { padding-left: 16px; }
+  .rg-ratecard__price b { font-size: 2.1rem; }
+  .rg-ratecard__go { min-height: 44px; text-transform: none; letter-spacing: 0.01em; font-size: 0.92rem; font-weight: 500; }
+  .rg-ratelist { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 
   .sf-pagehead { padding-block: 24px 20px; }
   .sf-btn { letter-spacing: 0.04em; }
@@ -355,9 +365,6 @@
 @media (min-width: 768px) and (max-width: 1023px) {
   .rg-roomgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rg-roomgrid > :nth-child(3) { display: none; }
-  .rg-house__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .rg-house__mid { display: none; }
-  .rg-offergrid, .rg-offergrid[data-count='3'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rg-room__bed { display: none; }
 }
 

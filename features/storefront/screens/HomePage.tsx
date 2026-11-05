@@ -1,7 +1,7 @@
 import { ArrowRight, BedDouble, ChevronRight, Clock, ConciergeBell, KeyRound, MapPin } from 'lucide-react';
 import { graphqlQuery } from '@/lib/graphql-client';
 import { GET_ROOM_TYPES } from '@/lib/queries';
-import type { RoomType } from '@/lib/types';
+import type { RatePlan, RoomType } from '@/lib/types';
 import { BED_CONFIG_LABELS, primaryRoomImage, roomCopy } from '@/lib/hotel-storefront';
 import { StayLink } from '../components/StayProvider';
 import { StayPlanner } from '../components/stay/StayPlanner';
@@ -16,6 +16,11 @@ function fromRate(room: RoomType) {
   if (!plans.length) return null;
   const lowest = plans.reduce((best, plan) => (plan.baseRateMinor! < best.baseRateMinor! ? plan : best));
   try { return nightMoney(lowest.baseRateMinor!, lowest.currencyCode); } catch { return null; }
+}
+
+function planRate(plan: RatePlan) {
+  if (!Number.isSafeInteger(plan.baseRateMinor) || !plan.currencyCode) return null;
+  try { return nightMoney(plan.baseRateMinor!, plan.currencyCode); } catch { return null; }
 }
 
 const SHORT_BEDS: Record<string, string> = { king: 'King', queen: 'Queen', double_queen: '2 queens', twin: 'Twin', double_twin: '2 twins', king_sofa: 'King + sofa', queen_sofa: 'Queen + sofa', suite: 'Suite' };
@@ -63,13 +68,16 @@ export default async function HomePage() {
   const flexible = plans.find(({ plan }) => plan.cancellationPolicy === 'flexible');
   const city = identity.address.line2 || identity.address.line1;
   const address = [identity.address.line1, identity.address.line2].filter(Boolean).join(', ');
-  const firstPlan = plans[0];
+  // Featured rate: the lowest flexible nightly rate (else the lowest public rate); the rest follow as a list.
+  const priced = plans.map(entry => ({ ...entry, rate: planRate(entry.plan) }));
+  const byPrice = [...priced].sort((a, b) => (a.plan.baseRateMinor ?? Infinity) - (b.plan.baseRateMinor ?? Infinity));
+  const featured = byPrice.find(({ plan }) => plan.cancellationPolicy === 'flexible') || byPrice[0];
+  const others = priced.filter(entry => entry !== featured).slice(0, 3);
 
   return <>
     <section className="rg-hero" aria-labelledby="home-title">
       <div className="rg-hero__media">
         <picture>
-          <source media="(max-width: 767px)" srcSet={identity.media.location.imagePath} />
           <img src={identity.media.hero.imagePath} alt={identity.media.hero.altText} fetchPriority="high" />
         </picture>
       </div>
@@ -99,54 +107,58 @@ export default async function HomePage() {
       </div>
     </section>
 
-    <section className="rg-house" aria-label="About the house">
-      <div className="rg-wrap rg-house__grid">
-        <div className="rg-house__left">
-          {amenities.length > 0 && <div className="rg-panel rg-amen">
-            <h2 className="rg-eyebrow">Amenities</h2>
-            <p className="rg-phone rg-h2 rg-amen__title">Thoughtful amenities</p>
-            <ul>{amenities.slice(0, 6).map(item => <li key={item}><i><AmenityIcon amenity={item} /></i><span>{amenityLabel(item)}</span></li>)}</ul>
-          </div>}
-          <div className="rg-panel rg-loc">
-            <h2 className="rg-eyebrow">Location</h2>
-            <p className="rg-loc__line"><MapPin aria-hidden="true" /><span><b>{identity.address.line1 || identity.name}</b>{identity.address.line2 && <small>{identity.address.line2}</small>}</span></p>
-            <StayLink href="/location" className="rg-textlink rg-phone">Directions <ArrowRight aria-hidden="true" /></StayLink>
-          </div>
-        </div>
-        <figure className="rg-house__mid">
-          <StayLink href="/location" className="rg-house__photo"><img src={identity.media.location.imagePath} alt={identity.media.location.altText} loading="lazy" /></StayLink>
-          <figcaption>
-            {city && <b>{city}</b>}
-            <span>{address ? `${identity.name} is at ${address}.` : identity.media.location.caption} Check-in from {identity.checkIn}, check-out by {identity.checkOut}.</span>
-          </figcaption>
-        </figure>
-        <ul className="rg-panel rg-facts">
-          <li><Clock aria-hidden="true" /><span><b>Check-in from {identity.checkIn}</b><small>Check-out by {identity.checkOut}, local time</small></span></li>
-          <li><ConciergeBell aria-hidden="true" /><span><b>{identity.hours || 'Front desk'}</b><small>{identity.phone ? <>Call <a href={`tel:${identity.phone.replace(/[^+\d]/g, '')}`}>{identity.phone}</a></> : 'Here when you need us.'}</small></span></li>
+    {amenities.length > 0 && <section className="rg-band rg-band--tint rg-amen" aria-labelledby="home-amenities">
+      <div className="rg-wrap">
+        <header className="rg-bandhead">
+          <p className="rg-eyebrow">Amenities</p>
+          <h2 id="home-amenities" className="rg-h2">Thoughtful amenities</h2>
+        </header>
+        <ul className="rg-amen__list">{amenities.slice(0, 6).map(item => <li key={item}><AmenityIcon amenity={item} /><span>{amenityLabel(item)}</span></li>)}</ul>
+        <p className="rg-band__more"><StayLink href="/amenities" className="rg-textlink">All amenities <ArrowRight aria-hidden="true" /></StayLink></p>
+      </div>
+    </section>}
+
+    <section className="rg-band rg-loc" aria-labelledby="home-location">
+      <div className="rg-wrap">
+        <header className="rg-bandhead">
+          <p className="rg-eyebrow">Location</p>
+          <h2 id="home-location" className="rg-h2">{city ? `In ${city}` : 'Finding us'}</h2>
+        </header>
+        <StayLink href="/location" className="rg-loc__photo" aria-label={`Directions to ${identity.name}`}>
+          <img src={identity.media.location.imagePath} alt={identity.media.location.altText} loading="lazy" />
+          {address && <span className="rg-loc__addr"><MapPin aria-hidden="true" />{address}</span>}
+        </StayLink>
+        <ul className="rg-facts">
+          <li><Clock aria-hidden="true" /><span><b>Check-in from {identity.checkIn}</b><small>Check-out by {identity.checkOut}</small></span></li>
+          <li><ConciergeBell aria-hidden="true" /><span><b>{identity.hours || 'Front desk'}</b><small>{identity.phone ? <a href={`tel:${identity.phone.replace(/[^+\d]/g, '')}`}>{identity.phone}</a> : 'Here when you need us.'}</small></span></li>
           <li><KeyRound aria-hidden="true" /><span><b>Already booked?</b><small><StayLink href="/bookings/lookup">Find your reservation</StayLink></small></span></li>
         </ul>
-        {firstPlan && <div className="rg-phone rg-offer-mini">
-          <h2 className="rg-eyebrow">Rates</h2>
-          <p className="rg-h3">{firstPlan.plan.name}</p>
-          <p>{firstPlan.plan.description || cancellationHeadline(firstPlan.plan.cancellationPolicy)}</p>
-          <StayLink href="/rooms" className="sf-btn sf-btn--block">View rates</StayLink>
-        </div>}
+        <p className="rg-band__more"><StayLink href="/location" className="rg-textlink">Directions <ArrowRight aria-hidden="true" /></StayLink></p>
       </div>
     </section>
 
-    {plans.length > 0 && <section className="rg-offers" aria-labelledby="home-offers">
+    {featured && <section className="rg-band rg-band--tint rg-rates" aria-labelledby="home-offers">
       <div className="rg-wrap">
-        <header className="rg-head">
+        <header className="rg-bandhead">
           <p className="rg-eyebrow">Rates & packages</p>
           <h2 id="home-offers" className="rg-h2">Book direct. Stay your way.</h2>
         </header>
-        <div className="rg-offergrid" data-count={Math.min(plans.length, 4)}>
-          {plans.slice(0, 4).map(({ plan, room }) => <article key={plan.id} className="rg-offer">
-            <h3>{plan.name}</h3>
-            <p>{plan.description || `${mealPlanLabel(plan.mealPlan)} · ${cancellationHeadline(plan.cancellationPolicy)}`}</p>
-            <StayLink href={`/rooms/${room.id}#rate-plans`} className="rg-textlink" aria-label={`Learn more about ${plan.name}, ${room.name}`}>Learn more <ArrowRight aria-hidden="true" /></StayLink>
-          </article>)}
-        </div>
+        <article className="rg-ratecard">
+          <div className="rg-ratecard__text">
+            <h3>{featured.plan.name}</h3>
+            <p>{featured.plan.description || `${mealPlanLabel(featured.plan.mealPlan)} · ${cancellationHeadline(featured.plan.cancellationPolicy)}`}</p>
+          </div>
+          {featured.rate && <p className="rg-ratecard__price"><small>from</small><b>{featured.rate}</b><small>per night</small></p>}
+          <StayLink href={`/rooms/${featured.room.id}#rate-plans`} className="sf-btn sf-btn--block rg-ratecard__go">Check availability</StayLink>
+        </article>
+        {others.length > 0 && <ul className="rg-ratelist">{others.map(({ plan, room, rate }) => <li key={plan.id}>
+          <StayLink href={`/rooms/${room.id}#rate-plans`} aria-label={`${plan.name}, ${room.name}`}>
+            <span><b>{plan.name}</b><small>{room.name}</small></span>
+            {rate && <em>from {rate}</em>}
+            <ArrowRight aria-hidden="true" />
+          </StayLink>
+        </li>)}</ul>}
+        <p className="rg-band__more"><StayLink href="/rooms" className="rg-textlink">See all rates <ArrowRight aria-hidden="true" /></StayLink></p>
       </div>
     </section>}
 
