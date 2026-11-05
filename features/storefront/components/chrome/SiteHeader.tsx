@@ -10,10 +10,10 @@ import { StayLink, useStay } from '../StayProvider';
 import { calendarDay } from '../../lib/stay-context';
 import { rangeLabel } from '../../lib/calendar';
 import type { HotelLogo } from '../../lib/hotel-settings';
-import { DEFAULT_STORE_LOGO_ICON, normalizeStoreLogoColor, storeLogoIsCustomized } from '@/features/platform/property/lib/store-logo';
+import { DEFAULT_STORE_LOGO_GOLD_ICON, DEFAULT_STORE_LOGO_ICON, normalizeStoreLogoColor, storeLogoIsCustomized } from '@/features/platform/property/lib/store-logo';
 
-// An untouched store shows the library mark in antique gold beside the navy, not hue-rotated brass.
-const GOLD_LOGO_ICON = DEFAULT_STORE_LOGO_ICON.replace('#6172f3', '#d0b27a').replace('#444ce7', '#b8975a');
+// An untouched store shows the library mark in gold beside the navy, not hue-rotated brass.
+const GOLD_LOGO_ICON = DEFAULT_STORE_LOGO_GOLD_ICON;
 
 const primary = [
   { href: '/', label: 'Hotel' },

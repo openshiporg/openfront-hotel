@@ -2,6 +2,8 @@ import { LOGO_ICONS } from './icon-registry';
 
 // Unsaved tenants use the donor library without writing Property settings.
 export const DEFAULT_STORE_LOGO_ICON = LOGO_ICONS.find((icon) => icon.id === 'galileo')!.lightSvg;
+// The library mark in the storefront's gold (body #c9a24a, crescent #d4af37), shown unrotated.
+export const DEFAULT_STORE_LOGO_GOLD_ICON = DEFAULT_STORE_LOGO_ICON.replace('#6172f3', '#d4af37').replace('#444ce7', '#c9a24a');
 // Aged-brass hue rotation, independent of the storefront accent preset.
 export const DEFAULT_LIBRARY_LOGO_COLOR = '159';
 

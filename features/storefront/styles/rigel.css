@@ -14,11 +14,11 @@
   --btn-primary-active: var(--navy-active);
   --btn-on-primary: #ffffff;
   --tint: #eef2f8;
-  /* Antique gold: the brand mark and display accents only (2.8:1 on white, 4.7:1 on navy),
-   * never small text on white. The deeper tone carries icons on white (3.9:1). */
-  --gold: #b8975a;
-  --gold-deep: #9a7a40;
-  --gold-soft: #d6c09a;
+  /* Gold: the brand mark, rules and accents (6.3:1 on the dusk hero, 5.4:1 on navy; 2.4:1 on white,
+   * so never text on white). Icons on white use the deeper tone (3.5:1); gold-soft sits on navy (7.4:1). */
+  --gold: #c9a24a;
+  --gold-deep: #a8842c;
+  --gold-soft: #e2c06a;
   --display: var(--sf-font-display, Georgia), Georgia, 'Times New Roman', serif;
   font-size: 15px;
   line-height: 1.55;
