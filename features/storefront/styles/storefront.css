@@ -723,13 +723,19 @@ html:has(.sf-comparebar) { scroll-padding-bottom: 96px; }
 .sf-staycard__cal small { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent-deep); }
 .sf-staycard__cal b { font-family: var(--display); font-weight: 400; font-size: 1.9rem; line-height: 1; }
 .sf-staycard__cal span { font-size: 0.75rem; color: var(--ink-3); }
-.sf-segment { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 999px; background: var(--paper-2); }
-.sf-segment button { min-height: 38px; padding: 0 16px; border-radius: 999px; font-size: 0.88rem; font-weight: 500; color: var(--ink-2); transition: background var(--sf-fast), color var(--sf-fast), box-shadow var(--sf-fast); }
-.sf-segment button:is([aria-selected='true'], [aria-pressed='true']) { background: var(--card); color: var(--ink); box-shadow: var(--sf-shadow-sm); font-weight: 600; }
-.sf-segment__link { display: inline-flex; align-items: center; min-height: 38px; padding: 0 16px; border-radius: 999px; font-size: 0.88rem; font-weight: 500; color: var(--ink-2); transition: background var(--sf-fast), color var(--sf-fast), box-shadow var(--sf-fast); }
-.sf-segment__link:hover { color: var(--ink); }
-.sf-segment__link[aria-current='page'] { background: var(--card); color: var(--ink); box-shadow: var(--sf-shadow-sm); font-weight: 600; }
-.sf-segment button span { color: var(--ink-3); margin-left: 4px; font-variant-numeric: tabular-nums; }
+/* Segmented control: one row of equal segments that never wraps. Pills are --seg-h tall inside
+ * --seg-pad of track, so the track radius is the pill radius plus the padding (concentric). */
+.sf-segment { --seg-pad: 4px; --seg-h: 38px; display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; max-width: 100%; padding: var(--seg-pad); border-radius: calc(var(--seg-h) / 2 + var(--seg-pad)); background: var(--paper-2); }
+.sf-segment--fill { display: grid; width: min(100%, 480px); }
+.sf-segment > :is(button, .sf-segment__link) { display: inline-flex; align-items: center; justify-content: center; min-width: 0; min-height: var(--seg-h); padding: 0 14px; border-radius: calc(var(--seg-h) / 2); font-size: 0.88rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; color: var(--ink-2); transition: background var(--sf-fast), color var(--sf-fast), box-shadow var(--sf-fast); }
+.sf-segment > :is(button, .sf-segment__link):hover { color: var(--ink); }
+.sf-segment button:is([aria-selected='true'], [aria-pressed='true']), .sf-segment__link[aria-current='page'] { background: var(--card); color: var(--ink); box-shadow: var(--sf-shadow-sm); font-weight: 600; }
+@media (max-width: 767px) {
+  .sf-segment > :is(button, .sf-segment__link) { padding: 0 10px; font-size: 0.84rem; }
+  .sf-segment[role='tablist'] { width: 100%; }
+}
+@media (max-width: 359px) { .sf-segment > :is(button, .sf-segment__link) { padding: 0 6px; font-size: 0.8rem; } }
+.sf-segment button span { flex: none; color: var(--ink-3); margin-left: 4px; font-variant-numeric: tabular-nums; }
 
 .sf-state { display: grid; justify-items: start; gap: 16px; max-width: 640px; padding-block: clamp(56px, 10vw, 120px); }
 .sf-state__icon { width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; background: var(--tint); color: var(--accent-deep); }
