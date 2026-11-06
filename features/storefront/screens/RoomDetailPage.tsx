@@ -13,6 +13,7 @@ import { ratePlanStayMessage, roomSearchValidationMessage, selectInitialPublicRa
 import { cancellationHeadline, cancellationTerms, mealPlanLabel, money, nightMoney, stayNights } from '../lib/stay-context';
 import { addDays, dayParts, propertyToday } from '../lib/calendar';
 import { useScrollSpy } from '../lib/use-scroll-spy';
+import { useMediaQuery } from '../lib/use-media-query';
 import { useRateCalendar } from '../lib/use-rate-calendar';
 import { useStayAvailability } from '../lib/use-stay-availability';
 import { useStay } from '../components/StayProvider';
@@ -61,7 +62,9 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
   const [guestsOpen, setGuestsOpen] = useState(false); const [promoOpen, setPromoOpen] = useState(() => Boolean(formFromQuery(query).promoCode));
   const written = useRef(query); const quoteSequence = useRef(0);
   const [month, setMonth] = useState(''); const [preview, setPreview] = useState('');
-  const active = useScrollSpy(SECTIONS.map(([id]) => id), Boolean(room));
+  // On phone the dates card is moved above Overview (CSS order), so it is the first tracked section there.
+  const phone = useMediaQuery('(max-width: 767px)');
+  const active = useScrollSpy([...(phone ? ['rates'] : []), ...SECTIONS.map(([id]) => id)], Boolean(room));
 
   useEffect(() => {
     let current = true;
@@ -171,7 +174,7 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
       <section id="photos"><h2 className="sf-sr">Room photographs</h2><RoomGallery images={roomImages(room)} roomName={room.name} /></section>
     </div>
     <nav className="sf-tabs" aria-label="Room sections" style={{ marginTop: 28 }}>
-      <div className="sf-wrap sf-tabs__row"><a href="#rates" className="sf-tabs__rates">Dates & price</a>{SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} aria-current={active === id ? 'true' : undefined}>{label}</a>)}</div>
+      <div className="sf-wrap sf-tabs__row"><a href="#rates" className="sf-tabs__rates" aria-current={active === 'rates' ? 'true' : undefined}>Dates & price</a>{SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} aria-current={active === id ? 'true' : undefined}>{label}</a>)}</div>
     </nav>
     <div className="sf-wrap sf-checkout" style={{ paddingBlock: 'clamp(32px, 5vw, 56px)' }}>
       <div style={{ minWidth: 0 }}>

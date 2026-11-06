@@ -6,6 +6,8 @@ import { useEffect, useState } from 'react';
 export function useScrollSpy(ids: string[], enabled = true) {
   const [active, setActive] = useState(ids[0] || '');
   const key = ids.join('|');
+  // The section list can change after mount (e.g. phone layout adds a first section); start from its first id again.
+  useEffect(() => { setActive(key.split('|')[0] || ''); }, [key]);
   useEffect(() => {
     if (!enabled || typeof IntersectionObserver === 'undefined') return;
     const sections = key.split('|').map(id => document.getElementById(id)).filter((node): node is HTMLElement => Boolean(node));
