@@ -13,12 +13,12 @@ import { Select, SelectContent, SelectItem, SelectValue } from '@/components/ui/
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Field, FieldInput, NativeSelect } from '@/features/platform/components/Form';
+import { Field, FieldInput, MoneyInput, NativeSelect } from '@/features/platform/components/Form';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { Callout, Panel, PanelBody, PanelHeader } from '@/features/platform/components/Surface';
 import { WorkspaceError, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
-import { formatMoneyMinor, previewMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatMoneyMinor, minorToDollars } from '@/features/platform/lib/format';
 import { DEFAULT_STOREFRONT_ACCENT_PRESET, type StorefrontAccentPreset } from '@/features/storefront/lib/storefront-theme';
 import { getPropertySettingsWorkspace, updatePropertySettingsAction } from '../actions';
 import { StorefrontAccentPicker } from '../components/StorefrontAccentPicker';
@@ -46,6 +46,11 @@ const empty = {
 };
 type Form = typeof empty;
 type Key = keyof Form;
+
+/** Stored in cents, edited in dollars. */
+const MONEY_KEYS = ['serviceFeeMinor', 'securityDepositMinor', 'loyaltyEarnMinorPerPoint', 'loyaltyRedeemMinorPerPoint', 'refundApprovalThresholdMinor', 'writeOffApprovalThresholdMinor', 'cashVarianceApprovalThresholdMinor'] as const satisfies readonly Key[];
+const isMoneyKey = (key: Key) => (MONEY_KEYS as readonly Key[]).includes(key);
+const dollars = (value: string) => dollarsToMinor(value, { allowZero: true });
 
 type SectionId = 'identity' | 'commercial' | 'deposits' | 'communications' | 'loyalty' | 'groups' | 'approvals' | 'logo' | 'accent' | 'media';
 
@@ -77,14 +82,17 @@ function timeZoneOptions() {
 }
 
 function toForm(settings: Record<string, unknown> | null): Form {
-  if (!settings) return empty;
-  return Object.fromEntries(Object.keys(empty).map((key) => [key, String(settings[key] ?? empty[key as Key])])) as Form;
+  const source: Record<string, unknown> = settings || empty;
+  return Object.fromEntries(Object.keys(empty).map((key) => {
+    const value = String(source[key] ?? empty[key as Key]);
+    return [key, isMoneyKey(key as Key) ? minorToDollars(Number(value)) || '0' : value];
+  })) as Form;
 }
 
 export default function PropertySettingsPage() {
   const router = useRouter();
-  const [form, setForm] = React.useState<Form>(empty);
-  const [saved, setSaved] = React.useState<Form>(empty);
+  const [form, setForm] = React.useState<Form>(() => toForm(null));
+  const [saved, setSaved] = React.useState<Form>(() => toForm(null));
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -113,9 +121,12 @@ export default function PropertySettingsPage() {
   React.useEffect(() => { void load(); }, [load]);
 
   const save = async () => {
+    const invalidMoney = MONEY_KEYS.find((key) => dollars(form[key]) === null);
+    if (invalidMoney) { toast.error('Settings not saved', { description: 'Enter dollar amounts like 25 or 25.50.' }); document.getElementById(invalidMoney)?.focus(); return; }
     setSaving(true);
     try {
-      unwrapAction(await updatePropertySettingsAction({ ...form, taxRateBasisPoints: Number(form.taxRateBasisPoints), serviceFeeMinor: Number(form.serviceFeeMinor) }));
+      const cents = Object.fromEntries(MONEY_KEYS.map((key) => [key, String(dollars(form[key]))]));
+      unwrapAction(await updatePropertySettingsAction({ ...form, ...cents, taxRateBasisPoints: Number(form.taxRateBasisPoints), serviceFeeMinor: Number(cents.serviceFeeMinor) }));
       setSaved(form);
       setSettingsState('configured');
       toast.success('Property settings saved');
@@ -144,13 +155,18 @@ export default function PropertySettingsPage() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
   const enabled = (key: Key) => form[key] === 'true';
-  const minor = (key: Key) => Number(form[key]) || 0;
+  const minor = (key: Key) => (isMoneyKey(key) ? dollars(form[key]) : Number(form[key])) || 0;
 
   const field = (key: Key, label: string, options: { hint?: React.ReactNode; type?: string; optional?: boolean; placeholder?: string; list?: string; className?: string } = {}) => {
-    const minorPreview = key.endsWith('Minor') ? previewMinor(form[key]) : null;
-    const hint = minorPreview
-      ? <>{options.hint ? <>{options.hint} </> : null}<span className="font-medium text-foreground">= {minorPreview}</span></>
-      : options.hint;
+    if (isMoneyKey(key)) {
+      const invalid = dollars(form[key]) === null;
+      return (
+        <Field label={label} htmlFor={key} hint={invalid ? 'Enter a dollar amount, like 25 or 25.50.' : options.hint} optional={options.optional} className={options.className}>
+          <MoneyInput id={key} invalid={invalid} value={form[key]} onChange={(event) => set(key, event.target.value)} className={cn(changedKeys.has(key) && 'border-amber-500/50')} />
+        </Field>
+      );
+    }
+    const hint = options.hint;
     const numeric = options.type === 'number';
     return (
       <Field label={label} htmlFor={key} hint={hint} optional={options.optional} className={options.className}>
@@ -247,7 +263,7 @@ export default function PropertySettingsPage() {
                 type: 'number',
                 hint: <>100 basis points = 1%.{Number.isFinite(taxPercent) ? <> Currently <span className="font-medium text-foreground">{taxPercent.toFixed(2)}%</span>.</> : null}</>,
               })}
-              {field('serviceFeeMinor', 'Per-stay fee (cents)', { type: 'number', hint: 'Added once to each stay.' })}
+              {field('serviceFeeMinor', 'Per-stay fee', { hint: 'Added once to each stay.' })}
             </>, 'grid gap-5 md:grid-cols-3')}
 
             {section('deposits', 'New reservations keep the deposit terms in force when they were booked; the balance is paid during the stay. Changing this policy requires role administration.', <>
@@ -257,7 +273,7 @@ export default function PropertySettingsPage() {
                   ? depositPercent === 100 ? 'Guests prepay the full stay.' : `Guests pay ${depositPercent}% when booking and ${100 - depositPercent}% during the stay.`
                   : 'Enter a whole number from 1 to 100.',
               })}
-              {field('securityDepositMinor', 'Refundable security hold (cents)', { type: 'number', hint: minor('securityDepositMinor') ? 'Stripe reserves funds; capture requires reviewed actual charges.' : 'Zero disables new authorizations.' })}
+              {field('securityDepositMinor', 'Refundable security hold', { hint: minor('securityDepositMinor') ? 'Stripe reserves funds; capture requires reviewed actual charges.' : 'Zero disables new authorizations.' })}
             </>)}
 
             {section('communications', 'Send one reminder email before each confirmed arrival.', <>
@@ -268,8 +284,8 @@ export default function PropertySettingsPage() {
             {section('loyalty', 'Points are earned from settled eligible stays and redeemed against open folios. Changes require role administration.', <>
               <div className="md:col-span-2">{toggle('loyaltyEnabled', 'Loyalty program', 'Allow earning at checkout and redemption against in-house folios.')}</div>
               <div className={cn('contents', !enabled('loyaltyEnabled') && '[&>*]:opacity-70')}>
-                {field('loyaltyEarnMinorPerPoint', 'Spend per earned point (cents)', { type: 'number', hint: minor('loyaltyEarnMinorPerPoint') ? `1 point for every ${formatMoneyMinor(minor('loyaltyEarnMinorPerPoint'))} of eligible room revenue.` : undefined })}
-                {field('loyaltyRedeemMinorPerPoint', 'Credit per redeemed point (cents)', { type: 'number', hint: minor('loyaltyRedeemMinorPerPoint') ? `100 points = ${formatMoneyMinor(minor('loyaltyRedeemMinorPerPoint') * 100)} folio credit.` : undefined })}
+                {field('loyaltyEarnMinorPerPoint', 'Spend per earned point', { hint: minor('loyaltyEarnMinorPerPoint') ? `1 point for every ${formatMoneyMinor(minor('loyaltyEarnMinorPerPoint'))} of eligible room revenue.` : undefined })}
+                {field('loyaltyRedeemMinorPerPoint', 'Credit per redeemed point', { hint: minor('loyaltyRedeemMinorPerPoint') ? `100 points = ${formatMoneyMinor(minor('loyaltyRedeemMinorPerPoint') * 100)} folio credit.` : undefined })}
                 {field('loyaltyMinimumRedemptionPoints', 'Minimum points per redemption', { type: 'number', hint: minor('loyaltyMinimumRedemptionPoints') && minor('loyaltyRedeemMinorPerPoint') ? `Smallest credit: ${formatMoneyMinor(minor('loyaltyMinimumRedemptionPoints') * minor('loyaltyRedeemMinorPerPoint'))}.` : undefined })}
               </div>
             </>)}
@@ -279,9 +295,9 @@ export default function PropertySettingsPage() {
             </>)}
 
             {section('approvals', 'Amounts at or above each threshold need a second authorized staff member to approve. Zero means every amount.', <>
-              {field('refundApprovalThresholdMinor', 'Refund threshold (cents)', { type: 'number' })}
-              {field('writeOffApprovalThresholdMinor', 'Write-off threshold (cents)', { type: 'number' })}
-              {field('cashVarianceApprovalThresholdMinor', 'Cash variance threshold (cents)', { type: 'number' })}
+              {field('refundApprovalThresholdMinor', 'Refund threshold')}
+              {field('writeOffApprovalThresholdMinor', 'Write-off threshold')}
+              {field('cashVarianceApprovalThresholdMinor', 'Cash variance threshold')}
               {toggle('ratePublicationRequiresApproval', 'Rate publication approval', 'Require an independent approval before a rate becomes public or active.')}
             </>)}
 

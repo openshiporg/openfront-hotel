@@ -6,10 +6,10 @@ import { ExternalLink, LockKeyhole, RefreshCw, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { graphqlClient } from '@/lib/graphql-client';
 import { operationAttempt } from '@/lib/operationAttempt';
-import { ActionMessage, Field, FieldInput, FormNote, type Feedback } from '@/features/platform/components/Form';
+import { ActionMessage, Field, FieldInput, FormNote, MoneyInput, type Feedback } from '@/features/platform/components/Form';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { CopyId, DetailList, Panel, PanelBody, PanelHeader } from '@/features/platform/components/Surface';
-import { formatDateTime, formatMoneyMinor, humanize, previewMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatDateTime, formatMoneyMinor, humanize } from '@/features/platform/lib/format';
 
 /** Card-hold (security deposit) authorization for a reservation: reconcile, release or capture. */
 export function SecurityAuthorizationOperations({ bookingId }: { bookingId: string }) {
@@ -28,7 +28,7 @@ export function SecurityAuthorizationOperations({ bookingId }: { bookingId: stri
   async function run(action: string) {
     setBusy(true); setFeedback(null);
     try {
-      const payload = { action, bookingId, amountMinor: action === 'capture' ? Number(amount) : 0, approvalId };
+      const payload = { action, bookingId, amountMinor: action === 'capture' ? (dollarsToMinor(amount) ?? 0) : 0, approvalId };
       const attempt = await operationAttempt('security-operator', payload);
       await graphqlClient.request('mutation($input:JSON!){manageHotelSecurityAuthorization(input:$input)}', { input: { ...payload, idempotencyKey: attempt.key } });
       await load(); attempt.complete();
@@ -40,7 +40,8 @@ export function SecurityAuthorizationOperations({ bookingId }: { bookingId: stri
 
   if (!data?.authorization) return feedback?.tone === 'error' ? <ActionMessage feedback={feedback} /> : null;
   const authorization = data.authorization;
-  const amountPreview = previewMinor(amount);
+  const amountMinor = dollarsToMinor(amount);
+  const amountInvalid = amount.trim() !== '' && amountMinor === null;
 
   return (
     <Panel>
@@ -60,8 +61,8 @@ export function SecurityAuthorizationOperations({ bookingId }: { bookingId: stri
           ]}
         />
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Capture amount (minor units)" htmlFor={`capture-${bookingId}`} hint={amountPreview ? `= ${amountPreview}` : 'Cannot exceed actual posted folio charges.'}>
-            <FieldInput id={`capture-${bookingId}`} aria-label="Security capture amount in minor units" type="number" min="1" value={amount} onChange={event => setAmount(event.target.value)} placeholder="e.g. 5000" />
+          <Field label="Capture amount" htmlFor={`capture-${bookingId}`} hint={amountInvalid ? 'Enter a dollar amount, like 50 or 50.25.' : 'In dollars. Cannot exceed actual posted folio charges.'}>
+            <MoneyInput id={`capture-${bookingId}`} invalid={amountInvalid} value={amount} onChange={event => setAmount(event.target.value)} placeholder="50.00" />
           </Field>
           <Field label="Capture approval ID" htmlFor={`capture-approval-${bookingId}`} hint={<>Request one in <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Approvals <ExternalLink className="inline size-3" aria-hidden="true" /></Link></>}>
             <FieldInput id={`capture-approval-${bookingId}`} aria-label="Security capture approval ID" value={approvalId} onChange={event => setApprovalId(event.target.value)} />
@@ -70,7 +71,7 @@ export function SecurityAuthorizationOperations({ bookingId }: { bookingId: stri
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void run('sync')}><RefreshCw aria-hidden="true" />Reconcile</Button>
           <Button size="sm" variant="outline" disabled={busy || !data.operator} onClick={() => void run('release')}><Unlock aria-hidden="true" />Release hold</Button>
-          <Button size="sm" disabled={busy || !data.operator || !approvalId || !amount} onClick={() => void run('capture')}>Capture approved charges</Button>
+          <Button size="sm" disabled={busy || !data.operator || !approvalId || amountMinor === null} onClick={() => void run('capture')}>Capture approved charges</Button>
         </div>
         {!data.operator ? <FormNote>Release and capture require payment operator permission.</FormNote> : null}
         <ActionMessage feedback={feedback} />

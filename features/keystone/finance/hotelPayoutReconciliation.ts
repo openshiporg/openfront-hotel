@@ -14,7 +14,7 @@ export type ManageHotelPayoutDraft =
   | Omit<Extract<ManageHotelPayoutInput, { action: 'refresh' }>, 'idempotencyKey'>
   | Omit<Extract<ManageHotelPayoutInput, { action: 'confirm' }>, 'idempotencyKey'>;
 function text(value: unknown, label: string, max = 200) { const result = String(value || '').trim(); if (!result || result.length > max) throw new Error(`${label} is required and bounded.`); return result; }
-function amount(value: any, signed = false) { if (!Number.isSafeInteger(value) || (!signed && value < 0) || Math.abs(value) > 2147483647) throw new Error('Statement amounts must be bounded integer minor units.'); return value; }
+function amount(value: any, signed = false) { if (!Number.isSafeInteger(value) || (!signed && value < 0) || Math.abs(value) > 2147483647) throw new Error('Statement amounts must be whole numbers of cents.'); return value; }
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 export function parseManageHotelPayoutInput(value: unknown): ManageHotelPayoutInput {
   if (!isRecord(value)) throw new Error('Action is required and bounded.');

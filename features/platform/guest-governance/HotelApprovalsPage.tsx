@@ -5,12 +5,12 @@ import { Check, ChevronLeft, ChevronRight, RefreshCw, Send, ShieldCheck, X } fro
 
 import { Button } from '@/components/ui/button';
 import { FilterTabs } from '@/features/platform/components/FilterTabs';
-import { ActionMessage, CheckboxField, Field, FieldInput, FormNote, NativeSelect, type Feedback } from '@/features/platform/components/Form';
+import { ActionMessage, CheckboxField, Field, FieldInput, FormNote, MoneyInput, NativeSelect, type Feedback } from '@/features/platform/components/Form';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
 import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
 import { CopyId, Disclosure, Panel, PanelBody, PanelHeader } from '@/features/platform/components/Surface';
 import { WorkspaceEmpty, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
-import { formatMoneyMinor, humanize, previewMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatMoneyMinor, humanize } from '@/features/platform/lib/format';
 import { applyHotelApproval, loadHotelApprovals } from './actions';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
@@ -71,7 +71,8 @@ export default function HotelApprovalsPage() {
   });
   const count = (value: string) => requests.filter(item => item.state === value).length;
   const visible = view === 'all' ? requests : requests.filter(item => item.state === view);
-  const amountPreview = previewMinor(amount);
+  const amountMinor = dollarsToMinor(amount, { allowZero: true });
+  const amountInvalid = amount.trim() !== '' && amountMinor === null;
 
   return (
     <PlatformPage
@@ -84,7 +85,7 @@ export default function HotelApprovalsPage() {
         <Panel className="xl:sticky xl:top-4">
           <PanelHeader title="New request" icon={Send} description="Copy the target ID from the folio, payment, rate or cashier screen." />
           <PanelBody>
-            <form className="space-y-4" onSubmit={event => { event.preventDefault(); void run(() => apply({ action, aggregateId: target, amountMinor: action === 'rate_publish' ? 0 : Number(amount), reason, ...(action === 'rate_publish' ? { parameters: { status, isPublic } } : {}) })); }}>
+            <form className="space-y-4" onSubmit={event => { event.preventDefault(); if (action !== 'rate_publish' && amountMinor === null) return; void run(() => apply({ action, aggregateId: target, amountMinor: action === 'rate_publish' ? 0 : (amountMinor ?? 0), reason, ...(action === 'rate_publish' ? { parameters: { status, isPublic } } : {}) })); }}>
               <Field label="Action" htmlFor="approval-action">
                 <NativeSelect id="approval-action" value={action} onChange={event => setAction(event.target.value)}>
                   {ACTIONS.map(value => <option key={value} value={value}>{humanize(value)}</option>)}
@@ -101,14 +102,14 @@ export default function HotelApprovalsPage() {
                   <CheckboxField checked={isPublic} onChange={setIsPublic} label="Publicly bookable" />
                 </div>
               ) : (
-                <Field label="Amount (minor units)" htmlFor="approval-amount" hint={amountPreview ? `= ${amountPreview} · 100 = USD 1` : '100 = USD 1'}>
-                  <FieldInput id="approval-amount" type="number" min={0} step={1} value={amount} onChange={event => setAmount(event.target.value)} required />
+                <Field label="Amount" htmlFor="approval-amount" hint={amountInvalid ? 'Enter a dollar amount, like 120 or 120.50.' : 'In dollars. Must match the amount of the action exactly.'}>
+                  <MoneyInput id="approval-amount" invalid={amountInvalid} value={amount} onChange={event => setAmount(event.target.value)} required />
                 </Field>
               )}
               <Field label="Reason" htmlFor="approval-reason"><FieldInput id="approval-reason" value={reason} onChange={event => setReason(event.target.value)} required /></Field>
               {action === 'payout_reconcile'
                 ? <FormNote>Create statement approval requests from the Payouts workspace so the statement hash and bank evidence are attached; review them here.</FormNote>
-                : <Button size="sm" disabled={busy}><Send aria-hidden="true" />Request approval</Button>}
+                : <Button size="sm" disabled={busy || (action !== 'rate_publish' && amountMinor === null)}><Send aria-hidden="true" />Request approval</Button>}
             </form>
           </PanelBody>
         </Panel>

@@ -6,14 +6,14 @@ import { Building2, FileInput, Landmark, RefreshCw, Route, Split } from 'lucide-
 import { Button } from '@/components/ui/button';
 import { durableFinancialAttempt } from '@/features/platform/cashier/financialAttempt';
 import { DataTable, TBody, Td, Th, THead, Tr } from '@/features/platform/components/DataTable';
-import { ActionMessage, Field, FieldInput, FormNote, NativeSelect, type Feedback } from '@/features/platform/components/Form';
+import { ActionMessage, Field, FieldInput, FormNote, MoneyInput, NativeSelect, type Feedback } from '@/features/platform/components/Form';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
 import { Meter, StatStrip } from '@/features/platform/components/Stats';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from '@/features/platform/components/Surface';
 import { WorkspaceTabs, WorkspaceTabsContent, WorkspaceTabsList, WorkspaceTabsTrigger } from '@/features/platform/components/Tabs';
 import { WorkspaceEmpty } from '@/features/platform/components/WorkspaceControls';
-import { formatStay, humanize } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatStay, humanize } from '@/features/platform/lib/format';
 import type { StatusTone } from '@/features/platform/lib/status';
 import { getReceivablesWorkspace, receivableAction, getPayerWindows } from '../actions';
 import type { HotelReceivableAction, ManageHotelReceivableInput } from '@/features/keystone/receivables/contracts';
@@ -67,8 +67,10 @@ export function ReceivablesPage() {
     if (busy) return; setBusy(true); setFeedback(null);
     try {
       if (!/^\d+(\.\d{1,2})?$/.test(fields.amount)) throw new Error('Enter a non-negative USD amount with at most two decimal places.');
-      const payerAllocations = action === 'route_charges' ? Object.entries(chargeAmounts).filter(([, value]) => Number(value) > 0).map(([entryId, value]) => ({ entryId, amountMinor: Number(value) })) : [];
-      const amountMinor = Math.round(Number(fields.amount) * 100);
+      const allocationCents = Object.entries(chargeAmounts).filter(([, value]) => value.trim() !== '').map(([entryId, value]) => ({ entryId, amountMinor: dollarsToMinor(value, { allowZero: true }) }));
+      if (action === 'route_charges' && allocationCents.some(row => row.amountMinor === null)) throw new Error('Enter each company allocation in dollars, like 120 or 120.50.');
+      const payerAllocations = action === 'route_charges' ? allocationCents.filter((row): row is { entryId: string; amountMinor: number } => Number(row.amountMinor) > 0) : [];
+      const amountMinor = dollarsToMinor(fields.amount, { allowZero: true }) ?? 0;
       const termsDays = Number(fields.termsDays);
       const attemptDraft = { ...fields, payerAllocations, termsDays, amountMinor, action, id };
       const attempt = await durableFinancialAttempt(window.sessionStorage, 'hotel-receivables-attempt', attemptDraft, id);
@@ -168,7 +170,7 @@ export function ReceivablesPage() {
                 <div className="overflow-hidden rounded-lg border">
                   <DataTable minWidth="min-w-[640px]">
                     <THead>
-                      <tr><Th>Posted charge</Th><Th align="right">{payerWindows.remainingPayer === 'group_master' ? 'Master portion' : 'Guest portion'}</Th><Th align="right">Company portion</Th><Th align="right">New allocation (minor)</Th></tr>
+                      <tr><Th>Posted charge</Th><Th align="right">{payerWindows.remainingPayer === 'group_master' ? 'Master portion' : 'Guest portion'}</Th><Th align="right">Company portion</Th><Th align="right">New company allocation</Th></tr>
                     </THead>
                     <TBody>
                       {payerWindows.charges.map((charge: any) => (
@@ -176,7 +178,7 @@ export function ReceivablesPage() {
                           <Td>{charge.description || <span className="font-mono text-xs">{charge.entryId}</span>}{charge.reversed ? <StatusPill tone="neutral" label="Reversed" className="ml-2" /> : null}</Td>
                           <Td numeric align="right">{money(charge.guestMinor)}</Td>
                           <Td numeric align="right">{money(charge.companyMinor)}</Td>
-                          <Td align="right"><FieldInput aria-label={`Company allocation for ${charge.description || charge.entryId}`} type="number" min="0" max={charge.guestMinor} step="1" disabled={charge.reversed || busy} className="ml-auto w-32 text-right tabular-nums" value={chargeAmounts[charge.entryId] || ''} onChange={event => setChargeAmounts({ ...chargeAmounts, [charge.entryId]: event.target.value })} /></Td>
+                          <Td align="right"><MoneyInput aria-label={`Company allocation in dollars for ${charge.description || charge.entryId}`} invalid={Boolean(chargeAmounts[charge.entryId]?.trim()) && dollarsToMinor(chargeAmounts[charge.entryId], { allowZero: true }) === null} disabled={charge.reversed || busy} wrapperClassName="ml-auto w-32" className="text-right" value={chargeAmounts[charge.entryId] || ''} onChange={event => setChargeAmounts({ ...chargeAmounts, [charge.entryId]: event.target.value })} /></Td>
                         </Tr>
                       ))}
                     </TBody>

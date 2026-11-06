@@ -35,7 +35,7 @@ function retryableTransactionError(error: any) {
 function paymentMinor(payment: any) {
   if (Number.isSafeInteger(payment.amountMinor)) return Math.abs(payment.amountMinor);
   const value = Math.round(Math.abs(Number(payment.amount || 0)) * 100);
-  if (!Number.isSafeInteger(value)) throw new Error('Payment amount cannot be represented in minor units.');
+  if (!Number.isSafeInteger(value)) throw new Error('Payment amount cannot be represented in cents.');
   return value;
 }
 

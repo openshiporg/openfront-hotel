@@ -75,6 +75,18 @@ type Folio = {
   balanceMinor: number;
 };
 
+/** Posting type once, as plain text: "Payment", "Room · Night audit", "Fee · Posted by staff · Reversed". */
+function entryMeta(entry: { entryType: string; sourceType?: string | null; reversedById?: string | null; reversesId?: string | null }) {
+  const type = humanize(entry.entryType);
+  // Only sources a front-desk reader cares about; payment/refund sources repeat the type, the rest are internal.
+  const source = ({ reservation_snapshot: 'From the booking', operator: 'Posted by staff', night_audit: 'Night audit' } as Record<string, string>)[entry.sourceType || ''];
+  const parts = [type];
+  if (source) parts.push(source);
+  if (entry.reversedById) parts.push('Reversed');
+  if (entry.reversesId) parts.push('Correction');
+  return parts;
+}
+
 function formatMoney(amountMinor: number, currencyCode: string) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -430,12 +442,7 @@ export function FoliosPage() {
                                     : <ArrowDownLeft className="mt-0.5 size-3.5 shrink-0 text-emerald-600" aria-hidden="true" />}
                                   <div className="min-w-0">
                                     <p className={cn('font-medium', entry.reversedById && 'line-through decoration-muted-foreground/60')}>{entry.description}</p>
-                                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                                      <Tag>{humanize(entry.entryType)}</Tag>
-                                      <span>{humanize(entry.sourceType)}</span>
-                                      {entry.reversedById ? <StatusPill tone="neutral" label="Reversed" /> : null}
-                                      {entry.reversesId ? <StatusPill tone="accent" label="Correction" /> : null}
-                                    </p>
+                                    <p className="mt-0.5 text-xs text-muted-foreground">{entryMeta(entry).join(' · ')}</p>
                                   </div>
                                 </div>
                               </Td>

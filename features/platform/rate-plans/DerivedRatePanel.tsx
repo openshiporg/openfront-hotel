@@ -5,10 +5,10 @@ import { GitBranch, Save, Send } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { applyHotelApproval } from '@/features/platform/guest-governance/actions';
-import { ActionMessage, CheckboxField, Field, FieldInput, FormNote, NativeSelect, type Feedback } from '@/features/platform/components/Form';
+import { ActionMessage, CheckboxField, Field, FieldInput, FormNote, MoneyInput, NativeSelect, type Feedback } from '@/features/platform/components/Form';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { Disclosure } from '@/features/platform/components/Surface';
-import { formatMoneyMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatMoneyMinor, minorToDollars } from '@/features/platform/lib/format';
 import { loadDerivedRateWorkspace, saveDerivedRate } from './derivedActions';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
@@ -30,7 +30,7 @@ export default function DerivedRatePanel() {
     setBusy(true); setFeedback(null);
     try { await fn(); } catch (error) { setFeedback({ tone: 'error', text: error instanceof Error ? error.message : 'Derived rate operation failed.' }); } finally { setBusy(false); }
   }
-  function intent() { return { targetPlanId: targetId, sourcePlanId: sourceId, enabled, multiplierBasisPoints: Number(multiplier), adjustmentMinor: Number(adjustment), expectedRevision: workspace.configs.find((config: any) => config.targetPlanId === targetId)?.revision || 0 }; }
+  function intent() { return { targetPlanId: targetId, sourcePlanId: sourceId, enabled, multiplierBasisPoints: Number(multiplier), adjustmentMinor: dollarsToMinor(adjustment, { signed: true, allowZero: true }) ?? 0, expectedRevision: workspace.configs.find((config: any) => config.targetPlanId === targetId)?.revision || 0 }; }
   function attempt(signature: string) { const key = attempts.current.get(signature) || crypto.randomUUID(); attempts.current.set(signature, key); return key; }
   async function requestApproval() {
     const target = workspace.plans.find((plan: any) => plan.id === targetId);
@@ -56,7 +56,7 @@ export default function DerivedRatePanel() {
     setSourceId(saved?.sourcePlanId || '');
     setEnabled(saved ? Boolean(saved.enabled) : true);
     setMultiplier(String(saved?.multiplierBasisPoints ?? 10000));
-    setAdjustment(String(saved?.adjustmentMinor ?? 0));
+    setAdjustment(minorToDollars(saved?.adjustmentMinor ?? 0) || '0');
     setApprovalId('');
     setFeedback(null);
   }
@@ -68,6 +68,8 @@ export default function DerivedRatePanel() {
   }, [proposal, approvalId]);
   const planName = (id: string) => workspace?.plans.find((plan: any) => plan.id === id)?.name || id;
   const percent = Number(multiplier) / 100;
+  const adjustmentMinor = dollarsToMinor(adjustment, { signed: true, allowZero: true });
+  const adjustmentInvalid = adjustment.trim() !== '' && adjustmentMinor === null;
 
   return (
     <Disclosure
@@ -106,19 +108,19 @@ export default function DerivedRatePanel() {
               <Field label="Multiplier (basis points)" htmlFor="derived-multiplier" hint={Number.isFinite(percent) ? `= ${percent}% of the parent rate · 10000 = 100%` : '10000 = 100%'}>
                 <FieldInput id="derived-multiplier" type="number" min={1} max={100000} step={1} className="tabular-nums" value={multiplier} onChange={event => setMultiplier(event.target.value)} />
               </Field>
-              <Field label="Nightly adjustment (minor units, signed)" htmlFor="derived-adjustment" hint={adjustment && Number.isSafeInteger(Number(adjustment)) ? `= ${Number(adjustment) < 0 ? '−' : '+'}${formatMoneyMinor(Math.abs(Number(adjustment)))} per night` : undefined}>
-                <FieldInput id="derived-adjustment" type="number" step={1} className="tabular-nums" value={adjustment} onChange={event => setAdjustment(event.target.value)} />
+              <Field label="Nightly adjustment" htmlFor="derived-adjustment" hint={adjustmentInvalid ? 'Enter a dollar amount, like 15 or -10.50.' : adjustmentMinor ? `${adjustmentMinor < 0 ? '−' : '+'}${formatMoneyMinor(Math.abs(adjustmentMinor))} per night. Use a minus sign for a discount.` : 'In dollars. Use a minus sign for a discount.'}>
+                <MoneyInput id="derived-adjustment" invalid={adjustmentInvalid} value={adjustment} onChange={event => setAdjustment(event.target.value)} />
               </Field>
             </div>
             <CheckboxField checked={enabled} onChange={setEnabled} label="Enable inheritance for the target plan" />
             <Field label="Reason for this configuration" htmlFor="derived-reason"><FieldInput id="derived-reason" value={reason} onChange={event => setReason(event.target.value)} /></Field>
             <div className="flex flex-wrap items-center gap-3">
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(requestApproval)}><Send aria-hidden="true" />Request independent approval</Button>
+              <Button size="sm" variant="outline" disabled={busy || adjustmentInvalid} onClick={() => void run(requestApproval)}><Send aria-hidden="true" />Request independent approval</Button>
               <Link className="text-xs text-muted-foreground underline underline-offset-2" href="/dashboard/platform/approvals">Review approvals</Link>
             </div>
             <div className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-end">
               <Field label="Approved request ID" htmlFor="derived-approval" className="sm:max-w-xs sm:flex-1"><FieldInput id="derived-approval" className="font-mono" value={approvalId} onChange={event => setApprovalId(event.target.value)} /></Field>
-              <Button size="sm" className="h-9" disabled={busy} onClick={() => void run(save)}><Save aria-hidden="true" />Apply configuration</Button>
+              <Button size="sm" className="h-9" disabled={busy || adjustmentInvalid} onClick={() => void run(save)}><Save aria-hidden="true" />Apply configuration</Button>
             </div>
             <FormNote>Parent price changes affect future quotes only; existing reservation snapshots stay unchanged.</FormNote>
           </div>

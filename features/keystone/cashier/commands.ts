@@ -14,7 +14,7 @@ export type ManageHotelCashierInput =
 
 export type CashierShift = { id: string; drawerId: string; actorId: string; currencyCode: 'USD'; status: 'open' | 'awaiting_review' | 'closed';
   sequence: number; openedAt: string; floatMinor: number; dropsMinor: number; expectedMinor?: number; countedMinor?: number; varianceMinor?: number; closedAt?: string; reviewedBy?: string };
-function amount(value: unknown) { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error('Cash amount must be non-negative integer minor units.'); return Number(value); }
+function amount(value: unknown) { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error('Cash amount must be zero or more, in whole cents.'); return Number(value); }
 function text(value: unknown, label: string, max = 200) { const result = String(value || '').trim(); if (!result || result.length > max) throw new Error(`${label} is required and bounded.`); return result; }
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 export function parseManageHotelCashierInput(value: unknown): ManageHotelCashierInput {

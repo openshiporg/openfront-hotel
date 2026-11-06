@@ -1,3 +1,5 @@
+import { moneyText } from '../lib/moneyText';
+
 export type FolioDirection = 'debit' | 'credit';
 
 export type FolioEntryType =
@@ -161,10 +163,10 @@ export function calculateFolioBalance(entries: FolioBalanceEntry[]) {
 export function assertFolioCanClose(entries: FolioBalanceEntry[]) {
   const totals = calculateFolioBalance(entries);
   if (totals.balanceMinor > 0) {
-    throw new Error(`Folio has an outstanding debit balance of ${totals.balanceMinor} minor units.`);
+    throw new Error(`Folio has an outstanding debit balance of ${moneyText(totals.balanceMinor)}.`);
   }
   if (totals.balanceMinor < 0) {
-    throw new Error(`Folio has an outstanding credit balance of ${Math.abs(totals.balanceMinor)} minor units.`);
+    throw new Error(`Folio has an outstanding credit balance of ${moneyText(Math.abs(totals.balanceMinor))}.`);
   }
   return totals;
 }

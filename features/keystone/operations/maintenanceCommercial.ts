@@ -7,7 +7,7 @@ type Part = { id: string; description: string; quantity: number; unitCostMinor: 
 export type MaintenanceCommercialState = { revision: number; vendorName: string; vendorReference: string; dueAt: string | null; acknowledgedAt: string | null; legacyCostMinor: number; laborCostMinor: number; parts: Part[] };
 const empty = (legacyCostMinor = 0): MaintenanceCommercialState => ({ revision: 0, vendorName: '', vendorReference: '', dueAt: null, acknowledgedAt: null, legacyCostMinor, laborCostMinor: 0, parts: [] });
 function text(value: unknown, label: string, max = 500) { const result = String(value || '').trim(); if (!result || result.length > max) throw new Error(`${label} is required (maximum ${max} characters).`); return result; }
-function money(value: unknown, label: string) { if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 2_147_483_647) throw new Error(`${label} must be a nonnegative integer amount in minor units.`); return Number(value); }
+function money(value: unknown, label: string) { if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 2_147_483_647) throw new Error(`${label} must be zero or more, in whole cents.`); return Number(value); }
 export function maintenanceCommercialCost(state: MaintenanceCommercialState) {
   const total = (state.legacyCostMinor || 0) + state.laborCostMinor + state.parts.filter(part => part.status === 'used').reduce((sum, part) => sum + part.quantity * part.unitCostMinor, 0);
   return money(total, 'Total maintenance cost');

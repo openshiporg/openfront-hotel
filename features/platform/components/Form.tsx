@@ -43,6 +43,16 @@ export const FieldInput = React.forwardRef<HTMLInputElement, React.ComponentProp
   return <Input ref={ref} className={cn(CONTROL, className)} {...props} />;
 });
 
+/** Dollar amount field: "$" prefix, decimal keypad, plain text so "12.50" is never reformatted. Parse with dollarsToMinor. */
+export const MoneyInput = React.forwardRef<HTMLInputElement, Omit<React.ComponentProps<'input'>, 'type'> & { invalid?: boolean; wrapperClassName?: string }>(function MoneyInput({ className, invalid, wrapperClassName, ...props }, ref) {
+  return (
+    <div className={cn('relative', wrapperClassName)}>
+      <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+      <Input ref={ref} type="text" inputMode="decimal" autoComplete="off" placeholder="0.00" aria-invalid={invalid || undefined} className={cn(CONTROL, 'pl-7 tabular-nums', className)} {...props} />
+    </div>
+  );
+});
+
 export function FieldTextarea({ className, ...props }: React.ComponentProps<'textarea'>) {
   return <Textarea className={cn('min-h-20 text-sm', className)} {...props} />;
 }

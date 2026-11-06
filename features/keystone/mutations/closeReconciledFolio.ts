@@ -6,6 +6,7 @@ import {
   recordHotelLifecycleEvent,
 } from '../lib/hotelLifecycle';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { moneyText } from '../lib/moneyText';
 
 const TERMINAL_BOOKING_STATUSES = new Set(['checked_out', 'cancelled', 'no_show']);
 
@@ -54,7 +55,7 @@ export default async function closeReconciledFolio(
     }
     const balance = calculateFolioBalance(booking.folio.entries as any);
     if (balance.balanceMinor !== 0) {
-      throw new Error(`Folio cannot close with an outstanding balance of ${balance.balanceMinor} minor units.`);
+      throw new Error(`Folio cannot close with an outstanding balance of ${moneyText(balance.balanceMinor)}.`);
     }
 
     const closedAt = new Date();

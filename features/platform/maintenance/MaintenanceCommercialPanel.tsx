@@ -3,20 +3,21 @@ import * as React from 'react';
 import { History, Package, Truck } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { ActionMessage, Field, FieldInput, FormNote, NativeSelect, type Feedback } from '@/features/platform/components/Form';
+import { ActionMessage, Field, FieldInput, FormNote, MoneyInput, NativeSelect, type Feedback } from '@/features/platform/components/Form';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { DetailList, Disclosure } from '@/features/platform/components/Surface';
-import { formatDateTime, formatMoneyMinor, humanize } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatDateTime, formatMoneyMinor, humanize } from '@/features/platform/lib/format';
 import { loadMaintenanceCommercial, saveMaintenanceCommercial } from './commercialActions';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
 const fields: Record<string, Array<[string, string]>> = {
   plan: [['vendorName', 'Vendor or internal team'], ['vendorReference', 'Work-order or vendor reference'], ['dueAt', 'Repair deadline with time zone (2026-09-10T15:00:00-04:00)']],
   acknowledge: [],
-  order_part: [['partId', 'Unique part line reference'], ['description', 'Part description'], ['quantity', 'Whole quantity'], ['unitCostMinor', 'Unit cost in minor units']],
+  order_part: [['partId', 'Unique part line reference'], ['description', 'Part description'], ['quantity', 'Whole quantity'], ['unitCostMinor', 'Unit cost']],
   part_status: [['partId', 'Part line reference'], ['status', 'received, used, cancelled or returned']],
-  labor: [['laborCostMinor', 'Total labor cost in minor units']],
+  labor: [['laborCostMinor', 'Total labor cost']],
 };
+const MONEY_FIELDS = new Set(['unitCostMinor', 'laborCostMinor']);
 const COMMAND_LABELS: Record<string, string> = { plan: 'Plan vendor & deadline', acknowledge: 'Acknowledge work order', order_part: 'Order a part', part_status: 'Update part status', labor: 'Record labor cost' };
 
 /** Vendor, deadline, parts and labor facts for one maintenance request. Loads on expand. */
@@ -35,7 +36,12 @@ export default function MaintenanceCommercialPanel({ requestId }: { requestId: s
   }
   async function save() {
     const payload: any = { ...values, reason, expectedRevision: record.commercial.revision };
-    for (const field of ['quantity', 'unitCostMinor', 'laborCostMinor']) if (field in payload) payload[field] = Number(payload[field]);
+    if ('quantity' in payload) payload.quantity = Number(payload.quantity);
+    for (const field of MONEY_FIELDS) if (field in payload) {
+      const cents = dollarsToMinor(String(payload[field]), { allowZero: true });
+      if (cents === null) throw new Error('Enter costs in dollars, like 45 or 45.50.');
+      payload[field] = cents;
+    }
     const signature = JSON.stringify({ requestId, command, payload });
     if (attempt.current.signature !== signature) attempt.current = { signature, key: crypto.randomUUID() };
     setRecord(unwrapAction(await saveMaintenanceCommercial(requestId, command, payload, attempt.current.key)));
@@ -81,8 +87,8 @@ export default function MaintenanceCommercialPanel({ requestId }: { requestId: s
             {fields[command].length ? (
               <div className="grid gap-4 sm:grid-cols-2">
                 {fields[command].map(([key, label]) => (
-                  <Field key={key} label={label} htmlFor={`${requestId}-${key}`}>
-                    <FieldInput id={`${requestId}-${key}`} value={values[key] || ''} onChange={event => setValues(current => ({ ...current, [key]: event.target.value }))} required />
+                  <Field key={key} label={label} htmlFor={`${requestId}-${key}`} hint={MONEY_FIELDS.has(key) ? (values[key]?.trim() && dollarsToMinor(values[key], { allowZero: true }) === null ? 'Enter a dollar amount, like 45 or 45.50.' : 'In dollars.') : undefined}>
+                    {MONEY_FIELDS.has(key) ? <MoneyInput id={`${requestId}-${key}`} invalid={Boolean(values[key]?.trim()) && dollarsToMinor(values[key], { allowZero: true }) === null} value={values[key] || ''} onChange={event => setValues(current => ({ ...current, [key]: event.target.value }))} required /> : <FieldInput id={`${requestId}-${key}`} value={values[key] || ''} onChange={event => setValues(current => ({ ...current, [key]: event.target.value }))} required />}
                   </Field>
                 ))}
               </div>

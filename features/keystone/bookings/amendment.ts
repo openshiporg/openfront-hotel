@@ -7,6 +7,7 @@ import { findHotelLifecycleReplay, lockHotelLifecycle, recordHotelLifecycleEvent
 import { queueBookingCommunication } from '../communications/commands';
 import { currentPostingDate, lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { moneyText } from '../lib/moneyText';
 
 function must<T>(value: T): T {
   if (value instanceof Error || (value as any)?.extensions?.code === 'KS_PRISMA_ERROR') throw value;
@@ -83,7 +84,7 @@ export async function amendUnpaidBooking({
       .filter((payment: any) => ['completed', 'refunded'].includes(payment.status))
       .reduce((sum: number, payment: any) => sum + (payment.paymentType === 'refund' ? -Math.abs(Number(payment.amountMinor || 0)) : Math.max(0, Number(payment.amountMinor || 0))), 0));
     if (totalAmountMinor < netPaidMinor) {
-      throw new Error(`Refund ${netPaidMinor - totalAmountMinor} minor units through the payment workflow before applying this lower-priced amendment.`);
+      throw new Error(`Refund ${moneyText(netPaidMinor - totalAmountMinor)} through the payment workflow before applying this lower-priced amendment.`);
     }
     const currentRoomTypeId = booking.roomAssignments[0]?.roomTypeId;
     if (!currentRoomTypeId) throw new Error('Booking room type is missing.');

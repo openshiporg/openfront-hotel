@@ -10,13 +10,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { toast } from 'sonner';
 import { DataTable, TBody, Td, Th, THead, Tr } from '@/features/platform/components/DataTable';
 import { FilterTabs } from '@/features/platform/components/FilterTabs';
-import { Field, FieldInput } from '@/features/platform/components/Form';
+import { Field, FieldInput, MoneyInput } from '@/features/platform/components/Form';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
 import { StatStrip } from '@/features/platform/components/Stats';
 import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
 import { CopyId, Panel, PanelToolbar } from '@/features/platform/components/Surface';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
-import { formatDateTime, formatMoneyMinor, humanize, previewMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatDateTime, formatMoneyMinor, humanize, minorToDollars } from '@/features/platform/lib/format';
 import { statusMeta } from '@/features/platform/lib/status';
 import { workspaceResultLabel } from '@/features/platform/lib/workspace';
 import { usePagedList } from '@/features/platform/lib/pagedList';
@@ -63,7 +63,7 @@ export function PaymentsPage() {
     try {
       const quote = unwrapAction(await getRefundQuoteAction(payment.id)) as RefundQuote;
       setRefundQuote(quote);
-      setRefundAmount(quote.refundableMinor > 0 ? String(quote.refundableMinor) : '');
+      setRefundAmount(quote.refundableMinor > 0 ? minorToDollars(quote.refundableMinor) : '');
       if (quote.refundableMinor <= 0) setRefundError('This capture is fully refunded or reserved by an existing refund intent.');
     } catch (cause) {
       setRefundError(cause instanceof Error ? cause.message : 'The refundable balance could not be loaded.');
@@ -77,9 +77,9 @@ export function PaymentsPage() {
   const submitRefund = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!refundPayment || !refundQuote) return;
-    const amountMinor = Number(refundAmount);
-    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0 || amountMinor > refundQuote.refundableMinor) {
-      setRefundError(`Enter an integer from 1 to ${refundQuote.refundableMinor} minor units.`); return;
+    const amountMinor = dollarsToMinor(refundAmount);
+    if (amountMinor === null || amountMinor > refundQuote.refundableMinor) {
+      setRefundError(`Enter a dollar amount up to ${formatMoneyMinor(refundQuote.refundableMinor, refundQuote.currencyCode)}.`); return;
     }
     if (!refundReason.trim()) { setRefundError('A refund reason is required.'); return; }
     setRefunding(true); setRefundError(null);
@@ -98,7 +98,8 @@ export function PaymentsPage() {
   const visible = payments;
   const statusCount = (value: string) => Number({ completed: summary.completedCount, pending: summary.pendingCount, failed: summary.failedCount, refunded: summary.refundedCount }[value] || 0);
   const allCount = summary.completedCount + summary.pendingCount + summary.failedCount + summary.refundedCount;
-  const refundPreview = previewMinor(refundAmount, refundQuote?.currencyCode || 'USD');
+  const refundMinor = dollarsToMinor(refundAmount);
+  const refundInvalid = refundAmount.trim() !== '' && (refundMinor === null || (refundQuote ? refundMinor > refundQuote.refundableMinor : false));
 
   return <PlatformPage
     title="Payments"
@@ -203,15 +204,15 @@ export function PaymentsPage() {
             <div className="min-w-0"><p className="text-xs text-muted-foreground">Payment</p><p className="truncate font-mono text-xs font-medium">{refundPayment?.paymentReference}</p><p className="truncate text-xs text-muted-foreground">{refundPayment?.booking?.guestName || 'Unknown guest'} · {refundPayment?.booking?.confirmationNumber || 'No booking'}</p></div>
             <div className="text-right"><p className="text-xs text-muted-foreground">Refundable</p><p className="text-lg font-semibold tabular-nums">{quoteLoading ? '…' : refundQuote ? formatMoneyMinor(refundQuote.refundableMinor, refundQuote.currencyCode) : '—'}</p></div>
           </div>
-          <Field label="Amount (minor units)" htmlFor="refund-amount" hint={refundPreview ? `= ${refundPreview}` : refundQuote ? `1 to ${refundQuote.refundableMinor}` : undefined}>
-            <FieldInput ref={refundAmountRef} id="refund-amount" type="number" inputMode="numeric" min="1" max={refundQuote?.refundableMinor} step="1" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} disabled={!refundQuote || quoteLoading || refunding} required />
+          <Field label="Amount" htmlFor="refund-amount" hint={refundQuote ? (refundInvalid ? `Enter a dollar amount up to ${formatMoneyMinor(refundQuote.refundableMinor, refundQuote.currencyCode)}.` : `In dollars, up to ${formatMoneyMinor(refundQuote.refundableMinor, refundQuote.currencyCode)}.`) : undefined}>
+            <MoneyInput ref={refundAmountRef} id="refund-amount" invalid={refundInvalid} value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} disabled={!refundQuote || quoteLoading || refunding} required />
           </Field>
           <Field label="Reason" htmlFor="refund-reason"><FieldInput id="refund-reason" value={refundReason} onChange={(event) => setRefundReason(event.target.value)} maxLength={500} disabled={!refundQuote || quoteLoading || refunding} required /></Field>
-          <Field label="Approval ID" htmlFor="refund-approval" optional hint={<>Needed when the amount meets the property threshold. Approve payment {refundPayment?.id ? <CopyId value={refundPayment.id} className="align-middle" /> : null} for {refundAmount || '0'} minor units in <Link className="underline underline-offset-2" href="/dashboard/platform/approvals" target="_blank">Approvals</Link>.</>}>
+          <Field label="Approval ID" htmlFor="refund-approval" optional hint={<>Needed when the amount meets the property threshold. Approve payment {refundPayment?.id ? <CopyId value={refundPayment.id} className="align-middle" /> : null} for {refundMinor !== null ? formatMoneyMinor(refundMinor, refundQuote?.currencyCode || 'USD') : 'the refund amount'} in <Link className="underline underline-offset-2" href="/dashboard/platform/approvals" target="_blank">Approvals</Link>.</>}>
             <FieldInput id="refund-approval" value={refundApprovalId} onChange={event => setRefundApprovalId(event.target.value)} disabled={refunding} />
           </Field>
           {refundError ? <p className="text-sm text-destructive" role="alert">{refundError}</p> : null}
-          <DialogFooter><Button type="button" variant="outline" onClick={closeRefundDialog} disabled={refunding}>Cancel</Button><Button type="submit" disabled={!refundQuote || refundQuote.refundableMinor <= 0 || quoteLoading || refunding}>{refunding ? 'Submitting…' : 'Request refund'}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="outline" onClick={closeRefundDialog} disabled={refunding}>Cancel</Button><Button type="submit" disabled={!refundQuote || refundQuote.refundableMinor <= 0 || refundMinor === null || refundInvalid || quoteLoading || refunding}>{refunding ? 'Submitting…' : 'Request refund'}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

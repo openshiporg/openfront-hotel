@@ -24,19 +24,30 @@ export function formatMoney(amount?: number | null, currencyCode = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode || 'USD' }).format(Number(amount));
 }
 
-/** Integer minor units typed by an operator, shown back as currency for confirmation. */
-/** Staff type dollars ("12.50"); the API takes integer cents. Exact string parse, no float rounding. Null when not a positive amount with at most 2 decimals. */
-export function dollarsToMinor(value: string): number | null {
-  const match = /^\s*\$?\s*(\d{1,9})(?:\.(\d{0,2}))?\s*$/.exec(value.replace(/,/g, ''));
-  if (!match) return null;
-  const minor = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
-  return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
+/**
+ * Staff type dollars ("12.50"); the API takes integer cents. Exact string parse, no float rounding.
+ * Null when the text is not an amount with at most 2 decimals. By default only positive amounts pass;
+ * `allowZero` accepts 0 and `signed` accepts a leading minus (for debits and discounts).
+ */
+export function dollarsToMinor(value: string, options: { allowZero?: boolean; signed?: boolean } = {}): number | null {
+  const match = /^\s*([-\u2212])?\s*\$?\s*(\d{1,9})?(?:\.(\d{0,2}))?\s*$/.exec(String(value ?? '').replace(/,/g, ''));
+  if (!match || (match[2] === undefined && !match[3])) return null;
+  if (match[1] && !options.signed) return null;
+  const magnitude = Number(match[2] || 0) * 100 + Number((match[3] || '').padEnd(2, '0'));
+  const minor = match[1] ? -magnitude : magnitude;
+  if (!Number.isSafeInteger(minor)) return null;
+  if (minor === 0) return options.allowZero ? 0 : null;
+  return options.signed || minor > 0 ? minor : null;
 }
 
-export function previewMinor(value: string, currencyCode = 'USD') {
-  const amount = Number(value);
-  if (!value.trim() || !Number.isSafeInteger(amount)) return null;
-  return formatMoneyMinor(amount, currencyCode);
+/** Integer cents shown back in a dollar field ("1250" -> "12.50", "1200" -> "12"). Empty for null. */
+export function minorToDollars(minor?: number | null): string {
+  if (minor === null || minor === undefined || !Number.isFinite(Number(minor))) return '';
+  const value = Math.trunc(Number(minor));
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value);
+  const cents = abs % 100;
+  return `${sign}${Math.floor(abs / 100)}${cents ? `.${String(cents).padStart(2, '0')}` : ''}`;
 }
 
 function dateLabel(value?: string | Date | null) {

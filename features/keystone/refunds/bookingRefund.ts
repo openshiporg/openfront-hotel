@@ -7,13 +7,14 @@ import { findHotelLifecycleReplay, hashLifecycleRequest, HOTEL_PROPERTY_KEY, loc
 import { queueBookingCommunication } from '../communications/commands';
 import { isOnlinePaymentProviderCode } from '../lib/paymentSecurity';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
+import { moneyText } from '../lib/moneyText';
 
 const ACTIVE_INTENT_STATUSES = ['pending', 'processing', 'failed', 'dead_letter'];
 
 function paymentMinor(payment: any) {
   if (Number.isSafeInteger(payment.amountMinor)) return Math.abs(payment.amountMinor);
   const amount = Math.round(Math.abs(Number(payment.amount || 0)) * 100);
-  if (!Number.isSafeInteger(amount)) throw new Error('Payment amount cannot be represented in minor units.');
+  if (!Number.isSafeInteger(amount)) throw new Error('Payment amount cannot be represented in cents.');
   return amount;
 }
 
@@ -195,7 +196,7 @@ export async function requestBookingPaymentRefund({
       throw new Error('A cancellation refund is already in progress; resolve it before requesting another refund.');
     }
     const availableMinor = await refundablePaymentMinor(prisma, payment);
-    if (amountMinor > availableMinor) throw new Error(`Refund exceeds the available amount of ${availableMinor} minor units.`);
+    if (amountMinor > availableMinor) throw new Error(`Refund exceeds the available amount of ${moneyText(availableMinor)}.`);
 
     const settings = await prisma.hotelSettings.findUnique({ where: { id: 1 } });
     if (amountMinor >= Number(settings?.refundApprovalThresholdMinor ?? 0)) await requireHotelApproval(prisma, { approvalId, action: 'refund', aggregateId: paymentId, amountMinor, actorId, operationKey: eventKey });

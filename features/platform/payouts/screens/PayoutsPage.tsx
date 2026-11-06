@@ -6,12 +6,12 @@ import { CheckCheck, ExternalLink, FileSpreadsheet, Landmark, RefreshCw, ShieldC
 import { Button } from '@/components/ui/button';
 import { operationAttempt } from '@/lib/operationAttempt';
 import { applyHotelApproval } from '@/features/platform/guest-governance/actions';
-import { ActionMessage, Field, FieldInput, FieldTextarea, FormNote, NativeSelect, type Feedback } from '@/features/platform/components/Form';
+import { ActionMessage, Field, FieldInput, FieldTextarea, FormNote, MoneyInput, NativeSelect, type Feedback } from '@/features/platform/components/Form';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { Callout, CopyId, Panel, PanelBody, PanelHeader } from '@/features/platform/components/Surface';
 import { WorkspaceEmpty, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
-import { formatMoneyMinor, formatStay, previewMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, formatMoneyMinor, formatStay } from '@/features/platform/lib/format';
 import { getPayoutWorkspace, payoutAction } from '../actions';
 import type { ManageHotelPayoutDraft } from '@/features/keystone/finance/hotelPayoutReconciliation';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
@@ -23,6 +23,7 @@ export function PayoutsPage() {
   const [bankReference, setBankReference] = React.useState('');
   const [bankAmount, setBankAmount] = React.useState('');
   const [approvalId, setApprovalId] = React.useState('');
+  const bankMinor = dollarsToMinor(bankAmount, { signed: true });
   const [feedback, setFeedback] = React.useState<Feedback>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -44,7 +45,7 @@ export function PayoutsPage() {
   async function requestApproval(row: any) {
     setBusy(true); setFeedback(null);
     try {
-      const payload = { action: 'payout_reconcile', aggregateId: row.id, amountMinor: Math.abs(Number(bankAmount)), reason: `Reconcile imported payout ${row.payoutId}`, parameters: { sourceHash: row.sourceHash, bankReference, bankAmountMinor: Number(bankAmount) } };
+      const payload = { action: 'payout_reconcile', aggregateId: row.id, amountMinor: Math.abs(bankMinor ?? 0), reason: `Reconcile imported payout ${row.payoutId}`, parameters: { sourceHash: row.sourceHash, bankReference, bankAmountMinor: bankMinor ?? 0 } };
       const attempt = await operationAttempt('payout-approval', payload);
       const result = unwrapAction(await applyHotelApproval(payload, attempt.key));
       setApprovalId(result.approvalId); attempt.complete();
@@ -54,8 +55,8 @@ export function PayoutsPage() {
     } finally { setBusy(false); }
   }
 
-  const bankPreview = previewMinor(bankAmount);
-  const bankReady = Boolean(bankReference && bankAmount);
+  const bankInvalid = bankAmount.trim() !== '' && bankMinor === null;
+  const bankReady = Boolean(bankReference && bankMinor !== null);
 
   return (
     <PlatformPage
@@ -80,7 +81,7 @@ export function PayoutsPage() {
 
       <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <Panel>
-          <PanelHeader title="Import provider statement" description="USD only. All amounts are signed integer minor units." icon={FileSpreadsheet} />
+          <PanelHeader title="Import provider statement" description="USD only. Paste the statement exactly as the provider exports it; its amounts are in cents." icon={FileSpreadsheet} />
           <PanelBody className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Provider" htmlFor="payout-provider">
@@ -100,7 +101,7 @@ export function PayoutsPage() {
           <PanelHeader title="Bank evidence" description="Used by the approval request and the final match on any statement below." icon={Landmark} />
           <PanelBody className="space-y-4">
             <Field label="Bank deposit / debit reference" htmlFor="payout-bank-ref"><FieldInput id="payout-bank-ref" aria-label="Bank deposit or debit reference" value={bankReference} onChange={e => setBankReference(e.target.value)} /></Field>
-            <Field label="Signed bank amount (minor units)" htmlFor="payout-bank-amount" hint={bankPreview ? `= ${bankPreview}` : 'Negative for a debit.'}><FieldInput id="payout-bank-amount" aria-label="Signed bank amount in minor units" type="number" value={bankAmount} onChange={e => setBankAmount(e.target.value)} /></Field>
+            <Field label="Bank amount" htmlFor="payout-bank-amount" hint={bankInvalid ? 'Enter a dollar amount, like 1250.40, or -35 for a debit.' : 'In dollars. Use a minus sign for a debit.'}><MoneyInput id="payout-bank-amount" aria-label="Bank amount in dollars" invalid={bankInvalid} value={bankAmount} onChange={e => setBankAmount(e.target.value)} /></Field>
             <Field label="Approval ID" htmlFor="payout-approval" hint={<>Filled automatically after a request. <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Open approvals <ExternalLink className="inline size-3" aria-hidden="true" /></Link></>}><FieldInput id="payout-approval" aria-label="Payout approval ID" value={approvalId} onChange={e => setApprovalId(e.target.value)} /></Field>
             <FormNote>Matching records evidence only; it does not independently verify a provider or bank account.</FormNote>
           </PanelBody>
@@ -151,7 +152,7 @@ export function PayoutsPage() {
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" disabled={busy} onClick={() => void run({ action: 'refresh', id: row.id })}><RefreshCw aria-hidden="true" />Recheck evidence</Button>
                       <Button size="sm" variant="outline" disabled={busy || blocked || !bankReady} onClick={() => void requestApproval(row)}><ShieldCheck aria-hidden="true" />Request approval</Button>
-                      <Button size="sm" disabled={busy || blocked || !approvalId || !bankReady} onClick={() => void run({ action: 'confirm', id: row.id, bankReference, bankAmountMinor: Number(bankAmount), approvalId })}><CheckCheck aria-hidden="true" />Match approved bank evidence</Button>
+                      <Button size="sm" disabled={busy || blocked || !approvalId || !bankReady} onClick={() => void run({ action: 'confirm', id: row.id, bankReference, bankAmountMinor: bankMinor ?? 0, approvalId })}><CheckCheck aria-hidden="true" />Match approved bank evidence</Button>
                       {!bankReady && !blocked ? <span className="self-center text-xs text-muted-foreground">Enter bank evidence above first.</span> : null}
                     </div>
                   ) : null}
