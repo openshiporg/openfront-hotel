@@ -65,7 +65,7 @@ async function completeBookingPayment(
   }
 
   const collectible = await runSerializableTransaction(context, tx => getBookingCollectibleBalance(tx, bookingId));
-  const stale = Boolean(session.data?.retiredAt) || !['pending', 'confirmed'].includes(session.booking.status) ||
+  const stale = Boolean(session.data?.retiredAt) || !['pending', 'confirmed', ...(canManageBookingRecords(context) ? ['checked_in'] : [])].includes(session.booking.status) ||
     bookingPaymentDueNow(session.booking, collectible.balanceDueMinor) !== session.amount ||
     (session.data?.obligation && session.data.obligation.pricingRevision !== (session.booking.pricingRevision || 1)) ||
     (session.booking.status === 'pending' && session.booking.holdExpiresAt && new Date(session.booking.holdExpiresAt) <= new Date());

@@ -145,7 +145,7 @@ export function validateRefundSettlement(result: any, expected: { amountMinor: n
 
 export function captureRecoveryAmount(booking: any, capturedMinor: number, outstandingMinor: number, confirmationAvailable: boolean) {
   if (!Number.isSafeInteger(capturedMinor) || capturedMinor <= 0 || !Number.isSafeInteger(outstandingMinor) || outstandingMinor < 0) throw new Error('Invalid capture obligation.');
-  if (!['pending', 'confirmed'].includes(booking.status) || !confirmationAvailable) return capturedMinor;
+  if (!['pending', 'confirmed', 'checked_in'].includes(booking.status) || !confirmationAvailable) return capturedMinor;
   return Math.max(0, capturedMinor - outstandingMinor);
 }
 

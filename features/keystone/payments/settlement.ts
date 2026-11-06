@@ -179,9 +179,11 @@ export async function finalizeBookingPayment({
     } });
     if (otherCapture) throw new Error('Provider capture is already bound to another payment session.');
     const now = new Date();
-    let confirmationAvailable = ['pending', 'confirmed'].includes(session.booking.status);
+    // A desk payment for an in-house guest settles the folio like any other; it never re-confirms.
+    const inHouse = session.booking.status === 'checked_in';
+    let confirmationAvailable = inHouse || ['pending', 'confirmed'].includes(session.booking.status);
     let recoveryReason = confirmationAvailable ? '' : `Late capture for ${session.booking.status} reservation`;
-    if (confirmationAvailable) {
+    if (confirmationAvailable && !inHouse) {
       try { await assertBookingConfirmationInventory(transactionContext, session.booking, now); }
       catch (error) {
         if (!(error instanceof BookingConfirmationError)) throw error;
@@ -260,7 +262,7 @@ export async function finalizeBookingPayment({
         balanceDueMinor: remainingMinor,
         balanceDue: remainingMinor / 100,
         ...(payment.paymentType === 'deposit' ? { depositAmountMinor: paidMinor, depositAmount: paidMinor / 100 } : {}),
-        ...(depositSatisfied
+        ...(depositSatisfied && !inHouse
           ? {
               status: 'confirmed',
               holdExpiresAt: null,
@@ -294,7 +296,7 @@ export async function finalizeBookingPayment({
       },
       metadata: { providerCode, paymentSessionId: session.id },
     });
-    if (confirmationAvailable && depositSatisfied) {
+    if (confirmationAvailable && depositSatisfied && !inHouse) {
       await queueBookingCommunication(prisma, {
         bookingId,
         kind: 'booking_confirmation',

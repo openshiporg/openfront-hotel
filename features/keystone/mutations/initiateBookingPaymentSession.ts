@@ -13,6 +13,8 @@ import {
 } from '../lib/paymentSecurity';
 
 const PAYABLE_BOOKING_STATUSES = new Set(['pending', 'confirmed']);
+/** Staff also take card payments at the desk for guests already in house. */
+const STAFF_PAYABLE_BOOKING_STATUSES = new Set(['pending', 'confirmed', 'checked_in']);
 const MAX_PAYMENT_SESSION_MINOR = 2_147_483_647;
 
 const SESSION_PROJECTION = `
@@ -77,7 +79,7 @@ async function initiateBookingPaymentSession(
     });
     if (!booking) throw new Error('Booking not found');
     if (booking.billingFolioId && !managesBookings) throw new Error('The group payer manages this master folio. Contact the property for your individual balance.');
-    if (!PAYABLE_BOOKING_STATUSES.has(booking.status)) throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
+    if (!(managesBookings ? STAFF_PAYABLE_BOOKING_STATUSES : PAYABLE_BOOKING_STATUSES).has(booking.status)) throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
     if (booking.status === 'pending' && booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= new Date()) {
       throw new Error('This reservation hold has expired.');
     }
