@@ -12,7 +12,7 @@ const TONE_BADGE_COLOR = {
   success: 'emerald',
   warning: 'amber',
   danger: 'red',
-  accent: 'violet',
+  accent: 'teal',
 } as const satisfies Record<StatusTone, string>;
 
 /**

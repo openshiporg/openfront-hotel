@@ -548,15 +548,15 @@ function ChangeRequestRow({
         <GuestIdentity reservation={reservation} />
         <Button size="sm" variant="ghost" className="self-start" onClick={onOpen}><PanelRightOpen aria-hidden="true" />Manage</Button>
       </div>
-      <div className="grid gap-4 rounded-lg border border-violet-500/20 bg-violet-500/[0.03] p-4 lg:grid-cols-2">
+      <div className="grid gap-4 rounded-lg border border-teal-500/20 bg-teal-500/[0.03] p-4 lg:grid-cols-2">
         <div className="min-w-0 space-y-3">
           <SectionLabel>Guest request</SectionLabel>
           {request?.guestMessage ? (
-            <blockquote className="border-l-2 border-violet-500/40 pl-3 text-sm italic text-foreground/90 [overflow-wrap:anywhere]">{request.guestMessage}</blockquote>
+            <blockquote className="border-l-2 border-teal-500/40 pl-3 text-sm italic text-foreground/90 [overflow-wrap:anywhere]">{request.guestMessage}</blockquote>
           ) : <p className="text-sm text-muted-foreground">No message from the guest.</p>}
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <div><dt className="text-xs text-muted-foreground">Currently booked</dt><dd className="font-medium">{formatStayRange(reservation.checkInDate, reservation.checkOutDate)}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Requested</dt><dd className="font-medium text-violet-800 dark:text-violet-300">{request?.requestedCheckInDate && request?.requestedCheckOutDate ? formatStayRange(request.requestedCheckInDate, request.requestedCheckOutDate) : 'Dates not specified'}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Requested</dt><dd className="font-medium text-teal-800 dark:text-teal-300">{request?.requestedCheckInDate && request?.requestedCheckOutDate ? formatStayRange(request.requestedCheckInDate, request.requestedCheckOutDate) : 'Dates not specified'}</dd></div>
           </dl>
         </div>
         <div className="min-w-0 space-y-3">

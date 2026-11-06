@@ -164,7 +164,7 @@ export const TONE_DOT: Record<StatusTone, string> = {
   success: 'bg-emerald-500',
   warning: 'bg-amber-500',
   danger: 'bg-rose-500',
-  accent: 'bg-violet-500',
+  accent: 'bg-teal-500',
 };
 
 export const TONE_PILL: Record<StatusTone, string> = {
@@ -174,7 +174,7 @@ export const TONE_PILL: Record<StatusTone, string> = {
   success: 'bg-emerald-500/[0.08] text-emerald-800 ring-emerald-600/20 dark:text-emerald-300 dark:ring-emerald-400/20',
   warning: 'bg-amber-500/[0.1] text-amber-900 ring-amber-600/25 dark:text-amber-200 dark:ring-amber-400/20',
   danger: 'bg-rose-500/[0.08] text-rose-800 ring-rose-600/20 dark:text-rose-300 dark:ring-rose-400/20',
-  accent: 'bg-violet-500/[0.08] text-violet-800 ring-violet-600/20 dark:text-violet-300 dark:ring-violet-400/20',
+  accent: 'bg-teal-500/[0.08] text-teal-800 ring-teal-600/20 dark:text-teal-300 dark:ring-teal-400/20',
 };
 
 /** Left-edge accent used by queue rows and calendar bars. */
@@ -185,7 +185,7 @@ export const TONE_EDGE: Record<StatusTone, string> = {
   success: 'border-l-emerald-500',
   warning: 'border-l-amber-500',
   danger: 'border-l-rose-500',
-  accent: 'border-l-violet-500',
+  accent: 'border-l-teal-500',
 };
 
 /** Soft surface tint for blocks (room tiles, calendar bars). */
@@ -196,5 +196,5 @@ export const TONE_SURFACE: Record<StatusTone, string> = {
   success: 'bg-emerald-500/[0.09] border-emerald-500/30 text-emerald-950 dark:text-emerald-100',
   warning: 'bg-amber-500/[0.12] border-amber-500/35 text-amber-950 dark:text-amber-100',
   danger: 'bg-rose-500/[0.09] border-rose-500/30 text-rose-950 dark:text-rose-100',
-  accent: 'bg-violet-500/[0.09] border-violet-500/30 text-violet-950 dark:text-violet-100',
+  accent: 'bg-teal-500/[0.09] border-teal-500/30 text-teal-950 dark:text-teal-100',
 };
