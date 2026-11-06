@@ -345,7 +345,7 @@ export function FrontDesk({
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusPill kind="booking" value={workspace.status} />
                   <Tag>{workspace.roomNumber ? `Room ${workspace.roomNumber}` : 'Unassigned'}{workspace.roomTypeName ? ` · ${workspace.roomTypeName}` : ''}</Tag>
-                  {Number(workspace.balanceDue || 0) > 0 ? <Tag className="border-amber-500/30 text-amber-800 dark:text-amber-300">Balance {formatMoney(workspace.balanceDue)}</Tag> : <Tag>Settled</Tag>}
+                  {Number(workspace.balanceDue || 0) > 0 ? <Tag className="text-amber-800 dark:text-amber-300">Balance {formatMoney(workspace.balanceDue)}</Tag> : <Tag>Settled</Tag>}
                 </div>
               </SheetHeader>
               <WorkspaceTabs key={workspace.id} defaultValue="overview" className="flex min-h-0 flex-1 flex-col">

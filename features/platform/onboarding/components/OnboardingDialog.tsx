@@ -22,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge-button';
 import { CustomSetupSteps } from './CustomSetupSteps';
 import { SectionRenderer } from './SectionRenderer';
 import { HOTEL_TEMPLATES, SECTION_DEFINITIONS } from '../config/templates';
@@ -253,12 +252,12 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, on
 
             <div className="mt-auto hidden flex-col border-t lg:flex">
               {error && !isLoading && step !== 'done' && (
-                <Badge color="rose" className="rounded-none gap-3 border-b text-sm">
+                <div className="flex items-center gap-3 border-b bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-300">
                   <AlertCircle className="size-4 sm:size-7" />
                   <span className="whitespace-pre-line text-xs sm:text-sm" role="alert">
                     {error}
                   </span>
-                </Badge>
+                </div>
               )}
 
               <div className="flex items-center justify-between p-4">
@@ -334,12 +333,12 @@ const OnboardingDialog: React.FC<OnboardingDialogProps> = ({ isOpen, onClose, on
 
         <div className="flex shrink-0 flex-col border-t lg:hidden">
           {error && !isLoading && step !== 'done' && (
-            <Badge color="rose" className="rounded-none gap-3 border-b text-sm">
+            <div className="flex items-center gap-3 border-b bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:bg-rose-950/30 dark:text-rose-300">
               <AlertCircle className="size-4 sm:size-7" />
               <span className="whitespace-pre-line text-xs sm:text-sm" role="alert">
                 {error}
               </span>
-            </Badge>
+            </div>
           )}
 
           <div className="flex items-center justify-between p-4">
