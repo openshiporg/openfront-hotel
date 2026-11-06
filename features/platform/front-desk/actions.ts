@@ -55,6 +55,17 @@ async function safeFrontDeskMutation<T>(
 }
 
 /** Reservations for the week either side of the property's business date. */
+export type LastNightAudit = { businessDate: string; completedAt: string; automatic: boolean; postedEntryCount: number; timeZone: string } | null;
+
+/** The most recent business-date close, for the "last run" line. Hidden (null) when this role can't read audit runs. */
+export async function getLastNightAudit(): Promise<LastNightAudit> {
+  const response = await keystoneClient<any>(`query LastNightAudit { nightAuditRuns(orderBy: [{ businessDate: desc }], take: 1) { businessDate completedAt eventKey postedEntryCount } hotelSettings(where: { id: 1 }) { timeZone } }`);
+  const run = response.success ? response.data?.nightAuditRuns?.[0] : null;
+  if (!run) return null;
+  // The scheduler's runs use the idempotency key auto:<date>; anything else was run by staff.
+  return { businessDate: run.businessDate, completedAt: run.completedAt, automatic: String(run.eventKey || '').includes(':auto:'), postedEntryCount: Number(run.postedEntryCount || 0), timeZone: response.data?.hotelSettings?.timeZone || 'UTC' };
+}
+
 export async function getFrontDeskWorkspace() {
   const response = await keystoneClient<any>(FRONT_DESK);
   return requireActionData(response).hotelFrontDesk;
