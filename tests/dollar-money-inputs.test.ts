@@ -65,3 +65,9 @@ test('folio receipt CSV lists charges and credits in dollars', async () => {
   assert.match(csv, /"189\.50",""/);
   assert.match(csv, /"","0\.05"/);
 });
+
+test('approval-required message names the amount in dollars, not cents', () => {
+  const source = readFileSync('features/keystone/guest-governance/commands.ts', 'utf8');
+  assert.match(source, /for \$\{moneyText\(input\.amountMinor\)\}/);
+  assert.doesNotMatch(source, /amount \$\{input\.amountMinor\}/);
+});

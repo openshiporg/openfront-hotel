@@ -3,6 +3,7 @@ import { permissions } from '../access';
 import { hashLifecycleRequest, HOTEL_PROPERTY_KEY } from '../lib/hotelLifecycle';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { encryptSensitiveText } from '../lib/sensitiveData';
+import { moneyText } from '../lib/moneyText';
 import { loadRateEconomics, rateEconomicsReview } from '../rates/economics';
 
 function text(value: unknown, label: string, max = 500) {
@@ -207,7 +208,7 @@ export function assertHotelApprovalEvidence(request: any, decision: any, input: 
 }
 const APPROVAL_ACTION_LABELS: Record<HotelApprovalAction, string> = { refund: 'Refund', write_off: 'Write off', rate_publish: 'Rate publish', cash_variance: 'Cash variance', security_capture: 'Security capture', payout_reconcile: 'Payout reconcile' };
 export async function requireHotelApproval(prisma: any, input: { approvalId?: string | null; action: HotelApprovalAction; aggregateId: string; amountMinor: number; actorId: string; operationKey: string; parameters?: unknown }) {
-  if (!String(input.approvalId || '').trim()) throw new Error(`This needs approval from a second staff member. On the Approvals page, request a "${APPROVAL_ACTION_LABELS[input.action]}" approval for ${input.aggregateId}${input.amountMinor ? `, amount ${input.amountMinor} (USD ${(input.amountMinor / 100).toFixed(2)})` : ''}; once another authorized staff member approves it, enter its approval ID here.`);
+  if (!String(input.approvalId || '').trim()) throw new Error(`This needs approval from a second staff member. On the Approvals page, request a "${APPROVAL_ACTION_LABELS[input.action]}" approval for ${input.aggregateId}${input.amountMinor ? ` for ${moneyText(input.amountMinor)}` : ''}; once another authorized staff member approves it, enter its approval ID here.`);
   const approvalId = text(input.approvalId, 'Independent approval ID', 100);
   await lock(prisma, `approval:${approvalId}`);
   const [request, decision, consumed] = await Promise.all([
