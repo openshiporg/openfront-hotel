@@ -5688,6 +5688,9 @@ type HotelReservationProjection {
 
 type HotelReservationBoard {
   businessDate: DateTime!
+
+  """Property IANA time zone from Hotel settings; null when not configured."""
+  timeZone: String
   reservations: [HotelReservationProjection!]!
   rooms: [HotelRoomRef!]!
 }

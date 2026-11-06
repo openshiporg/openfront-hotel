@@ -63,9 +63,20 @@ interface FrontDeskRoomOption {
 interface FrontDeskResponse {
   hotelFrontDesk: {
     businessDate: string;
+    timeZone?: string | null;
     reservations: FrontDeskReservationItem[];
     rooms: FrontDeskRoomOption[];
   };
+}
+
+/** "Eastern Time" for America/New_York; the zone id if the browser can't name it; UTC when the property has none. */
+function timeZoneLabel(timeZone: string | null) {
+  if (!timeZone) return 'UTC';
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longGeneric' }).formatToParts(new Date()).find(part => part.type === 'timeZoneName')?.value || timeZone;
+  } catch {
+    return timeZone;
+  }
 }
 
 export function FrontDeskPage() {
@@ -97,6 +108,7 @@ export function FrontDeskPage() {
   }>>([]);
   const [availableRooms, setAvailableRooms] = React.useState<FrontDeskRoomOption[]>([]);
   const [businessDate, setBusinessDate] = React.useState('');
+  const [timeZone, setTimeZone] = React.useState<string | null>(null);
   const [lastAudit, setLastAudit] = React.useState<LastNightAudit>(null);
 
   const fetchFrontDeskData = React.useCallback(async () => {
@@ -131,6 +143,7 @@ export function FrontDeskPage() {
       setReservations(mappedReservations);
       setAvailableRooms(data.rooms || []);
       setBusinessDate(data.businessDate || '');
+      setTimeZone(data.timeZone || null);
     } catch (error) {
       console.error('Failed to load front desk data:', error);
       const message = error instanceof Error ? error.message : 'Unable to load front desk reservations.';
@@ -244,7 +257,7 @@ export function FrontDeskPage() {
       description="Arrivals, in-house guests, departures and guest change requests for the property business date."
       meta={(
         <>
-          <MetaItem icon={CalendarDays}>Business date {businessDate ? formatStay(businessDate, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'} (UTC)</MetaItem>
+          <MetaItem icon={CalendarDays}>Business date {businessDate ? formatStay(businessDate, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'} ({timeZoneLabel(timeZone)})</MetaItem>
           <MetaItem icon={CalendarCheck}>
             {lastAudit
               ? `Night audit last closed ${formatStay(lastAudit.businessDate, { month: 'short', day: 'numeric' })} · ${lastAudit.automatic ? 'automatically' : 'by staff'} ${new Date(lastAudit.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: lastAudit.timeZone })} · next at 3am property time`

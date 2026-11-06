@@ -15,6 +15,7 @@ const FRONT_DESK = String.raw`
   query FrontDeskReservations {
     hotelFrontDesk(propertyKey: "the-alder-house") {
       businessDate
+      timeZone
       reservations {
         id confirmationNumber guestName checkInDate checkOutDate status numberOfGuests
         totalAmount balanceDue source internalNotes hasPendingModificationRequest

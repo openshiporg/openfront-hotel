@@ -89,6 +89,8 @@ export const hotelOperationsTypeDefs = String.raw`
 
   type HotelReservationBoard {
     businessDate: DateTime!
+    "Property IANA time zone from Hotel settings; null when not configured."
+    timeZone: String
     reservations: [HotelReservationProjection!]!
     rooms: [HotelRoomRef!]!
   }
@@ -558,8 +560,10 @@ async function reservationBoard(
     context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { currentBusinessDate: true } }),
   ]);
   if (!clock) throw new Error('Property business date is not configured.');
+  // Read directly (staff with booking access may not read HotelSettings); only the zone id is exposed.
+  const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { timeZone: true } });
   if (bookings.length > 250 || rooms.length > 250) throw new Error('Reservation board exceeds the supported 250-record bound; narrow the date range.');
-  return { businessDate: clock.currentBusinessDate, reservations: bookings.map(mapReservation), rooms: rooms.map(mapRoom) };
+  return { businessDate: clock.currentBusinessDate, timeZone: settings?.timeZone || null, reservations: bookings.map(mapReservation), rooms: rooms.map(mapRoom) };
 }
 
 export const hotelOperationsResolvers = {
