@@ -69,6 +69,7 @@ export async function calculateHotelPrice(context: any, input: HotelPriceInput, 
     throw new GuestRuleError(`This rate allows at most ${ratePlan.maximumStay} nights.`);
   }
   const now = new Date(); const advanceDays = Math.floor((checkIn.getTime() - propertyCalendarDate(now, settings.timeZone || 'UTC').getTime()) / 86_400_000);
+  if (!options.existingStay && advanceDays < 0) throw new GuestRuleError('Check-in date has already passed. Choose today or a later date.');
   if (!options.existingStay && advanceDays < Number(ratePlan.advanceBookingMin || 0)) {
     throw new GuestRuleError(`This rate must be booked at least ${Number(ratePlan.advanceBookingMin || 0)} days ahead.`);
   }

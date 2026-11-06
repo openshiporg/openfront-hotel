@@ -169,7 +169,7 @@ export default function HotelApprovalsPage() {
                         <div className="grid gap-3 md:grid-cols-2">
                           {Object.entries(evidence.economicReview).map(([side, terms]: any) => (
                             <dl key={side} className="space-y-1 rounded-md border bg-card p-3 text-xs">
-                              <dt className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{humanize(side)}</dt>
+                              <dt className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{humanize(side)}</dt>
                               {Object.entries(terms).map(([name, value]) => (
                                 <div key={name} className="flex justify-between gap-3"><dt className="text-muted-foreground">{name}</dt><dd className="text-right font-mono [overflow-wrap:anywhere]">{typeof value === 'object' ? JSON.stringify(value) : String(value ?? 'unset')}</dd></div>
                               ))}

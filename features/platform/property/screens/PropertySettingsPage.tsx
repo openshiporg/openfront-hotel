@@ -484,7 +484,7 @@ function MediaPreview({ path, alt }: { path: string; alt: string }) {
       {showable ? (
         <img src={src} alt={alt || ''} className="size-full object-cover" onError={() => setBroken(true)} />
       ) : (
-        <div className="grid size-full place-items-center text-center text-[11px] leading-4 text-muted-foreground">
+        <div className="grid size-full place-items-center text-center text-xs leading-4 text-muted-foreground">
           <span className="flex flex-col items-center gap-1 px-2">
             {src ? <ImageOff className="size-4" aria-hidden="true" /> : <ImageIcon className="size-4" aria-hidden="true" />}
             {src ? 'Image not found' : 'No image'}

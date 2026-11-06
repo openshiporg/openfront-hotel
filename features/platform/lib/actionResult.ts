@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { KeystoneResponse } from '@/features/dashboard/lib/keystoneClient';
+import { PUBLIC_REQUEST_ERROR } from '@/features/dashboard/lib/security';
 import { safeActionMessage, safeGraphQLError } from '@/features/platform/lib/safeGraphQLError';
 import type { ActionResult } from './actionOutcome';
 
@@ -10,7 +11,9 @@ export const HOTEL_PROPERTY_KEY = 'the-alder-house';
 export function requireActionData<T>(response: KeystoneResponse<T>): T {
   if (!response.success) {
     const errors = Array.isArray(response.errors) ? response.errors : [];
-    throw new Error(errors.length ? safeGraphQLError({ response: { errors } }).message : 'The request could not be completed.');
+    if (errors.length) throw new Error(safeGraphQLError({ response: { errors } }).message);
+    // keystoneClient already reduced the GraphQL errors to staff-safe text (business rules only).
+    throw new Error(response.error && response.error !== PUBLIC_REQUEST_ERROR ? response.error : 'The request could not be completed.');
   }
   return response.data;
 }

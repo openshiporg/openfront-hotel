@@ -497,14 +497,14 @@ export function ReservationCalendar({
           <div data-qa-layout="reservation-calendar-scroll" className="max-w-full overflow-x-auto">
             <div className={cn('min-w-[980px] select-none', draggingId && 'cursor-grabbing')}>
               <div className="sticky top-0 z-20 grid grid-cols-[11rem_minmax(0,1fr)] border-b bg-card">
-                <div className="sticky left-0 z-10 flex items-end border-r bg-card px-4 pb-2 pt-3 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">Room</div>
+                <div className="sticky left-0 z-10 flex items-end border-r bg-card px-4 pb-2 pt-3 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Room</div>
                 <div ref={gridRef} className="grid grid-cols-14">
                   {days.map((day) => {
                     const isToday = isSameUtcDay(day, today);
                     const weekend = [0, 6].includes(day.getUTCDay());
                     return (
                       <div key={day.toISOString()} className={cn('border-l px-1 pb-2 pt-3 text-center', weekend && 'bg-muted/40')}>
-                        <p className={cn('text-[11px] font-medium uppercase tracking-wide text-muted-foreground', isToday && 'text-foreground')}>{formatUtc(day, { weekday: 'short' })}</p>
+                        <p className={cn('text-xs font-medium uppercase tracking-wide text-muted-foreground', isToday && 'text-foreground')}>{formatUtc(day, { weekday: 'short' })}</p>
                         <p className={cn('mx-auto mt-0.5 grid size-6 place-items-center rounded-full text-sm tabular-nums', isToday ? 'bg-foreground font-semibold text-background' : 'text-foreground')}>{formatUtc(day, { day: 'numeric' })}</p>
                       </div>
                     );
@@ -523,7 +523,7 @@ export function ReservationCalendar({
                     <div className={cn('sticky left-0 z-10 flex min-w-0 items-center gap-2 border-r bg-card px-4', row.unassigned && 'bg-amber-500/[0.04]')} style={{ minHeight: rowHeight }}>
                       <div className="min-w-0">
                         <p className={cn('truncate text-sm font-medium', row.unassigned && 'text-amber-800 dark:text-amber-300')}>{row.unassigned ? 'Unassigned' : `Room ${row.label}`}</p>
-                        {row.roomTypeName ? <p className="truncate text-[11px] text-muted-foreground">{row.roomTypeName}</p> : null}
+                        {row.roomTypeName ? <p className="truncate text-xs text-muted-foreground">{row.roomTypeName}</p> : null}
                       </div>
                       {row.roomStatus && !['vacant', 'occupied', 'inspected'].includes(row.roomStatus) ? (
                         <span className={cn('ml-auto size-1.5 shrink-0 rounded-full', TONE_DOT[statusMeta('room', row.roomStatus).tone])} title={statusMeta('room', row.roomStatus).label} />
@@ -581,7 +581,7 @@ export function ReservationCalendar({
                               {DATE_AMENDABLE_STATUSES.has(reservation.status) ? <GripVertical className="size-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-50" aria-hidden="true" /> : null}
                               <span className="truncate font-medium">{reservation.guestName}</span>
                               {hasConflict ? <AlertTriangle className="size-3 shrink-0 text-amber-600" aria-label="Potential conflict" /> : null}
-                              {span >= 2 ? <span className="ml-auto shrink-0 pl-1 text-[10px] tabular-nums opacity-70">{pluralize(nightsBetween(reservation.checkInDate, reservation.checkOutDate), 'nt', 'nts')}</span> : null}
+                              {span >= 2 ? <span className="ml-auto shrink-0 pl-1 text-xs tabular-nums opacity-70">{pluralize(nightsBetween(reservation.checkInDate, reservation.checkOutDate), 'nt', 'nts')}</span> : null}
                             </div>
                           </div>
                         );

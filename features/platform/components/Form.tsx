@@ -31,7 +31,7 @@ export function Field({
     <div className={cn('min-w-0 space-y-1.5', className)}>
       <label htmlFor={htmlFor} className="flex items-baseline justify-between gap-2 text-[13px] font-medium leading-5 text-foreground">
         <span>{label}</span>
-        {optional ? <span className="text-[11px] font-normal text-muted-foreground">Optional</span> : null}
+        {optional ? <span className="text-xs font-normal text-muted-foreground">Optional</span> : null}
       </label>
       {children}
       {error ? <p className="text-xs text-destructive" role="alert">{error}</p> : hint ? <p className="text-xs leading-5 text-muted-foreground">{hint}</p> : null}

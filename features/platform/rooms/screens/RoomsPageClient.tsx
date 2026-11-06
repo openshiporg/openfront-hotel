@@ -75,16 +75,16 @@ function RoomFloorBoard({ rooms, updating, onMark }: { rooms: any[]; updating: s
                     <div className="flex items-start justify-between gap-1">
                       <div className="min-w-0">
                         <p className="text-base font-semibold leading-6 tabular-nums">{room.roomNumber}</p>
-                        <p className="truncate text-[11px] leading-4 opacity-80">{room.roomType?.name || 'No room type'}</p>
+                        <p className="truncate text-xs leading-4 opacity-80">{room.roomType?.name || 'No room type'}</p>
                       </div>
                       <div className="-mr-1.5 -mt-1"><RoomActions room={room} disabled={updating === room.id} onMark={onMark} /></div>
                     </div>
                     <div className="mt-auto space-y-1 pt-2">
                       <p className="flex items-center gap-1.5 text-xs font-medium"><span className={cn('size-1.5 shrink-0 rounded-full', TONE_DOT[meta.tone])} aria-hidden="true" />{meta.label}</p>
                       {room.activeTask ? (
-                        <p className="flex items-center gap-1 truncate text-[11px] opacity-80"><Sparkles className="size-3 shrink-0" aria-hidden="true" />{humanize(room.activeTask.taskType)} · {statusMeta('task', room.activeTask.status).label}</p>
+                        <p className="flex items-center gap-1 truncate text-xs opacity-80"><Sparkles className="size-3 shrink-0" aria-hidden="true" />{humanize(room.activeTask.taskType)} · {statusMeta('task', room.activeTask.status).label}</p>
                       ) : room.notes ? (
-                        <p className="flex items-center gap-1 truncate text-[11px] opacity-80" title={room.notes}><StickyNote className="size-3 shrink-0" aria-hidden="true" />{room.notes}</p>
+                        <p className="flex items-center gap-1 truncate text-xs opacity-80" title={room.notes}><StickyNote className="size-3 shrink-0" aria-hidden="true" />{room.notes}</p>
                       ) : null}
                     </div>
                   </li>

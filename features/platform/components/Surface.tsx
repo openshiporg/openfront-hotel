@@ -190,7 +190,7 @@ export function CopyId({ value, label, className }: { value: string; label?: str
       type="button"
       onClick={copy}
       title={`Copy ${label || 'identifier'}`}
-      className={cn('inline-flex max-w-full items-center gap-1.5 rounded border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] leading-4 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
+      className={cn('inline-flex max-w-full items-center gap-1.5 rounded border bg-muted/40 px-1.5 py-0.5 font-mono text-xs leading-4 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
     >
       {label ? <span className="shrink-0 font-sans font-medium">{label}</span> : null}
       <span className="truncate">{value}</span>
@@ -229,7 +229,7 @@ export function SubSection({
 }
 
 export function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <p className={cn('text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground', className)}>{children}</p>;
+  return <p className={cn('text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground', className)}>{children}</p>;
 }
 
 export function InitialsAvatar({ name, className, tone = 'neutral' }: { name: string; className?: string; tone?: 'neutral' | 'vip' | 'restricted' }) {
@@ -239,7 +239,7 @@ export function InitialsAvatar({ name, className, tone = 'neutral' }: { name: st
     <span
       aria-hidden="true"
       className={cn(
-        'grid size-8 shrink-0 place-items-center rounded-full text-[11px] font-semibold ring-1 ring-inset',
+        'grid size-8 shrink-0 place-items-center rounded-full text-xs font-semibold ring-1 ring-inset',
         tone === 'vip' && 'bg-amber-500/15 text-amber-800 ring-amber-500/30 dark:text-amber-200',
         tone === 'restricted' && 'bg-rose-500/10 text-rose-700 ring-rose-500/25 dark:text-rose-300',
         tone === 'neutral' && 'bg-muted text-muted-foreground ring-border',

@@ -20,8 +20,11 @@ export function safeErrorSummary(error: unknown): { message: string; codes: stri
 }
 
 // Keystone codes whose messages are written for the person filling the form.
+// HOTEL_* codes are attached server-side (hotelGraphqlErrors.ts) only after isSafeBusinessMessage
+// passes, e.g. "Assign a room before checking this guest in."; staff need that text to act.
 const USER_FACING_CODES = new Set([
   'KS_VALIDATION_FAILURE', 'KS_USER_INPUT_ERROR', 'KS_ACCESS_DENIED', 'KS_EXTENSION_ERROR',
+  'HOTEL_BUSINESS_RULE', 'HOTEL_BOOKING_RULE',
 ]);
 // Anything that looks like database, driver or stack output stays server-side.
 const UNSAFE_DETAIL = /prisma|invocation|\bat\s+\S+\s*\(|\bat\s+\/|node_modules|postgres(ql)?:\/\/|\bSQL\b|ECONN|query engine|\.ts:\d+|\.js:\d+/i;

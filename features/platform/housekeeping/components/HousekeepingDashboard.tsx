@@ -250,7 +250,7 @@ export function HousekeepingDashboard({
                                 <span className="text-sm font-semibold tabular-nums">{room.roomNumber}</span>
                                 <span className={cn('size-1.5 rounded-full', TONE_DOT[meta.tone])} aria-hidden="true" />
                               </span>
-                              <span className="w-full truncate text-[11px] opacity-80">{task ? taskTypeLabel(task.taskType) : meta.label}</span>
+                              <span className="w-full truncate text-xs opacity-80">{task ? taskTypeLabel(task.taskType) : meta.label}</span>
                               {task ? <span className={cn('absolute bottom-1.5 right-2 size-1.5 rounded-full', TONE_DOT[statusMeta('task', task.status).tone])} title={statusMeta('task', task.status).label} aria-hidden="true" /> : null}
                             </button>
                           </DropdownMenuTrigger>
@@ -369,7 +369,7 @@ function TaskRow({ task, onStart, onComplete, onPause }: { task: HousekeepingTas
       <div className="flex min-w-0 flex-1 items-center gap-4">
         <div className="w-14 shrink-0 text-center">
           <p className="text-base font-semibold tabular-nums leading-5">{task.room.roomNumber}</p>
-          <p className="text-[11px] text-muted-foreground">Floor {task.room.floor ?? '—'}</p>
+          <p className="text-xs text-muted-foreground">Floor {task.room.floor ?? '—'}</p>
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

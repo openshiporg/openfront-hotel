@@ -250,7 +250,7 @@ export function RatePlansPage() {
             ) : (
               <div data-qa-layout="inventory-scroll-region" className="max-w-full overflow-x-auto">
                 <div className="min-w-[860px]">
-                  <div className="grid grid-cols-[12rem_repeat(7,minmax(0,1fr))] border-b bg-muted/40 text-[11px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
+                  <div className="grid grid-cols-[12rem_repeat(7,minmax(0,1fr))] border-b bg-muted/40 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
                     <div className="sticky left-0 bg-muted px-4 py-2">Room type</div>
                     {inventoryDays.map((day, index) => (
                       <div key={day.toISOString()} className={cn('border-l px-2 py-2 text-center', index === 0 && 'text-foreground')}>
@@ -279,7 +279,7 @@ export function RatePlansPage() {
                           return (
                             <div key={key} className={cn('group flex flex-col items-center justify-center gap-1 border-l px-2 py-2.5', counts.available === 0 ? 'bg-rose-500/[0.05]' : counts.available <= 1 ? 'bg-amber-500/[0.05]' : undefined)}>
                               <p className={cn('text-lg font-semibold leading-6 tabular-nums', counts.available === 0 && 'text-rose-700 dark:text-rose-400')}>{counts.available}</p>
-                              <p className="text-[11px] leading-4 text-muted-foreground tabular-nums" title={`${counts.booked} booked, ${counts.held} held for groups, ${counts.blocked} blocked`}>{counts.booked} bkd · {counts.held} held · {counts.blocked} blk</p>
+                              <p className="text-xs leading-4 text-muted-foreground tabular-nums" title={`${counts.booked} booked, ${counts.held} held for groups, ${counts.blocked} blocked`}>{counts.booked} bkd · {counts.held} held · {counts.blocked} blk</p>
                               <div className="mt-0.5 flex items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                                 <Button size="icon" variant="ghost" className="size-6" disabled={stale || busy || counts.blocked <= 0} aria-label={`Release one ${roomType.name} room on ${dayLabel}`} title="Release one room" onClick={() => updateInventory(roomType.id, date, -1, `${roomType.name} blocked inventory reduced for ${dayLabel}.`)}><Minus className="size-3" aria-hidden="true" /></Button>
                                 <Button size="icon" variant="ghost" className="size-6" disabled={stale || busy || counts.available <= 0} aria-label={`Block one ${roomType.name} room on ${dayLabel}`} title="Block one room" onClick={() => updateInventory(roomType.id, date, 1, `${roomType.name} blocked inventory increased for ${dayLabel}.`)}><Plus className="size-3" aria-hidden="true" /></Button>
@@ -330,7 +330,7 @@ export function RatePlansPage() {
                 {groupedPlans.map((group) => (
                   <TBody key={group.label}>
                     <tr className="bg-muted/25">
-                      <td colSpan={7} className="px-4 py-1.5 sm:px-5"><span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">{group.label}</span><span className="ml-2 text-[11px] text-muted-foreground">{group.plans.length} plan{group.plans.length === 1 ? '' : 's'}</span></td>
+                      <td colSpan={7} className="px-4 py-1.5 sm:px-5"><span className="text-xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{group.label}</span><span className="ml-2 text-xs text-muted-foreground">{group.plans.length} plan{group.plans.length === 1 ? '' : 's'}</span></td>
                     </tr>
                     {group.plans.map((plan) => (
                       <Tr key={plan.id}>

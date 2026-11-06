@@ -114,6 +114,16 @@ test('form errors show Keystone validation text, never Prisma, stack or GraphQL 
   assert.equal(publicGraphQLErrorMessage(new Error('synthetic')), PUBLIC_REQUEST_ERROR);
 });
 
+test('hotel business-rule refusals reach staff instead of the generic failure', () => {
+  const { publicGraphQLErrorMessage, PUBLIC_REQUEST_ERROR } = sandbox().load('features/dashboard/lib/security.ts');
+  const of = (...errors) => publicGraphQLErrorMessage({ response: { errors } });
+  assert.equal(of({ message: 'Assign a room before checking this guest in.', extensions: { code: 'HOTEL_BUSINESS_RULE' } }),
+    'Assign a room before checking this guest in.');
+  assert.equal(of({ message: 'Check-in date has already passed. Choose today or a later date.', extensions: { code: 'HOTEL_BOOKING_RULE' } }),
+    'Check-in date has already passed. Choose today or a later date.');
+  assert.equal(of({ message: 'Invalid `prisma.booking.update()` invocation', extensions: { code: 'HOTEL_BUSINESS_RULE' } }), PUBLIC_REQUEST_ERROR);
+});
+
 function authActions({ env = {}, response }) {
   const calls = [];
   const auth = sandbox({ env, mocks: {

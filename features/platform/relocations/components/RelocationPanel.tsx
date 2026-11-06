@@ -56,7 +56,7 @@ export default function RelocationPanel({ bookingId }: { bookingId: string }) {
             const done = index <= currentIndex;
             return (
               <li key={step} className="flex items-center gap-1.5">
-                <span className={cn('grid size-5 place-items-center rounded-full border text-[10px] font-semibold tabular-nums', done ? 'border-foreground bg-foreground text-background' : 'text-muted-foreground')}>
+                <span className={cn('grid size-5 place-items-center rounded-full border text-xs font-semibold tabular-nums', done ? 'border-foreground bg-foreground text-background' : 'text-muted-foreground')}>
                   {done ? <Check className="size-3" aria-hidden="true" /> : index + 1}
                 </span>
                 <span className={cn('capitalize', done ? 'font-medium text-foreground' : 'text-muted-foreground')}>{step}</span>

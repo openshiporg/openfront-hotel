@@ -35,7 +35,7 @@ import { FilterTabs } from '@/features/platform/components/FilterTabs';
 import { Field, FieldInput, NativeSelect } from '@/features/platform/components/Form';
 import { StatStrip } from '@/features/platform/components/Stats';
 import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
-import { DetailList, InitialsAvatar, Panel, PanelToolbar, SectionLabel, SubSection } from '@/features/platform/components/Surface';
+import { Callout, DetailList, InitialsAvatar, Panel, PanelToolbar, SectionLabel, SubSection } from '@/features/platform/components/Surface';
 import { WorkspaceTabs, WorkspaceTabsContent, WorkspaceTabsList, WorkspaceTabsTrigger } from '@/features/platform/components/Tabs';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
 import { formatMoney, formatStayRange, humanize, nightsBetween, pluralize, utcDayKey } from '@/features/platform/lib/format';
@@ -237,8 +237,23 @@ export function FrontDesk({
     requests: { title: 'No change requests waiting', description: 'Guest date-change requests that need a staff decision appear here.' },
   };
 
+  // Arrivals, in-house and check-in all key off the business date; when the audit falls behind
+  // the calendar, today's guests are invisible here and check-in is refused. The audit normally
+  // closes a day a few hours after local midnight, so only flag a lag past that window (any zone).
+  const calendarDay = utcDayKey(new Date());
+  const auditBehind = Boolean(businessDate) && today < utcDayKey(new Date(Date.now() - 36 * 3_600_000));
+
   return (
     <div className="space-y-6">
+      {auditBehind ? (
+        <Callout
+          tone="warning"
+          title={`Business date is ${today}, behind today (${calendarDay})`}
+          action={<Button asChild size="sm" variant="outline"><Link href="/dashboard/platform/folios">Open night audit</Link></Button>}
+        >
+          Arrivals, departures and check-in follow the business date. Run the night audit for each open day to bring the desk up to today.
+        </Callout>
+      ) : null}
       <StatStrip
         loading={loading && !reservations.length}
         items={[
@@ -475,7 +490,7 @@ function QueueRow({
           </div>
           <div className="whitespace-nowrap text-right">
             <p className={cn('text-sm font-medium tabular-nums', balance > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>{formatMoney(reservation.balanceDue)}</p>
-            <p className="text-[11px] text-muted-foreground">{balance > 0 ? 'Balance due' : 'Settled'}</p>
+            <p className="text-xs text-muted-foreground">{balance > 0 ? 'Balance due' : 'Settled'}</p>
           </div>
         </div>
 
