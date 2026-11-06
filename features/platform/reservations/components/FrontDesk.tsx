@@ -251,7 +251,7 @@ export function FrontDesk({
           title={`Business date is ${today}, behind today (${calendarDay})`}
           action={<Button asChild size="sm" variant="outline"><Link href="/dashboard/platform/folios">Open night audit</Link></Button>}
         >
-          Arrivals, departures and check-in follow the business date. Run the night audit for each open day to bring the desk up to today.
+          Arrivals, departures and check-in follow the business date. The night audit closes each day automatically at 3am property time; it is held up when a departure is not checked out and settled. Open the night audit to see why.
         </Callout>
       ) : null}
       <StatStrip

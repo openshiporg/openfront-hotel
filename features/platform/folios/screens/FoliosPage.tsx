@@ -1,5 +1,6 @@
 'use client';
 
+import { DeskCardPayment } from '@/features/platform/folios/components/DeskCardPayment';
 import { SecurityAuthorizationOperations } from '@/features/platform/cashier/components/SecurityAuthorizationOperations';
 import { FolioReceiptPanel } from '@/features/platform/cashier/screens/FolioReceiptPanel';
 import { operationAttempt } from '@/lib/operationAttempt';
@@ -272,6 +273,7 @@ export function FoliosPage() {
       meta={(
         <>
           <MetaItem icon={CalendarDays}>Business date {businessDate ? formatDate(businessDate) : 'unavailable'}</MetaItem>
+          <MetaItem icon={CalendarCheck}>Closes automatically at 3am property time</MetaItem>
           {businessDateCurrent === false ? <MetaItem icon={AlertTriangle}><span className="text-amber-700 dark:text-amber-400">Readiness reports the business date is behind</span></MetaItem> : null}
         </>
       )}
@@ -446,6 +448,10 @@ export function FoliosPage() {
                     </DataTable>
                   ) : <WorkspaceEmpty compact icon={ReceiptText} title="No postings yet" description="Charges post as the stay is audited; payments and corrections appear here." />}
                 </Panel>
+
+                {settlementBookingId && selected.status === 'open' && !stale && ['pending', 'confirmed', 'checked_in'].includes(selected.booking?.status || '') ? (
+                  <DeskCardPayment bookingId={settlementBookingId} balanceMinor={selected.balanceMinor} currency={selected.currencyCode || 'USD'} onPaid={fetchFolios} />
+                ) : null}
 
                 {settlementBookingId && selected.status === 'open' && !stale ? (
                   <Panel>

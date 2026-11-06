@@ -32,6 +32,18 @@ export default async function runHotelNightAudit(
   if (propertyKey !== HOTEL_PROPERTY_KEY || !permissions.canManagePayments({ session: context.session })) {
     throw new Error('Not authorized to run night audit for this property.');
   }
+  return closeHotelBusinessDate(context, { businessDate: value, idempotencyKey, actorId: context.session.itemId });
+}
+
+/**
+ * The audit itself. Callers authorize first: the staff mutation checks canManagePayments; the
+ * scheduled worker runs it as the property's system actor (actorId null) with a date-derived key.
+ */
+export async function closeHotelBusinessDate(
+  context: any,
+  { businessDate: value, idempotencyKey, actorId }: { businessDate: string; idempotencyKey: string; actorId: string | null },
+) {
+  const propertyKey = HOTEL_PROPERTY_KEY;
   if (!String(idempotencyKey || '').trim()) throw new Error('Idempotency key is required.');
   const businessDate = utcBusinessDate(value);
   const nextBusinessDate = new Date(businessDate);
@@ -187,7 +199,7 @@ export default async function runHotelNightAudit(
     await recordHotelLifecycleEvent({
       prisma,
       eventKey,
-      actorId: context.session.itemId,
+      actorId,
       identity,
       beforeSnapshot: { currentBusinessDate: businessDate.toISOString() },
       afterSnapshot: {

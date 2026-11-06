@@ -2,6 +2,7 @@ import type { KeystoneConfig } from '@keystone-6/core/types';
 
 import { startChannelSyncJobs } from './jobs/channelSyncJobs';
 import { startHotelHoldJobs } from './jobs/hotelHoldJobs';
+import { startHotelNightAuditJobs } from './jobs/hotelNightAuditJobs';
 import { startHotelOutboxJobs } from './jobs/hotelOutboxJobs';
 import { startHotelRefundJobs } from './jobs/hotelRefundJobs';
 import { registerHotelWorkerShutdown } from './jobs/runtimeContext';
@@ -14,6 +15,7 @@ export async function startHotelWorkers(config: KeystoneConfig) {
     () => startHotelOutboxJobs(config),
     () => startHotelRefundJobs(config),
     () => startHotelHoldJobs(config),
+    () => startHotelNightAuditJobs(config),
   ];
 
   try {
