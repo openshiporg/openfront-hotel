@@ -171,7 +171,7 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
       <section id="photos"><h2 className="sf-sr">Room photographs</h2><RoomGallery images={roomImages(room)} roomName={room.name} /></section>
     </div>
     <nav className="sf-tabs" aria-label="Room sections" style={{ marginTop: 28 }}>
-      <div className="sf-wrap sf-tabs__row">{SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} aria-current={active === id ? 'true' : undefined}>{label}</a>)}<a href="#rates">Dates & price</a></div>
+      <div className="sf-wrap sf-tabs__row"><a href="#rates" className="sf-tabs__rates">Dates & price</a>{SECTIONS.map(([id, label]) => <a key={id} href={`#${id}`} aria-current={active === id ? 'true' : undefined}>{label}</a>)}</div>
     </nav>
     <div className="sf-wrap sf-checkout" style={{ paddingBlock: 'clamp(32px, 5vw, 56px)' }}>
       <div style={{ minWidth: 0 }}>
@@ -220,7 +220,7 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
         </section>
       </div>
 
-      <aside id="rates" className="sf-checkout__aside sf-checkout__aside--tall" aria-label="Dates and price" style={{ order: 0 }}>
+      <aside id="rates" className="sf-checkout__aside sf-checkout__aside--tall" aria-label="Dates and price">
         <div className="sf-float sf-bookcard">
           <div className="sf-bookcard__price" aria-live="polite">
             {average ? <><span key={average} className="sf-amount sf-updated">{average}</span><span>avg. per night · before tax</span></>
