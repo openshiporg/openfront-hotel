@@ -45,7 +45,7 @@ export function FilterTabs({
             {tab.tone ? <span className={cn('inline-block size-2 shrink-0 rounded-full', TONE_DOT[tab.tone])} aria-hidden="true" /> : null}
             {tab.label}
             {tab.count !== undefined ? (
-              <span className="inline-flex h-[18px] items-center rounded-sm border bg-background px-1.5 py-0 text-xs font-medium leading-[14px] tabular-nums text-zinc-600 shadow-xs dark:bg-zinc-800 dark:text-zinc-400">
+              <span className="inline-flex h-[18px] items-center text-xs font-medium leading-[14px] tabular-nums text-muted-foreground">
                 {tab.count}
               </span>
             ) : null}

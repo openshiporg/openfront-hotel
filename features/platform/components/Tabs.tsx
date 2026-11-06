@@ -23,7 +23,7 @@ export function WorkspaceTabsTrigger({ value, className, children, count }: { va
   return (
     <TabsTrigger value={value} className={cn('shrink-0 gap-2', className)}>
       {children}
-      {count !== undefined ? <span className="inline-flex h-[18px] items-center rounded-sm border bg-background px-1.5 text-xs font-medium leading-[14px] tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">{count}</span> : null}
+      {count !== undefined ? <span className="inline-flex h-[18px] items-center text-xs font-medium leading-[14px] tabular-nums text-muted-foreground">{count}</span> : null}
     </TabsTrigger>
   );
 }
