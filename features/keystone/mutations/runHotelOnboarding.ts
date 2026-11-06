@@ -20,7 +20,7 @@ import { HOTEL_SETUP_COMPLETION_KEY, inspectHotelSetup, prepareHotelSeed } from 
 import { hashLifecycleRequest } from '../lib/hotelLifecycle';
 import { lockHotelBusinessDate, propertyArrivalInstant, propertyCalendarDate } from '../lib/hotelBusinessTime';
 import { LOGO_ICONS } from '../../platform/property/lib/icon-registry';
-import { normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
+import { DEFAULT_LIBRARY_LOGO_COLOR, DEFAULT_STORE_LOGO_ICON, normalizeStoreLogoColor } from '../../platform/property/lib/store-logo';
 import { sanitizeStoreLogoSvg } from '../utils/storeLogo';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { guestBookedStayTerms } from '../lib/storefrontBooking';
@@ -92,18 +92,18 @@ function plainTextDocument(text: string) {
   return (paragraphs.length ? paragraphs : ['']).map((block) => ({ type: 'paragraph', children: [{ text: block }] }));
 }
 
-/** Persist the saved logo exactly as Property settings would: a sanitized SVG plus a normalized hue. */
+/**
+ * Persist the logo exactly as Property settings would: a sanitized SVG plus a normalized hue.
+ * Like E-commerce's onboarding, a logo is always written: the seed's choice, else the Galileo
+ * registry default in its brass hue.
+ */
 function seedLogoBranding(settings: Record<string, any> | undefined) {
-  const branding: { logoIcon?: string; logoColor?: string } = {};
   const submitted = String(settings?.logoIcon || '').trim();
-  if (submitted) {
-    const library = LOGO_ICONS.find(icon => icon.id === submitted);
-    const logoIcon = sanitizeStoreLogoSvg(library ? library.lightSvg : submitted);
-    if (!logoIcon) throw new Error('Onboarding logo must be a logo library icon or a valid, safe SVG document.');
-    branding.logoIcon = logoIcon;
-  }
-  if (settings?.logoColor !== undefined) branding.logoColor = normalizeStoreLogoColor(settings.logoColor);
-  return branding;
+  const library = submitted ? LOGO_ICONS.find(icon => icon.id === submitted) : undefined;
+  const logoIcon = sanitizeStoreLogoSvg(submitted ? (library ? library.lightSvg : submitted) : DEFAULT_STORE_LOGO_ICON);
+  if (!logoIcon) throw new Error('Onboarding logo must be a logo library icon or a valid, safe SVG document.');
+  const logoColor = normalizeStoreLogoColor(submitted && settings?.logoColor !== undefined ? settings.logoColor : DEFAULT_LIBRARY_LOGO_COLOR);
+  return { logoIcon, logoColor };
 }
 
 function confirmationNumber() {
