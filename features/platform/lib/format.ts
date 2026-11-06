@@ -25,6 +25,14 @@ export function formatMoney(amount?: number | null, currencyCode = 'USD') {
 }
 
 /** Integer minor units typed by an operator, shown back as currency for confirmation. */
+/** Staff type dollars ("12.50"); the API takes integer cents. Exact string parse, no float rounding. Null when not a positive amount with at most 2 decimals. */
+export function dollarsToMinor(value: string): number | null {
+  const match = /^\s*\$?\s*(\d{1,9})(?:\.(\d{0,2}))?\s*$/.exec(value.replace(/,/g, ''));
+  if (!match) return null;
+  const minor = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
+  return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
+}
+
 export function previewMinor(value: string, currencyCode = 'USD') {
   const amount = Number(value);
   if (!value.trim() || !Number.isSafeInteger(amount)) return null;

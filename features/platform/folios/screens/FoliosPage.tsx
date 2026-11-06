@@ -23,7 +23,7 @@ import { StatStrip } from '@/features/platform/components/Stats';
 import { StatusPill, Tag } from '@/features/platform/components/StatusPill';
 import { Callout, CopyId, Panel, PanelBody, PanelHeader, PanelToolbar } from '@/features/platform/components/Surface';
 import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading, WorkspaceSelect } from '@/features/platform/components/WorkspaceControls';
-import { humanize, previewMinor } from '@/features/platform/lib/format';
+import { dollarsToMinor, humanize } from '@/features/platform/lib/format';
 import { applyWorkspaceView, workspaceResultLabel } from '@/features/platform/lib/workspace';
 import {
   closeReconciledFolioAction,
@@ -169,14 +169,15 @@ export function FoliosPage() {
 
   const runFolioAction = async (kind: 'payment' | 'entry') => {
     const settlementBookingId = selected?.settlementBookingId || selected?.booking?.id;
-    if (!settlementBookingId || !Number.isSafeInteger(Number(action.amount)) || Number(action.amount) <= 0 || !action.description.trim()) return;
+    const amountMinor = dollarsToMinor(action.amount);
+    if (!settlementBookingId || amountMinor === null || !action.description.trim()) return;
     setBusy(true);
     try {
       const attempt = await operationAttempt(`folio-${kind}`, { bookingId: settlementBookingId, ...action });
       if (kind === 'payment') {
-        unwrapAction(await recordFolioPaymentAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor: Number(action.amount), method: action.method, description: action.description }));
+        unwrapAction(await recordFolioPaymentAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor, method: action.method, description: action.description }));
       } else {
-        unwrapAction(await postFolioEntryAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor: Number(action.amount), direction: action.direction, description: action.description, approvalId: action.approvalId.trim() }));
+        unwrapAction(await postFolioEntryAction({ idempotencyKey: attempt.key, bookingId: settlementBookingId, amountMinor, direction: action.direction, description: action.description, approvalId: action.approvalId.trim() }));
       }
       attempt.complete();
       toast.success(kind === 'payment' ? 'Payment recorded' : 'Folio entry posted'); setAction({ ...action, amount: '', description: '' }); await fetchFolios();
@@ -251,7 +252,7 @@ export function FoliosPage() {
   const openFolios = folios.filter((folio) => folio.status === 'open');
   const ledgerEntries = folios.reduce((sum, folio) => sum + folio.entries.length, 0);
   const statusCount = (value: string) => folios.filter((folio) => folio.status === value).length;
-  const amountPreview = previewMinor(action.amount, selected?.currencyCode || 'USD');
+  const amountMinor = dollarsToMinor(action.amount);
   const canClose = Boolean(selected && selected.balanceMinor === 0 && selected.booking && ['checked_out', 'cancelled', 'no_show'].includes(selected.booking.status));
   const approvalTarget = overdueBooking?.id || selected?.booking?.id || selected?.id;
 
@@ -458,8 +459,11 @@ export function FoliosPage() {
                     <PanelHeader title="Settlement & correction" description="Record payments and post charges or credits. Posted entries are never edited; corrections add a new entry." />
                     <PanelBody className="space-y-4">
                       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        <Field label="Amount (minor units)" htmlFor="folio-amount" hint={amountPreview ? `= ${amountPreview}` : '100 = $1.00'}>
-                          <FieldInput id="folio-amount" aria-label="Amount in minor units" type="number" min="1" inputMode="numeric" value={action.amount} onChange={e => setAction({ ...action, amount: e.target.value })} />
+                        <Field label="Amount" htmlFor="folio-amount" hint={action.amount.trim() && amountMinor === null ? 'Enter a dollar amount, like 25 or 25.50.' : 'In dollars, like 25.50.'}>
+                          <div className="relative">
+                            <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                            <FieldInput id="folio-amount" className="pl-7" type="text" inputMode="decimal" placeholder="0.00" autoComplete="off" aria-invalid={action.amount.trim() !== '' && amountMinor === null} value={action.amount} onChange={e => setAction({ ...action, amount: e.target.value })} />
+                          </div>
                         </Field>
                         <Field label="Description / reason" htmlFor="folio-description" className="lg:col-span-3">
                           <FieldInput id="folio-description" aria-label="Required description or reason" placeholder="Shown on the guest statement" value={action.description} onChange={e => setAction({ ...action, description: e.target.value })} />
@@ -479,8 +483,8 @@ export function FoliosPage() {
                     <div className="flex flex-col-reverse gap-2 border-t bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                       <div>{canClose ? <Button size="sm" variant="ghost" disabled={busy} onClick={closeSelectedFolio}><Lock aria-hidden="true" />Close settled folio</Button> : null}</div>
                       <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" disabled={busy} onClick={() => runFolioAction('entry')}>{action.direction === 'debit' ? 'Post charge' : 'Post credit'}</Button>
-                        <Button size="sm" disabled={busy} onClick={() => runFolioAction('payment')}>Record payment</Button>
+                        <Button size="sm" variant="outline" disabled={busy || amountMinor === null || !action.description.trim()} onClick={() => runFolioAction('entry')}>{action.direction === 'debit' ? 'Post charge' : 'Post credit'}</Button>
+                        <Button size="sm" disabled={busy || amountMinor === null || !action.description.trim()} onClick={() => runFolioAction('payment')}>Record payment</Button>
                       </div>
                     </div>
                   </Panel>

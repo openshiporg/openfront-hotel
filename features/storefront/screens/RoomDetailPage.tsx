@@ -261,9 +261,11 @@ function RoomDetailContent({ slug, query, onRetry }: { slug: string; query: stri
       <div className="sf-mobilebar__row">
         <div className="sf-mobilebar__price">
           {current && quote ? <><span><b>{money(quote.totalAmountMinor, quote.currencyCode)}</b> <small>/ {quote.nights} {quote.nights === 1 ? 'night' : 'nights'} · {guests} {guests === 1 ? 'guest' : 'guests'}</small></span><a href="#rates">View price details</a></>
-            : <><span><b>{nights > 0 ? `${nights} ${nights === 1 ? 'night' : 'nights'}` : 'Your stay'}</b></span><small>{pricing ? 'Checking the full price…' : message || 'Choose dates for a price'}</small></>}
+            : nights <= 0 && base
+              ? <><span>From <b>{base}</b> <small>/ night</small></span><small>Before tax · varies by date</small></>
+              : <><span><b>{nights > 0 ? `${nights} ${nights === 1 ? 'night' : 'nights'}` : 'Your stay'}</b></span><small>{pricing ? 'Checking the full price…' : message || 'Choose dates for a price'}</small></>}
         </div>
-        {current && quote ? <Link href={`/book?${bookingParams}`} className="sf-btn">Reserve <ArrowRight className="sf-btn__go" aria-hidden="true" /></Link> : <a href="#rates" className="sf-btn">{form.checkIn && form.checkOut ? 'Review' : 'Choose dates'}</a>}
+        {current && quote ? <Link href={`/book?${bookingParams}`} className="sf-btn">Reserve <ArrowRight className="sf-btn__go" aria-hidden="true" /></Link> : <a href="#rates" className="sf-btn">{form.checkIn && form.checkOut ? 'Review' : 'Check availability'}</a>}
       </div>
     </div>
   </div>;
