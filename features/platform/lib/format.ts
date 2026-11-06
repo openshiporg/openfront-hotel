@@ -108,3 +108,13 @@ export function utcDayKey(value: Date | string = new Date()) {
   const date = new Date(value);
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
 }
+
+/** "Eastern Time" for America/New_York; the zone id if the browser can't name it; UTC when the property has none. */
+export function timeZoneLabel(timeZone?: string | null) {
+  if (!timeZone) return 'UTC';
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longGeneric' }).formatToParts(new Date()).find(part => part.type === 'timeZoneName')?.value || timeZone;
+  } catch {
+    return timeZone;
+  }
+}

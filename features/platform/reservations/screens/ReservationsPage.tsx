@@ -16,6 +16,7 @@ import {
   updateReservationStatusAction,
 } from '../actions';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
+import { timeZoneLabel } from '@/features/platform/lib/format';
 
 type ReservationStatus =
   | 'pending'
@@ -53,6 +54,7 @@ interface ReservationCalendarRoom {
 interface ReservationCalendarResponse {
   hotelReservationCalendar: {
     businessDate?: string;
+    timeZone?: string | null;
     reservations: Array<{
     id: string;
     confirmationNumber: string;
@@ -84,6 +86,7 @@ export function ReservationsPage() {
   const [reservations, setReservations] = React.useState<ReservationCalendarItem[]>([]);
   const [rooms, setRooms] = React.useState<ReservationCalendarRoom[]>([]);
   const [businessDate, setBusinessDate] = React.useState<string | null>(null);
+  const [timeZone, setTimeZone] = React.useState<string | null>(null);
   const [visibleRange, setVisibleRange] = React.useState(initialCalendarRange);
 
   const handleViewRangeChange = React.useCallback((start: Date, end: Date) => {
@@ -127,6 +130,7 @@ export function ReservationsPage() {
       setReservations(mappedReservations);
       setRooms(data.rooms || []);
       if (data.businessDate) setBusinessDate(String(data.businessDate));
+      setTimeZone(data.timeZone || null);
     } catch (error) {
       if (requestId !== latestRequest.current) return;
       const message = error instanceof Error ? error.message : 'Unable to load reservation calendar data.';
@@ -184,7 +188,7 @@ export function ReservationsPage() {
       description="Room-by-room stay calendar. Select a stay for details and desk actions, or drag it to change dates."
       meta={(
         <>
-          <MetaItem icon={CalendarDays}>14-day view · UTC business dates</MetaItem>
+          <MetaItem icon={CalendarDays}>14-day view · {timeZoneLabel(timeZone)} business dates</MetaItem>
           <MetaItem icon={MousePointerClick}>Edges resize, body moves</MetaItem>
         </>
       )}
@@ -199,6 +203,7 @@ export function ReservationsPage() {
       {error ? <WorkspaceError message={error} onRetry={fetchCalendarData} title="Reservation calendar unavailable" /> : null}
       <ReservationCalendar
         businessDate={businessDate}
+        timeZoneLabel={timeZoneLabel(timeZone)}
         reservations={reservations}
         rooms={rooms}
         loading={loading}

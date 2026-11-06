@@ -301,7 +301,9 @@ export function FoliosPage() {
         loading={loading && !folios.length}
         items={[
           { label: 'Open folios', value: openFolios.length, tone: 'info', hint: `${folios.length} loaded`, onSelect: () => setStatusFilter(statusFilter === 'open' ? 'all' : 'open'), active: statusFilter === 'open' },
-          { label: 'Open balance', value: formatMoney(openBalanceMinor, 'USD'), tone: openBalanceMinor > 0 ? 'warning' : 'success', hint: 'Across open folios' },
+          openBalanceMinor < 0
+            ? { label: 'Credit owed', value: formatMoney(-openBalanceMinor, 'USD'), tone: 'success', hint: 'Guest credit across open folios' }
+            : { label: 'Open balance', value: formatMoney(openBalanceMinor, 'USD'), tone: openBalanceMinor > 0 ? 'warning' : 'success', hint: 'Across open folios' },
           { label: 'Ledger entries', value: ledgerEntries, hint: 'Immutable postings' },
           { label: 'Overdue stays', value: overdue.length, tone: overdue.length ? 'danger' : 'neutral', hint: overdue.length ? 'Need an explicit resolution' : 'None past departure' },
         ]}
@@ -381,7 +383,7 @@ export function FoliosPage() {
                       >
                         <span className="flex items-center justify-between gap-3">
                           <span className="truncate text-sm font-medium">{folio.booking?.guestName || folio.groupBlock?.name || folio.folioNumber}</span>
-                          <span className={cn('shrink-0 text-sm font-medium tabular-nums', folio.balanceMinor > 0 && 'text-amber-700 dark:text-amber-400', folio.balanceMinor < 0 && 'text-emerald-700 dark:text-emerald-400')}>{formatMoney(folio.balanceMinor, folio.currencyCode)}</span>
+                          <span className={cn('shrink-0 text-sm font-medium tabular-nums', folio.balanceMinor > 0 && 'text-amber-700 dark:text-amber-400', folio.balanceMinor < 0 && 'text-emerald-700 dark:text-emerald-400')}>{folio.balanceMinor < 0 ? `${formatMoney(-folio.balanceMinor, folio.currencyCode)} credit` : formatMoney(folio.balanceMinor, folio.currencyCode)}</span>
                         </span>
                         <span className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                           <span className="truncate font-mono">{folio.booking?.confirmationNumber || folio.folioNumber}</span>
@@ -415,8 +417,8 @@ export function FoliosPage() {
                       </div>
                     </div>
                     <div className="sm:text-right">
-                      <p className="text-xs text-muted-foreground">Balance</p>
-                      <p className={cn('text-2xl font-semibold tracking-tight tabular-nums', selected.balanceMinor > 0 && 'text-amber-700 dark:text-amber-400')}>{formatMoney(selectedTotals.balanceMinor, selected.currencyCode)}</p>
+                      <p className="text-xs text-muted-foreground">{selectedTotals.balanceMinor < 0 ? 'Credit owed' : 'Balance'}</p>
+                      <p className={cn('text-2xl font-semibold tracking-tight tabular-nums', selected.balanceMinor > 0 && 'text-amber-700 dark:text-amber-400', selectedTotals.balanceMinor < 0 && 'text-emerald-700 dark:text-emerald-400')}>{formatMoney(Math.abs(selectedTotals.balanceMinor), selected.currencyCode)}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-3 divide-x border-b text-sm">

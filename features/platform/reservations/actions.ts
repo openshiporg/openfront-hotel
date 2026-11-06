@@ -17,6 +17,7 @@ const RESERVATION_CALENDAR = String.raw`
   query ReservationCalendar($start: DateTime!, $end: DateTime!) {
     hotelReservationCalendar(propertyKey: "the-alder-house", start: $start, end: $end) {
       businessDate
+      timeZone
       reservations {
         id confirmationNumber guestName checkInDate checkOutDate status source
         numberOfGuests totalAmount balanceDue room { id roomNumber } roomType { id name }

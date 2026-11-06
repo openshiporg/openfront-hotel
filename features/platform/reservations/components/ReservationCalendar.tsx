@@ -76,6 +76,8 @@ interface ReservationCalendarProps {
   initialSearch?: string;
   /** The property's open business date; "Today" follows it rather than the UTC calendar. */
   businessDate?: string | null;
+  /** Property time zone name for the legend, e.g. "Eastern Time". */
+  timeZoneLabel?: string;
 }
 
 const STATUSES: ReservationStatus[] = ['pending', 'confirmed', 'checked_in', 'checked_out', 'cancelled', 'cancellation_pending', 'no_show'];
@@ -193,6 +195,7 @@ export function ReservationCalendar({
   onCancel,
   initialSearch = '',
   businessDate = null,
+  timeZoneLabel = 'UTC',
 }: ReservationCalendarProps) {
   const [viewStart, setViewStart] = React.useState<Date>(utcStartOfDay());
   const followedBusinessDate = React.useRef(false);
@@ -600,7 +603,7 @@ export function ReservationCalendar({
               <span key={status} className="inline-flex items-center gap-1.5"><span className={cn('size-2 rounded-sm', TONE_DOT[statusMeta('booking', status).tone])} aria-hidden="true" />{statusMeta('booking', status).label}</span>
             ))}
           </div>
-          <p>Drag a stay to move it; drag its edges to change dates. All dates are UTC business dates.</p>
+          <p>Drag a stay to move it; drag its edges to change dates. All dates are {timeZoneLabel} business dates.</p>
         </div>
       </Panel>
 

@@ -71,3 +71,10 @@ test('approval-required message names the amount in dollars, not cents', () => {
   assert.match(source, /for \$\{moneyText\(input\.amountMinor\)\}/);
   assert.doesNotMatch(source, /amount \$\{input\.amountMinor\}/);
 });
+
+test('timeZoneLabel names the property zone and falls back to UTC', async () => {
+  const { timeZoneLabel } = await import('../features/platform/lib/format');
+  assert.equal(timeZoneLabel(null), 'UTC');
+  assert.equal(timeZoneLabel('America/New_York'), 'Eastern Time');
+  assert.equal(timeZoneLabel('Not/AZone'), 'Not/AZone');
+});

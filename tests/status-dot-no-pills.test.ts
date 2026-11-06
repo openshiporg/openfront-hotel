@@ -25,3 +25,16 @@ test('staff screens do not use Badge components or pill colour sets', () => {
   });
   assert.deepEqual(offenders, []);
 });
+
+test('folio credits read as "Credit owed" instead of a negative balance', () => {
+  const source = readFileSync('features/platform/folios/screens/FoliosPage.tsx', 'utf8');
+  assert.match(source, /label: 'Credit owed', value: formatMoney\(-openBalanceMinor/);
+  assert.match(source, /'Credit owed' : 'Balance'/);
+});
+
+test('reservations header names the property time zone instead of UTC', () => {
+  const page = readFileSync('features/platform/reservations/screens/ReservationsPage.tsx', 'utf8');
+  assert.doesNotMatch(page, /UTC business dates/);
+  assert.match(page, /timeZoneLabel\(timeZone\)/);
+  assert.doesNotMatch(readFileSync('features/platform/reservations/components/ReservationCalendar.tsx', 'utf8'), /All dates are UTC/);
+});

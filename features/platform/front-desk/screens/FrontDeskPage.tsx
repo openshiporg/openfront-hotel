@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { StaffReservationForm } from '@/features/platform/reservations/components/StaffReservationForm';
 import { MetaItem, PlatformPage } from '@/features/platform/components/PlatformPage';
 import { WorkspaceError } from '@/features/platform/components/WorkspaceControls';
-import { formatStay } from '@/features/platform/lib/format';
+import { formatStay, timeZoneLabel } from '@/features/platform/lib/format';
 import {
   assignFrontDeskRoom,
   cancelFrontDeskBooking,
@@ -67,16 +67,6 @@ interface FrontDeskResponse {
     reservations: FrontDeskReservationItem[];
     rooms: FrontDeskRoomOption[];
   };
-}
-
-/** "Eastern Time" for America/New_York; the zone id if the browser can't name it; UTC when the property has none. */
-function timeZoneLabel(timeZone: string | null) {
-  if (!timeZone) return 'UTC';
-  try {
-    return new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longGeneric' }).formatToParts(new Date()).find(part => part.type === 'timeZoneName')?.value || timeZone;
-  } catch {
-    return timeZone;
-  }
 }
 
 export function FrontDeskPage() {
