@@ -1,5 +1,5 @@
 import { runSerializableTransaction } from '../lib/serializableTransaction';
-import { safeRoomCondition } from './roomSafety';
+import { roomConditionAfterMaintenanceClosed, safeRoomCondition } from './roomSafety';
 import { permissions } from '../access';
 import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import {
@@ -111,7 +111,9 @@ export default async function updateMaintenanceRequestStatus(
     let roomStatus = maintenance.room.status;
     if (['assigned', 'in_progress'].includes(status)) roomStatus = 'maintenance';
     if (status === 'completed') roomStatus = 'cleaning';
-    if (status === 'verified') {
+    // Verifying and cancelling both close the request, so both must recompute the room;
+    // a cancelled-only repair used to leave the room in maintenance with no open request.
+    if (status === 'verified' || (status === 'cancelled' && maintenance.room.status === 'maintenance')) {
       const [otherMaintenance, openTasks] = await Promise.all([
         prisma.maintenanceRequest.findMany({
           where: { roomId: maintenance.roomId, id: { not: maintenance.id }, status: { notIn: ['verified', 'cancelled'] } },
@@ -119,8 +121,7 @@ export default async function updateMaintenanceRequestStatus(
         }),
         prisma.housekeepingTask.count({ where: { roomId: maintenance.roomId, status: { not: 'completed' } } }),
       ]);
-      const maintenanceInProgress = otherMaintenance.some((item: any) => ['reported', 'assigned', 'in_progress'].includes(item.status));
-      roomStatus = maintenanceInProgress ? 'maintenance' : (otherMaintenance.length || openTasks) ? 'cleaning' : 'vacant';
+      roomStatus = roomConditionAfterMaintenanceClosed(otherMaintenance.map((item: any) => item.status), openTasks);
     }
     roomStatus = await safeRoomCondition(prisma, maintenance.roomId, maintenance.room.status, roomStatus);
     if (roomStatus !== maintenance.room.status || status === 'verified') {

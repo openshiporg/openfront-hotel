@@ -1,6 +1,7 @@
 import { requireHotelApproval } from '../guest-governance/commands';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { assertNoOutstandingStayKeys } from '../operations/stayRegister';
+import { reconcileBookingLoyalty } from '../loyalty/commands';
 import { permissions } from '../access';
 import { ensureBookingFolio } from '../folios/bookingFolio';
 import { calculateFolioBalance } from '../folios/ledger';
@@ -126,7 +127,7 @@ export default async function resolveOverdueCheckedInBooking(
 
     for (const assignment of booking.roomAssignments) {
       if (!assignment.room) continue;
-      const repair = await prisma.maintenanceRequest.findFirst({ where: { roomId: assignment.room.id, status: { in: ['reported', 'assigned', 'in_progress', 'waiting_parts'] } } });
+      const repair = await prisma.maintenanceRequest.findFirst({ where: { roomId: assignment.room.id, status: { notIn: ['verified', 'cancelled'] } } });
       const nextStatus = assignment.room.status === 'out_of_order' ? 'out_of_order' : repair || assignment.room.status === 'maintenance' ? 'maintenance' : 'cleaning';
       await prisma.room.update({ where: { id: assignment.room.id }, data: { status: nextStatus } });
       const openTask = await prisma.housekeepingTask.findFirst({
@@ -163,6 +164,9 @@ export default async function resolveOverdueCheckedInBooking(
         lastStayAt: completed._max.checkedOutAt || now,
       },
     });
+
+    // Same checkout side effect as updateBookingStatus: without it a guest resolved here never earns loyalty.
+    await reconcileBookingLoyalty(prisma, bookingId, eventKey, context.session.itemId);
 
     await recordHotelLifecycleEvent({
       prisma,

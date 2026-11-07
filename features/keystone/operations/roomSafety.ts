@@ -10,3 +10,9 @@ export async function safeRoomCondition(prisma: any, roomId: string, currentStat
   const checkedInCount = await prisma.roomAssignment.count({ where: { roomId, booking: { status: 'checked_in' } } });
   return preserveRoomOccupancy(currentStatus, proposedStatus, checkedInCount);
 }
+
+/** Room condition once a repair request is closed (verified or cancelled). */
+export function roomConditionAfterMaintenanceClosed(otherOpenStatuses: string[], openHousekeepingTasks: number) {
+  if (otherOpenStatuses.some((status) => ['reported', 'assigned', 'in_progress'].includes(status))) return 'maintenance';
+  return otherOpenStatuses.length || openHousekeepingTasks ? 'cleaning' : 'vacant';
+}
