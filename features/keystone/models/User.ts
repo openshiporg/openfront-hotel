@@ -121,6 +121,24 @@ export const User = list({
     ...trackingFields,
   },
   hooks: {
+    // An account that booked stays, took payments or posted to folios is part of that history
+    // (the links would be cleared); it is deactivated instead. Nobody deletes their own account here.
+    validateDelete: async ({ item, context, addValidationError }) => {
+      const id = String(item.id);
+      if (id === String(context.session?.itemId || '')) {
+        addValidationError('You can\'t delete your own account.');
+        return;
+      }
+      const prisma = context.prisma;
+      const [bookings, payments, postings, audit, guests] = await Promise.all([
+        prisma.booking.count({ where: { guestId: id } }),
+        prisma.bookingPayment.count({ where: { processedById: id } }),
+        prisma.folioEntry.count({ where: { postedById: id } }),
+        prisma.hotelAuditEvent.count({ where: { actorId: id } }),
+        prisma.guest.count({ where: { userAccountId: id } }),
+      ]);
+      if (bookings || payments || postings || audit || guests) addValidationError('This account has reservations, payments, folio postings or audit history. Turn off Active instead of deleting it.');
+    },
     resolveInput: async ({ operation, inputData, resolvedData, context }) => {
       // Trusted server paths (initial admin, storefront guest registration) run with sudo.
       const sudo = context.graphql.schema === context.sudo().graphql.schema;

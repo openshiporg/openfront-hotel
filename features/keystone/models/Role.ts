@@ -40,6 +40,11 @@ export const Role = list({
     ...trackingFields
   },
   hooks: {
+    // Deleting a role someone holds would silently strip every permission they have.
+    validateDelete: async ({ item, context, addValidationError }) => {
+      const people = await context.prisma.user.count({ where: { roleId: String(item.id) } });
+      if (people) addValidationError(`${people} ${people === 1 ? 'person still has' : 'people still have'} this role. Give them another role before deleting it.`);
+    },
     afterOperation: async ({ operation, item, context }) => {
       if (operation !== 'update' || !item?.id) return;
       // Direct Prisma is intentional here: invalidation must update every

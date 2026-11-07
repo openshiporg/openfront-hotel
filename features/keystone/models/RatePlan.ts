@@ -243,6 +243,12 @@ export const RatePlan = list({
     ...trackingFields,
   },
   hooks: {
+    // Reservations keep the rate they were sold on (amendments, modification requests and group
+    // pickups read booking.ratePlanId); a rate with bookings is retired, not deleted.
+    validateDelete: async ({ item, context, addValidationError }) => {
+      const bookings = await context.prisma.booking.count({ where: { ratePlanId: String(item.id) } })
+      if (bookings) addValidationError(`${bookings} ${bookings === 1 ? 'reservation was' : 'reservations were'} booked on this rate. Set it to Inactive instead of deleting it.`)
+    },
     resolveInput: ({ resolvedData }) => ({
       ...resolvedData,
       ...(Number.isSafeInteger(resolvedData.baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 } : {}),

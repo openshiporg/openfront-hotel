@@ -117,6 +117,12 @@ export const SeasonalRate = list({
     ...trackingFields,
   },
   hooks: {
+    // Pricing applies a season to every night from startDate through endDate inclusive.
+    validateInput: ({ resolvedData, item, addValidationError }) => {
+      const start = resolvedData.startDate ?? item?.startDate
+      const end = resolvedData.endDate ?? item?.endDate
+      if (start && end && new Date(end) < new Date(start)) addValidationError('A season\'s end date can\'t be before its start date.')
+    },
     // An active season changes the price of live rates. When the property requires approval
     // to publish rates, such a change is made while the room type's public rates are paused;
     // publishing them again needs an approval that covers the new seasons.
