@@ -2,6 +2,7 @@ import { getContext } from '@keystone-6/core/context';
 import type { KeystoneConfig } from '@keystone-6/core/types';
 import * as PrismaModule from '@prisma/client';
 
+import { pooledDatabaseUrl } from '../database-url';
 import { safeOperationalErrorMessage } from '../lib/safeOperationalError';
 
 const GLOBAL_KEY = '__hotelWorkerRuntimeState';
@@ -54,7 +55,9 @@ export function getHotelWorkerContext(config: KeystoneConfig) {
   const state = getRuntimeState();
   if (state.stopping) throw new Error('Hotel worker runtime is shutting down.');
   return getOrCreateWorkerContext(state.contexts, config, () => {
-    const context = getContext(config, PrismaModule);
+    // Workers share the process with the web server's Keystone client, so they take the smaller worker pool.
+    const db = { ...config.db, url: pooledDatabaseUrl(process.env.DATABASE_URL, 'worker') ?? config.db.url };
+    const context = getContext({ ...config, db }, PrismaModule);
     state.contextInstances.add(context);
     return context;
   });
