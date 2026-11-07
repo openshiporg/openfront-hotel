@@ -2,6 +2,7 @@ import { createTransport, getTestMessageUrl } from "nodemailer";
 import type { HotelCommunicationPayload } from '../communications/commands';
 import { HotelOutboxDeliveryError } from '../communications/outbox';
 import { configuredSiteOrigin } from './productionConfig';
+import { emailButton, emailHeading, emailLayout, emailMuted, emailPanel, emailParagraph, emailTotals } from "./email-layout";
 
 // SMTP values are infrastructure wiring. Durable property state decides whether
 // Hotel communications are eligible for delivery.
@@ -40,38 +41,13 @@ function getTransport() {
 }
 
 function passwordResetEmail({ url }: { url: string }): string {
-  const backgroundColor = "#f9f9f9";
-  const textColor = "#444444";
-  const mainBackgroundColor = "#ffffff";
-  const buttonBackgroundColor = "#346df1";
-  const buttonBorderColor = "#346df1";
-  const buttonTextColor = "#ffffff";
-
-  return `
-    <body style="background: ${backgroundColor};">
-      <table width="100%" border="0" cellspacing="20" cellpadding="0" style="background: ${mainBackgroundColor}; max-width: 600px; margin: auto; border-radius: 10px;">
-        <tr>
-          <td align="center" style="padding: 10px 0px 0px 0px; font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
-            Please click below to reset your password
-          </td>
-        </tr>
-        <tr>
-          <td align="center" style="padding: 20px 0;">
-            <table border="0" cellspacing="0" cellpadding="0">
-              <tr>
-                <td align="center" style="border-radius: 5px;" bgcolor="${buttonBackgroundColor}"><a href="${url}" target="_blank" style="font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${buttonTextColor}; text-decoration: none; border-radius: 5px; padding: 10px 20px; border: 1px solid ${buttonBorderColor}; display: inline-block; font-weight: bold;">Reset Password</a></td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-        <tr>
-          <td align="center" style="padding: 0px 0px 10px 0px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
-            If you did not request this email you can safely ignore it.
-          </td>
-        </tr>
-      </table>
-    </body>
-  `;
+  return emailLayout({
+    preheader: "Use this link to choose a new password.",
+    title: "Reset your password",
+    body: `${emailParagraph("We received a request to reset the password for your account. Use the button below to choose a new one.")}
+${emailButton("Reset password", url)}
+${emailMuted("If you did not request this, you can safely ignore this email. Your password will not change.")}`,
+  });
 }
 
 export async function sendPasswordResetEmail(resetToken: string, to: string, baseUrl?: string, audience: 'staff' | 'guest' = 'staff'): Promise<void> {
@@ -141,7 +117,13 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
   if (payload.kind === 'contact_received') {
     return {
       subject: `[Website] ${emailHeader(payload.contactSubject)}`,
-      html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${property} website message</h1><p><strong>From:</strong> ${escapeHtml(payload.guestName)} &lt;${escapeHtml(payload.replyTo)}&gt;</p><p><strong>Phone:</strong> ${escapeHtml(payload.contactPhone || 'Not provided')}</p><p><strong>Subject:</strong> ${escapeHtml(payload.contactSubject)}</p><p style="white-space:pre-wrap">${escapeHtml(payload.contactMessage)}</p></body>`,
+      html: emailLayout({
+        storeName: payload.propertyName,
+        preheader: payload.contactSubject,
+        title: 'Website message',
+        body: `${emailPanel(`<strong>From:</strong> ${escapeHtml(payload.guestName)} &lt;${escapeHtml(payload.replyTo)}&gt;<br><strong>Phone:</strong> ${escapeHtml(payload.contactPhone || 'Not provided')}<br><strong>Subject:</strong> ${escapeHtml(payload.contactSubject)}`)}
+${emailPanel(`<span style="white-space:pre-wrap;">${escapeHtml(payload.contactMessage)}</span>`)}`,
+      }),
     };
   }
 
@@ -160,16 +142,26 @@ function hotelCommunicationEmail(payload: HotelCommunicationPayload) {
             : 'Reservation cancelled';
   const total = communicationMoney(payload.totalAmountMinor, payload.currencyCode);
   const cancellation = payload.kind === 'booking_cancelled' || payload.kind === 'booking_no_show'
-    ? `<h2>Policy settlement</h2><p>${escapeHtml(payload.cancellationSummary || 'The booked terms were applied.')}</p><p><strong>Refund:</strong> ${escapeHtml(communicationMoney(payload.refundableMinor, payload.currencyCode))}<br/><strong>Policy fee:</strong> ${escapeHtml(communicationMoney(payload.cancellationFeeMinor, payload.currencyCode))}</p>`
+    ? `${emailHeading('Policy settlement')}${emailParagraph(escapeHtml(payload.cancellationSummary || 'The booked terms were applied.'))}${emailTotals([{ label: 'Policy fee', value: communicationMoney(payload.cancellationFeeMinor, payload.currencyCode) }, { label: 'Refund', value: communicationMoney(payload.refundableMinor, payload.currencyCode) }])}`
     : payload.kind === 'booking_refund'
-      ? `<h2>Refund</h2><p>${escapeHtml(payload.cancellationSummary || 'A refund was recorded by the property.')}</p><p><strong>Amount:</strong> ${escapeHtml(communicationMoney(payload.refundableMinor, payload.currencyCode))}</p>`
+      ? `${emailHeading('Refund')}${emailParagraph(escapeHtml(payload.cancellationSummary || 'A refund was recorded by the property.'))}${emailTotals([{ label: 'Refund', value: communicationMoney(payload.refundableMinor, payload.currencyCode) }])}`
     : payload.kind === 'booking_modification_response'
-      ? `<p><strong>Decision:</strong> ${escapeHtml(payload.modificationDecision || 'reviewed')}</p>${payload.staffNote ? `<p><strong>Property note:</strong> ${escapeHtml(payload.staffNote)}</p>` : ''}`
-      : `<p><strong>Total:</strong> ${escapeHtml(total)}</p>`;
+      ? `${emailParagraph(`<strong>Decision:</strong> ${escapeHtml(payload.modificationDecision || 'reviewed')}`)}${payload.staffNote ? emailParagraph(`<strong>Property note:</strong> ${escapeHtml(payload.staffNote)}`) : ''}`
+      : emailTotals([{ label: 'Total', value: total }]);
   const lookupUrl = `${getBaseUrlForEmails()}/bookings/lookup?confirmation=${encodeURIComponent(confirmationNumber)}&email=${encodeURIComponent(recipient)}`;
   return {
     subject: `${emailHeader(title)} · ${emailHeader(payload.confirmationNumber)} · ${emailHeader(payload.propertyName)}`,
-    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === 'booking_received' ? `We received your reservation request with ${property}. Your room is held${payload.holdExpiresAt ? ` until ${escapeHtml(holdUntilLabel(payload))}` : ' for a short time'}. It is not confirmed until payment is complete, and the hold lapses if it isn't.` : payload.kind === 'booking_prearrival' ? `We look forward to welcoming you to ${property}. Review your arrival details below.` : payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`,
+    html: emailLayout({
+      storeName: payload.propertyName,
+      preheader: `${title} · ${payload.confirmationNumber}`,
+      title,
+      body: `${emailParagraph(`Hello ${escapeHtml(payload.guestName)},`)}
+${emailParagraph(payload.kind === 'booking_received' ? `We received your reservation request with ${property}. Your room is held${payload.holdExpiresAt ? ` until ${escapeHtml(holdUntilLabel(payload))}` : ' for a short time'}. It is not confirmed until payment is complete, and the hold lapses if it isn't.` : payload.kind === 'booking_prearrival' ? `We look forward to welcoming you to ${property}. Review your arrival details below.` : payload.kind === 'booking_modification_response' ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === 'booking_confirmation' ? 'confirmed' : payload.kind === 'booking_updated' ? 'updated' : payload.kind === 'booking_no_show' ? 'marked as a no-show under the booked terms' : payload.kind === 'booking_refund' ? 'updated with a refund' : 'cancelled'}.`)}
+${emailPanel(`<strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}`)}
+${cancellation}
+${emailButton('View your reservation', lookupUrl)}
+${emailMuted(`Use your confirmation number and email to open the secure lookup. Questions? Contact <a class="em-link" href="mailto:${escapeHtml(payload.contactEmail)}" style="color:#52525b;text-decoration:underline;">${escapeHtml(payload.contactEmail)}</a>.`)}`,
+    }),
   };
 }
 
