@@ -117,7 +117,7 @@ export const ChannelSyncEvent = list({
       hooks: {
         resolveInput({ operation, resolvedData, context }) {
           if (
-            (operation === 'create' || operation === 'update') &&
+            operation === 'create' &&
             !resolvedData.createdBy &&
             context.session?.itemId
           ) {
