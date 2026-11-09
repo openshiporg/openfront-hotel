@@ -69,7 +69,6 @@ import updateRatePlanPublication from './updateRatePlanPublication';
 import { hotelOperationsResolvers, hotelOperationsTypeDefs } from '../queries/hotelOperations';
 import runHotelNightAudit from '../operations/nightAudit';
 import createHotelGroupBlock from './createHotelGroupBlock';
-import replayHotelOutboxEvent from './replayHotelOutboxEvent';
 import pickupHotelGroupBlock from './pickupHotelGroupBlock';
 import updateHotelGroupBlockStatus from './updateHotelGroupBlockStatus';
 import resolveOverdueCheckedInBooking from './resolveOverdueCheckedInBooking';
@@ -453,9 +452,6 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         createdAt: DateTime
         confirmedAt: DateTime
         cancelledAt: DateTime
-        confirmationDeliveryStatus: String
-        updateDeliveryStatus: String
-        cancellationDeliveryStatus: String
         changeRequest: GuestChangeRequest
         roomAssignments: [GuestRoomAssignment!]!
       }
@@ -528,13 +524,6 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         retriedAt: DateTime!
       }
 
-      type HotelOutboxReplayResult {
-        id: ID!
-        eventKey: String!
-        status: String!
-        replayed: Boolean!
-      }
-
       type OverdueStayResolutionResult {
         bookingId: ID!
         folioId: ID!
@@ -589,8 +578,6 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         refundApprovalThresholdMinor: Int
         writeOffApprovalThresholdMinor: Int
         cashVarianceApprovalThresholdMinor: Int
-        prearrivalEmailEnabled: Boolean
-        prearrivalDays: Int
         loyaltyEnabled: Boolean
         loyaltyEarnMinorPerPoint: Int
         loyaltyRedeemMinorPerPoint: Int
@@ -687,7 +674,6 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           businessDate: DateTime!
           idempotencyKey: String!
         ): HotelNightAuditRunProjection!
-        replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!, acknowledgeUnknownDelivery: Boolean): HotelOutboxReplayResult!
         replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
         resolveOverdueCheckedInBooking(
           bookingId: ID!
@@ -933,7 +919,6 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         createHotelGroupBlock,
         pickupHotelGroupBlock,
         updateHotelGroupBlockStatus,
-        replayHotelOutboxEvent,
         replayRefundIntent,
         resolveOverdueCheckedInBooking,
         verifyGuestBooking: async (

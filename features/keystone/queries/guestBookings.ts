@@ -3,7 +3,6 @@ import {
   getGuestAccessBookingIds,
 } from '../lib/guestBookingAccess';
 import { STOREFRONT_BOOKING_QUERY } from '../lib/storefrontBooking';
-import { bookingCommunicationStatus } from '../communications/commands';
 
 async function guestBookings(
   root: unknown,
@@ -35,15 +34,7 @@ async function guestBookings(
     orderBy: [{ createdAt: 'desc' }],
     query: STOREFRONT_BOOKING_QUERY,
   });
-  return Promise.all(bookings.map(async (booking: any) => {
-    const communication = await bookingCommunicationStatus(context.prisma, booking.id);
-    return {
-      ...booking,
-      confirmationDeliveryStatus: communication.confirmation?.status || null,
-      updateDeliveryStatus: communication.modification?.status || communication.update?.status || null,
-      cancellationDeliveryStatus: communication.cancellation?.status || null,
-    };
-  }));
+  return bookings;
 }
 
 export default guestBookings;

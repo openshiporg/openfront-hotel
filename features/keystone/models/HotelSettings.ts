@@ -40,8 +40,6 @@ export const HotelSettings = list({
     refundApprovalThresholdMinor: integer({ defaultValue: 0, validation: { isRequired: true, min: 0 } }),
     writeOffApprovalThresholdMinor: integer({ defaultValue: 0, validation: { isRequired: true, min: 0 } }),
     cashVarianceApprovalThresholdMinor: integer({ defaultValue: 0, validation: { isRequired: true, min: 0 } }),
-    prearrivalEmailEnabled: checkbox({ defaultValue: false }),
-    prearrivalDays: integer({ defaultValue: 1, validation: { isRequired: true, min: 1, max: 14 } }),
     loyaltyEnabled: checkbox({ defaultValue: false }),
     loyaltyEarnMinorPerPoint: integer({ defaultValue: 100, validation: { isRequired: true, min: 1, max: 1000000 } }),
     loyaltyRedeemMinorPerPoint: integer({ defaultValue: 1, validation: { isRequired: true, min: 1, max: 1000000 } }),

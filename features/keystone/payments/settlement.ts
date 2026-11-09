@@ -2,7 +2,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { ensurePaymentFolioPosting, getBookingCollectibleBalance } from '../folios/bookingFolio';
 import { recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
-import { queueBookingCommunication } from '../communications/commands';
 import { assertBookingConfirmationInventory, BookingConfirmationError } from '../bookings/confirmation';
 import { captureRecoveryAmount, bookingPaymentDueNow } from '../lib/paymentSecurity';
 import { queueCaptureRecoveryRefund } from '../refunds/bookingRefund';
@@ -296,13 +295,6 @@ export async function finalizeBookingPayment({
       },
       metadata: { providerCode, paymentSessionId: session.id },
     });
-    if (confirmationAvailable && depositSatisfied && !inHouse) {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: 'booking_confirmation',
-        eventKey: `booking:${bookingId}:confirmation:v${session.booking.pricingRevision || 1}`,
-      });
-    }
 
     if (replay) {
       await prisma.paymentEvent.create({

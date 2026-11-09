@@ -1,6 +1,6 @@
 import { propertyCalendarDate } from '../lib/hotelBusinessTime';
 import { getWorkerReadiness } from '../lib/workerProgress';
-import { getOutboxDispatchConfig, paymentIntegrationConfigured } from '../lib/integrationConfig';
+import { paymentIntegrationConfigured } from '../lib/integrationConfig';
 import { hotelMailInfrastructureConfigured } from '../lib/mail';
 
 function realPropertyName(value: string | null | undefined) {
@@ -34,9 +34,7 @@ export function realContactEmail(value: string | null | undefined, allowExampleD
 export default async function hotelReadiness(_root: unknown, _args: unknown, context: any) {
   const prisma = context.prisma as any;
   const smtpConfigured = hotelMailInfrastructureConfigured();
-  let communicationsRequired = smtpConfigured;
   try {
-    communicationsRequired = smtpConfigured || getOutboxDispatchConfig().enabled;
     const [settings, clock, providers, sellableRate, activeChannel, enabledRateSync, enabledInventorySync, activeGroupBlock, openGroupFolio, activeGroupBooking] = await Promise.all([
       prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { groupsEnabled: true, timeZone: true, id: true, propertyName: true, contactEmail: true, contactPhone: true, addressLine1: true } }),
       prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { id: true, currentBusinessDate: true } }),
@@ -71,26 +69,23 @@ export default async function hotelReadiness(_root: unknown, _args: unknown, con
     const brokenGroupBilling = await prisma.booking.findFirst({ where: { groupBlock: { billingType: 'master_folio' }, billingFolioId: null, status: { in: ['pending', 'confirmed', 'checked_in'] } }, select: { id: true } });
     const groupsHealthy = settings?.groupsEnabled === true ? !brokenGroupBilling : groupsDisabled;
     const frontDeskClear = !overdueStay && !orphanOccupiedRoom;
-    const progress = await prisma.hotelWorkerLease.findMany({ where: { leaseKey: { in: ['progress:holds', 'progress:refunds', 'progress:outbox', 'heartbeat:outbox'] } } });
-    const workers = getWorkerReadiness(progress, communicationsRequired);
+    const progress = await prisma.hotelWorkerLease.findMany({ where: { leaseKey: { in: ['progress:holds', 'progress:refunds'] } } });
+    const workers = getWorkerReadiness(progress);
     const staleBefore = new Date(Date.now() - 15 * 60_000);
-    const [stuckHold, stuckRefund, stuckOutbox] = await Promise.all([
+    const [stuckHold, stuckRefund] = await Promise.all([
       prisma.booking.findFirst({ where: { status: 'pending', holdExpiresAt: { lt: staleBefore } }, select: { id: true } }),
       prisma.refundIntent.findFirst({ where: { status: 'dead_letter' }, select: { id: true } }),
-      // A message that has been due for a while and is still waiting or retrying is a delivery
-      // problem even if the worker itself keeps running.
-      prisma.hotelOutboxEvent.findFirst({ where: { OR: [{ status: 'dead_letter' }, { status: { in: ['pending', 'failed'] }, availableAt: { lt: staleBefore } }] }, select: { id: true } }),
     ]);
-    const recoveryClear = !stuckHold && !stuckRefund && !stuckOutbox;
+    const recoveryClear = !stuckHold && !stuckRefund;
     const configured = Boolean(
       workers.ready && recoveryClear && propertyConfigured &&
       businessDateCurrent && sellableRate && !activeChannel && !enabledRateSync && !enabledInventorySync && groupsHealthy && frontDeskClear && mailEnabled && paymentEnabled,
     );
     if (!configured) {
-      return { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } };
+      return { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } };
     }
-    return { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds, communications: workers.communications, communicationsWorkerRunning: workers.communicationsWorkerRunning, communicationsRequired: workers.communicationsRequired }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } };
+    return { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } };
   } catch {
-    return { status: 'not_ready', checks: { database: false, workers: { holds: false, refunds: false, communications: false, communicationsRequired }, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } };
+    return { status: 'not_ready', checks: { database: false, workers: { holds: false, refunds: false }, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } };
   }
 }

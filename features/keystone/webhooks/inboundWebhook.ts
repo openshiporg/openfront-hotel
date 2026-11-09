@@ -1,18 +1,14 @@
 import { keystoneContext } from '@/features/keystone/context';
 import { handleChannelWebhook } from '@/features/keystone/channels/commands';
-import { HotelOutboxReceiptConflictError, persistAuthenticatedHotelOutboxReceipt } from '@/features/keystone/communications/outbox';
 import { isOnlinePaymentProviderCode } from '@/features/keystone/lib/paymentSecurity';
 import { readBoundedRequestText, RequestBodyRejectedError } from '@/features/keystone/lib/boundedRequestBody';
 import { processBookingPaymentWebhook } from '@/features/keystone/mutations/handleBookingPaymentProviderWebhook';
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
-const MAX_RECEIVER_BYTES = 1_000_000;
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
 /** Channel callbacks arrive as `channel-<channelId>`; the old /api/webhooks/channel/:id URL rewrites here. */
 export const CHANNEL_WEBHOOK_PREFIX = 'channel-';
-/** Signed external outbox events; the old /api/hotel/outbox/receiver URL rewrites here. */
-export const OUTBOX_RECEIVER_KEY = 'hotel-outbox-receiver';
 
 async function paymentWebhook(request: Request, providerCode: string) {
   let rawBody: string;
@@ -56,52 +52,12 @@ async function channelWebhook(request: Request, channelId: string) {
   }
 }
 
-async function outboxReceiver(request: Request) {
-  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
-    return Response.json({ accepted: false, error: 'Invalid receiver request.' }, { status: 415 });
-  }
-  // Configuration is checked before any body is read.
-  const expectedCredentialKeyId = process.env.HOTEL_OUTBOX_RECEIVER_CREDENTIAL_KEY_ID || '';
-  const secret = process.env.HOTEL_OUTBOX_RECEIVER_SECRET || '';
-  if (!expectedCredentialKeyId || !secret) {
-    return Response.json({ accepted: false, error: 'Receiver unavailable.' }, { status: 503 });
-  }
-  let body: string;
-  try {
-    body = await readBoundedRequestText(request, MAX_RECEIVER_BYTES);
-  } catch (error) {
-    const status = error instanceof RequestBodyRejectedError ? error.status : 400;
-    return Response.json({ accepted: false, error: 'Invalid receiver request.' }, { status });
-  }
-  const header = (name: string) => request.headers.get(name)?.trim() || '';
-  try {
-    const receipt = await persistAuthenticatedHotelOutboxReceipt(keystoneContext.prisma, {
-      body,
-      eventKeyHeader: header('x-openfront-outbox-event-key'),
-      credentialKeyId: header('x-openfront-outbox-credential-key-id'),
-      sentAt: header('x-openfront-outbox-sent-at'),
-      signature: header('x-openfront-outbox-signature'),
-      expectedCredentialKeyId,
-      secret,
-    });
-    return Response.json(receipt, { status: receipt.replayed ? 200 : 201, headers: NO_STORE });
-  } catch (error) {
-    const conflict = error instanceof HotelOutboxReceiptConflictError;
-    return Response.json(
-      { accepted: false, error: conflict ? 'Receiver evidence conflict.' : 'Receiver authentication failed.' },
-      { status: conflict ? 409 : 401, headers: NO_STORE },
-    );
-  }
-}
-
 /**
  * Every inbound provider callback enters through /api/payment-webhooks/[providerId]:
- * online payment providers by code, booking channels as `channel-<id>`, and the signed
- * outbox receiver. Each keeps its own signature check, body bound and responses.
+ * online payment providers by code, and booking channels as `channel-<id>`. Each keeps its own signature check, body bound and responses.
  */
 export async function handleInboundWebhook(request: Request, providerId: string) {
   if (isOnlinePaymentProviderCode(providerId)) return paymentWebhook(request, providerId);
   if (providerId.startsWith(CHANNEL_WEBHOOK_PREFIX)) return channelWebhook(request, providerId.slice(CHANNEL_WEBHOOK_PREFIX.length));
-  if (providerId === OUTBOX_RECEIVER_KEY) return outboxReceiver(request);
   return Response.json({ success: false, error: 'Webhook endpoint not found.' }, { status: 404 });
 }

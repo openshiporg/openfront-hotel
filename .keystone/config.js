@@ -56,194 +56,6 @@ var init_access = __esm({
   }
 });
 
-// features/keystone/lib/guestBookingAccess.ts
-function getGuestAccessSecret() {
-  const secret = process.env.GUEST_ACCESS_SECRET || process.env.SESSION_SECRET || process.env.NEXTAUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : "hotel-guest-access-development-secret");
-  if (secret.length < 32) throw new Error("Guest access signing is not configured.");
-  return secret;
-}
-function normalizeEmail(email2) {
-  return email2.trim().toLowerCase();
-}
-function encodePayload(entries) {
-  return Buffer.from(JSON.stringify(entries), "utf8").toString("base64url");
-}
-function signPayload(payload) {
-  return (0, import_node_crypto.createHmac)("sha256", getGuestAccessSecret()).update(payload).digest("base64url");
-}
-function safeEqual(left, right) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && (0, import_node_crypto.timingSafeEqual)(leftBuffer, rightBuffer);
-}
-function parseCookies(cookieHeader) {
-  if (!cookieHeader) return /* @__PURE__ */ new Map();
-  return new Map(
-    cookieHeader.split(";").map((part) => {
-      const [rawName, ...rawValue] = part.trim().split("=");
-      return [rawName, decodeURIComponent(rawValue.join("="))];
-    })
-  );
-}
-function getCookieHeader(context) {
-  return context.req?.headers?.cookie || context.req?.headers?.get?.("cookie") || "";
-}
-function getRequestHeader(context, name) {
-  return context.req?.headers?.[name] || context.req?.headers?.get?.(name) || "";
-}
-function parseGuestAccessEntries(context) {
-  const value = parseCookies(getCookieHeader(context)).get(GUEST_ACCESS_COOKIE);
-  if (!value) return [];
-  const [payload, signature2] = value.split(".");
-  if (!payload || !signature2 || !safeEqual(signPayload(payload), signature2)) return [];
-  try {
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!Array.isArray(decoded)) return [];
-    return decoded.filter(
-      (entry) => typeof entry?.bookingId === "string" && typeof entry?.token === "string" && entry.bookingId.length > 0 && entry.token.length >= 32
-    ).slice(-MAX_GUEST_ACCESS_ENTRIES);
-  } catch {
-    return [];
-  }
-}
-function appendSetCookieHeader(context, cookie) {
-  if (!context.res?.setHeader) return;
-  const existing = context.res.getHeader?.("Set-Cookie");
-  const existingValues = Array.isArray(existing) ? existing : existing ? [String(existing)] : [];
-  context.res.setHeader("Set-Cookie", [...existingValues, cookie]);
-}
-function shouldUseSecureCookie(context) {
-  const forwardedProtocol = String(getRequestHeader(context, "x-forwarded-proto")).toLowerCase();
-  const host = String(getRequestHeader(context, "host")).toLowerCase();
-  return forwardedProtocol === "https" || process.env.NODE_ENV === "production" || Boolean(process.env.PORTLESS_URL && !host.startsWith("127.0.0.1") && !host.startsWith("localhost"));
-}
-function createGuestAccessToken() {
-  return (0, import_node_crypto.randomBytes)(32).toString("base64url");
-}
-function hashGuestAccessToken(token) {
-  return (0, import_node_crypto.createHash)("sha256").update(token).digest("hex");
-}
-function guestAccessTokenMatches(tokenHash, token) {
-  if (!tokenHash || !token || token.length < 32) return false;
-  return safeEqual(tokenHash, hashGuestAccessToken(token));
-}
-function setGuestBookingAccess(context, bookingId, token) {
-  const entries = parseGuestAccessEntries(context).filter((entry) => entry.bookingId !== bookingId);
-  entries.push({ bookingId, token });
-  const payload = encodePayload(entries.slice(-MAX_GUEST_ACCESS_ENTRIES));
-  const value = `${payload}.${signPayload(payload)}`;
-  const secure = shouldUseSecureCookie(context) ? "; Secure" : "";
-  appendSetCookieHeader(
-    context,
-    `${GUEST_ACCESS_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${GUEST_ACCESS_MAX_AGE_SECONDS}${secure}`
-  );
-}
-function getGuestBookingToken(context, bookingId) {
-  return parseGuestAccessEntries(context).find((entry) => entry.bookingId === bookingId)?.token || null;
-}
-function canManageBookingRecords(context) {
-  return Boolean(
-    context.session?.data?.role?.canManageBookings || context.session?.data?.role?.canManagePayments
-  );
-}
-async function assertGuestBookingAccess(context, bookingId) {
-  const sudoContext = context.sudo();
-  const booking = await sudoContext.query.Booking.findOne({
-    where: { id: bookingId },
-    query: `
-      id
-      guestEmail
-      guestAccessTokenHash
-    `
-  });
-  if (!booking) throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
-  if (canManageBookingRecords(context)) return booking;
-  const token = getGuestBookingToken(context, bookingId);
-  if (!token || !guestAccessTokenMatches(booking.guestAccessTokenHash, token)) {
-    throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
-  }
-  return booking;
-}
-async function issueGuestBookingAccess(context, bookingId) {
-  const token = createGuestAccessToken();
-  await context.sudo().query.Booking.updateOne({
-    where: { id: bookingId },
-    data: {
-      guestAccessTokenHash: hashGuestAccessToken(token),
-      guestAccessTokenIssuedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  });
-  setGuestBookingAccess(context, bookingId, token);
-  return token;
-}
-async function verifyBookingEmailOwnership(context, booking, email2) {
-  if (!email2 || normalizeEmail(booking.guestEmail || "") !== normalizeEmail(email2)) {
-    throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
-  }
-  await issueGuestBookingAccess(context, booking.id);
-}
-async function ensureBookingHasGuestAccess(context, bookingId) {
-  const booking = await context.sudo().query.Booking.findOne({
-    where: { id: bookingId },
-    query: "id guestAccessTokenHash"
-  });
-  if (!booking) throw new Error("Booking not found.");
-  if (booking.guestAccessTokenHash) return false;
-  const token = createGuestAccessToken();
-  await context.sudo().query.Booking.updateOne({
-    where: { id: bookingId },
-    data: {
-      guestAccessTokenHash: hashGuestAccessToken(token),
-      guestAccessTokenIssuedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  });
-  return true;
-}
-function getGuestAccessBookingIds(context) {
-  return parseGuestAccessEntries(context).map((entry) => entry.bookingId);
-}
-var import_node_crypto, GUEST_ACCESS_COOKIE, GUEST_ACCESS_MAX_AGE_SECONDS, MAX_GUEST_ACCESS_ENTRIES, BOOKING_ACCESS_DENIED_MESSAGE;
-var init_guestBookingAccess = __esm({
-  "features/keystone/lib/guestBookingAccess.ts"() {
-    "use strict";
-    import_node_crypto = require("node:crypto");
-    GUEST_ACCESS_COOKIE = "hotel-guest-access";
-    GUEST_ACCESS_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-    MAX_GUEST_ACCESS_ENTRIES = 20;
-    BOOKING_ACCESS_DENIED_MESSAGE = "Reservation access could not be verified.";
-  }
-});
-
-// features/keystone/lib/sensitiveData.ts
-function key() {
-  const secret = process.env.HOTEL_DATA_ENCRYPTION_KEY || (process.env.NODE_ENV === "production" ? "" : "local-hotel-data-encryption-key-change-me");
-  if (secret.length < 32) throw new Error("Hotel data encryption is not configured.");
-  return (0, import_node_crypto2.createHash)("sha256").update(secret).digest();
-}
-function encryptSensitiveText(value) {
-  const text46 = String(value || "").trim();
-  if (!text46 || text46.startsWith("enc:v1:")) return text46;
-  const iv = (0, import_node_crypto2.randomBytes)(12);
-  const cipher = (0, import_node_crypto2.createCipheriv)("aes-256-gcm", key(), iv);
-  const encrypted = Buffer.concat([cipher.update(text46, "utf8"), cipher.final()]);
-  return `enc:v1:${iv.toString("base64url")}:${cipher.getAuthTag().toString("base64url")}:${encrypted.toString("base64url")}`;
-}
-function decryptSensitiveText(value) {
-  const text46 = String(value || "");
-  if (!text46.startsWith("enc:v1:")) return text46;
-  const [, , iv, tag, encrypted] = text46.split(":");
-  const decipher = (0, import_node_crypto2.createDecipheriv)("aes-256-gcm", key(), Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
-}
-var import_node_crypto2;
-var init_sensitiveData = __esm({
-  "features/keystone/lib/sensitiveData.ts"() {
-    "use strict";
-    import_node_crypto2 = require("node:crypto");
-  }
-});
-
 // features/keystone/lib/hotelLifecycle.ts
 function requirePrismaResult(value) {
   if (value instanceof Error || value?.extensions?.code === "KS_PRISMA_ERROR") throw value;
@@ -306,27 +118,6 @@ async function recordHotelLifecycleEvent({
     },
     select: { id: true }
   }));
-  requirePrismaResult(await prisma.hotelOutboxEvent.create({
-    data: {
-      eventKey,
-      topic: `hotel.${identity.aggregateType}.${identity.action}`,
-      aggregateType: identity.aggregateType,
-      aggregateId: identity.aggregateId,
-      requestHash,
-      propertyKey: HOTEL_PROPERTY_KEY,
-      payloadSnapshot: {
-        auditEventId: audit.id,
-        actorId: actorId || null,
-        before: stableValue(beforeSnapshot) ?? null,
-        after: stableValue(afterSnapshot) ?? null,
-        metadata: stableValue(metadata),
-        occurredAt: occurredAt.toISOString()
-      },
-      status: "pending",
-      attempts: 0,
-      availableAt: occurredAt
-    }
-  }));
   return audit;
 }
 var import_node_crypto3, HOTEL_PROPERTY_KEY;
@@ -335,6 +126,42 @@ var init_hotelLifecycle = __esm({
     "use strict";
     import_node_crypto3 = require("node:crypto");
     HOTEL_PROPERTY_KEY = "the-alder-house";
+  }
+});
+
+// features/keystone/inventory/roomNightLocks.ts
+function utcDay(date) {
+  const day2 = new Date(date.getTime());
+  day2.setUTCHours(0, 0, 0, 0);
+  return day2;
+}
+function getInventoryLockKeys(roomTypeId, checkIn, checkOut) {
+  if (!roomTypeId || Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime()) || checkOut <= checkIn) {
+    throw new Error("Invalid booking dates.");
+  }
+  const keys = [];
+  const current = utcDay(checkIn);
+  const end = utcDay(checkOut);
+  if ((end.getTime() - current.getTime()) / 864e5 > 366) throw new Error("Inventory lock range cannot exceed 366 nights.");
+  while (current < end) {
+    keys.push(
+      `hotel-inventory:${roomTypeId}:${current.toISOString().slice(0, 10)}`
+    );
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return keys.sort();
+}
+async function lockRoomInventory(prisma, roomTypeId, checkIn, checkOut) {
+  for (const key4 of getInventoryLockKeys(roomTypeId, checkIn, checkOut)) {
+    await prisma.$executeRawUnsafe(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      key4
+    );
+  }
+}
+var init_roomNightLocks = __esm({
+  "features/keystone/inventory/roomNightLocks.ts"() {
+    "use strict";
   }
 });
 
@@ -365,12 +192,498 @@ var init_serializableTransaction = __esm({
   }
 });
 
-// features/keystone/lib/rateEconomics.ts
-function rateEconomicsReview(plan, derivedConfig = null) {
-  return { name: plan.name, ...Object.fromEntries(ECONOMIC_FIELDS.map((field) => [field, plan[field]])), derivedConfig };
+// features/keystone/lib/hotelBusinessTime.ts
+async function lockHotelBusinessDate(prisma) {
+  await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", HOTEL_BUSINESS_DATE_LOCK);
 }
-function rateEconomicsHash(plan, derivedConfig = null) {
-  return hashLifecycleRequest({ plan: Object.fromEntries(ECONOMIC_FIELDS.map((field) => [field, plan[field]])), derivedConfig });
+function validatePropertyTimeZone(value) {
+  const zone = String(value || "").trim();
+  if (!zone || zone.length > 100) throw new Error("A property IANA time zone is required.");
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone }).format();
+  } catch {
+    throw new Error("Property time zone is invalid.");
+  }
+  return zone;
+}
+function parts(instant, timeZone) {
+  const fields = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(instant);
+  return Object.fromEntries(fields.map((field) => [field.type, field.value]));
+}
+function propertyCalendarDate(now, timeZone) {
+  const p = parts(now, validatePropertyTimeZone(timeZone));
+  return /* @__PURE__ */ new Date(`${p.year}-${p.month}-${p.day}T00:00:00.000Z`);
+}
+function isPastPropertyCalendarDate(serviceDate, now, timeZone) {
+  const scheduled = new Date(serviceDate);
+  if (Number.isNaN(scheduled.getTime())) throw new Error("Service date is invalid.");
+  scheduled.setUTCHours(0, 0, 0, 0);
+  return scheduled.getTime() < propertyCalendarDate(now, timeZone).getTime();
+}
+function businessDayKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error("Business date is invalid.");
+  return date.toISOString().slice(0, 10);
+}
+function assertCheckInOnOpenBusinessDate(arrivalDate, currentBusinessDate) {
+  const arrivalDay = businessDayKey(arrivalDate);
+  const businessDay = businessDayKey(currentBusinessDate);
+  if (arrivalDay !== businessDay) {
+    throw new Error(`Check-in is only allowed on the reservation arrival business date ${arrivalDay}; current business date is ${businessDay}.`);
+  }
+}
+function assertCheckoutDateReached(checkOutDate, currentBusinessDate) {
+  const departureDay = businessDayKey(checkOutDate);
+  const businessDay = businessDayKey(currentBusinessDate);
+  const lastNightDeparture = businessDayKey(new Date(new Date(currentBusinessDate).getTime() + 864e5));
+  if (departureDay > lastNightDeparture) {
+    throw new Error(`This guest is booked to depart on ${departureDay}. To check out early, first set New departure to ${lastNightDeparture} under Departure date and choose Reprice remaining stay (tonight stays charged; removing later nights needs a waiver reason), then check out.`);
+  }
+  return departureDay > businessDay;
+}
+function propertyArrivalInstant(day2, time, zone) {
+  const date = new Date(day2).toISOString().slice(0, 10);
+  const match = String(time).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) throw new Error("Property arrival time is invalid.");
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (minute > 59 || (match[3] ? hour < 1 || hour > 12 : hour > 23)) throw new Error("Property arrival time is invalid.");
+  if (match[3]) hour = hour % 12 + (match[3].toUpperCase() === "PM" ? 12 : 0);
+  const timeZone = validatePropertyTimeZone(zone);
+  const wall = Date.parse(`${date}T${String(hour).padStart(2, "0")}:${match[2]}:00.000Z`);
+  const offsets = /* @__PURE__ */ new Set();
+  for (const delta of [-864e5, 0, 864e5]) {
+    const sample = new Date(wall + delta);
+    const p = parts(sample, timeZone);
+    offsets.add(Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}.000Z`) - sample.getTime());
+  }
+  const candidates = [...offsets].map((offset) => new Date(wall - offset)).filter((candidate) => {
+    const p = parts(candidate, timeZone);
+    return `${p.year}-${p.month}-${p.day}` === date && Number(p.hour) === hour && Number(p.minute) === minute;
+  }).sort((a, b) => a.getTime() - b.getTime());
+  if (!candidates.length) throw new Error("Arrival time does not exist on this date in the property time zone.");
+  return candidates[0];
+}
+async function currentPostingDate(prisma, requested) {
+  await lockHotelBusinessDate(prisma);
+  const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
+  if (!clock) throw new Error("Property business date is not configured.");
+  const current = new Date(clock.currentBusinessDate);
+  const day2 = requested ? new Date(requested) : current;
+  if (Number.isNaN(day2.getTime())) throw new Error("serviceDate must be a valid date.");
+  day2.setUTCHours(0, 0, 0, 0);
+  if (day2.getTime() !== current.getTime()) throw new Error("Post to the current business date; prior-period corrections require a current-day reasoned reversal.");
+  return day2;
+}
+var HOTEL_BUSINESS_DATE_LOCK;
+var init_hotelBusinessTime = __esm({
+  "features/keystone/lib/hotelBusinessTime.ts"() {
+    "use strict";
+    init_hotelLifecycle();
+    HOTEL_BUSINESS_DATE_LOCK = `hotel-business-date:${HOTEL_PROPERTY_KEY}`;
+  }
+});
+
+// features/keystone/operations/roomOutages.ts
+async function loadRoomOutages(prisma) {
+  const events = await prisma.hotelAuditEvent.findMany({ where: { aggregateType: "room_outage" }, orderBy: [{ occurredAt: "asc" }, { id: "asc" }] });
+  const latest2 = /* @__PURE__ */ new Map();
+  for (const event of events) {
+    const outage = event.afterSnapshot?.outage;
+    if (outage && Number(outage.revision || 0) > Number(latest2.get(event.aggregateId)?.revision || 0)) latest2.set(event.aggregateId, outage);
+  }
+  return [...latest2.values()];
+}
+function roomOutageOverlaps(outage, roomId, start, end) {
+  return outage.status === "scheduled" && outage.roomId === roomId && new Date(outage.startDate) < end && new Date(outage.endDate) > start;
+}
+async function assertRoomNotOutOfOrder(prisma, roomId, start, end) {
+  if ((await loadRoomOutages(prisma)).some((outage) => roomOutageOverlaps(outage, roomId, start, end))) throw new Error("Physical room has a scheduled out-of-order interval during this stay.");
+}
+async function getHotelRoomOutages(_root, _args, context) {
+  if (!permissions.canManageRooms({ session: context.session }) && !permissions.canManageHousekeeping({ session: context.session })) throw new Error("Not authorized to read room outages.");
+  return JSON.stringify(await loadRoomOutages(context.prisma));
+}
+async function updateHotelRoomOutage(_root, input, context) {
+  if (!permissions.canManageRooms({ session: context.session })) throw new Error("Only room managers may schedule or cancel room outages.");
+  const reason = String(input.reason || "").trim();
+  const eventKey = String(input.idempotencyKey || "").trim();
+  if (!reason || reason.length > 1e3 || !eventKey || eventKey.length > 200) throw new Error("A reason and stable idempotency key are required.");
+  if (!["schedule", "cancel"].includes(input.action)) throw new Error("Unsupported outage command.");
+  const outageId = input.action === "schedule" ? `outage_${(0, import_node_crypto4.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24)}` : String(input.outageId || "");
+  const identity = { request: input, aggregateType: "room_outage", aggregateId: outageId, action: input.action };
+  return runSerializableTransaction(context, async (tx) => {
+    const p = tx.prisma;
+    await lockHotelLifecycle(p, eventKey);
+    await lockHotelBusinessDate(p);
+    if (await findHotelLifecycleReplay(p, eventKey, identity)) return JSON.stringify(await loadRoomOutages(p));
+    const room = await p.room.findUnique({ where: { id: input.roomId } });
+    if (!room?.roomTypeId) throw new Error("Physical room not found.");
+    let outage;
+    const existing = await loadRoomOutages(p);
+    if (input.action === "schedule") {
+      const start = new Date(String(input.startDate || "")), end = new Date(String(input.endDate || ""));
+      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start || (end.getTime() - start.getTime()) / 864e5 > 366) throw new Error("Outage dates must be a valid range of at most 366 nights.");
+      if (start.getUTCHours() || start.getUTCMinutes() || start.getUTCSeconds() || start.getUTCMilliseconds() || end.getUTCHours() || end.getUTCMinutes() || end.getUTCSeconds() || end.getUTCMilliseconds()) throw new Error("Outage dates must be property calendar dates at midnight UTC.");
+      await lockRoomInventory(p, room.roomTypeId, start, end);
+      await p.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-room:${room.id}`);
+      const conflicting = await p.roomAssignment.findFirst({ where: { roomId: room.id, booking: { OR: [{ status: { in: ["confirmed", "checked_in", "cancellation_pending"] } }, { status: "pending", holdExpiresAt: { gt: /* @__PURE__ */ new Date() } }], checkInDate: { lt: end }, checkOutDate: { gt: start } } } });
+      if (conflicting) throw new Error("Move or amend reservations assigned to this room before scheduling an overlapping outage.");
+      if (existing.some((item) => roomOutageOverlaps(item, room.id, start, end))) throw new Error("This room already has an overlapping outage.");
+      const bookings = await p.booking.findMany({ where: { OR: [{ status: { in: ["confirmed", "checked_in", "cancellation_pending"] } }, { status: "pending", holdExpiresAt: { gt: /* @__PURE__ */ new Date() } }], checkInDate: { lt: end }, checkOutDate: { gt: start }, roomAssignments: { some: { roomTypeId: room.roomTypeId } } }, include: { roomAssignments: true } });
+      const rooms = await p.room.findMany({ where: { roomTypeId: room.roomTypeId } });
+      const repairs = await p.maintenanceRequest.findMany({ where: { room: { roomTypeId: room.roomTypeId }, status: { notIn: ["verified", "cancelled"] } }, select: { roomId: true } });
+      const repairRoomIds = new Set(repairs.map((repair) => repair.roomId));
+      const inventories = await p.roomInventory.findMany({ where: { roomTypeId: room.roomTypeId, date: { gte: start, lt: end } } });
+      const allocations = await p.groupBlockAllocation.findMany({ where: { roomTypeId: room.roomTypeId, groupBlock: { status: { in: ["tentative", "definite"] }, arrivalDate: { lt: end }, departureDate: { gt: start }, OR: [{ releaseDate: null }, { releaseDate: { gt: /* @__PURE__ */ new Date() } }] } }, include: { groupBlock: true } });
+      for (let day2 = new Date(start); day2 < end; day2 = new Date(day2.getTime() + 864e5)) {
+        const next2 = new Date(day2.getTime() + 864e5);
+        const capacity = rooms.filter((candidate) => candidate.id !== room.id && !repairRoomIds.has(candidate.id) && !["maintenance", "out_of_order"].includes(candidate.status) && !existing.some((item) => roomOutageOverlaps(item, candidate.id, day2, next2))).length;
+        const sold = bookings.filter((booking) => booking.checkInDate < next2 && booking.checkOutDate > day2).reduce((sum, booking) => sum + booking.roomAssignments.filter((a) => a.roomTypeId === room.roomTypeId).length, 0);
+        const inventory = inventories.find((item) => new Date(item.date).toISOString().slice(0, 10) === day2.toISOString().slice(0, 10));
+        const contracted = allocations.filter((item) => item.groupBlock.arrivalDate < next2 && item.groupBlock.departureDate > day2).reduce((sum, item) => sum + Math.max(0, item.roomsHeld - item.roomsPickedUp), 0);
+        const inventoryCapacity = inventory ? Math.max(0, Math.min(rooms.length, inventory.totalRooms) - Math.max(inventory.blockedRooms, rooms.length - capacity)) : capacity;
+        if (Math.max(sold, Number(inventory?.bookedRooms || 0)) + contracted > inventoryCapacity) throw new Error(`Outage would remove sold room capacity on ${day2.toISOString().slice(0, 10)}.`);
+      }
+      outage = { revision: 1, id: outageId, roomId: room.id, roomTypeId: room.roomTypeId, startDate: start.toISOString(), endDate: end.toISOString(), reason, status: "scheduled" };
+    } else {
+      const found = existing.find((item) => item.id === outageId && item.roomId === room.id);
+      if (!found || found.status !== "scheduled") throw new Error("Active outage does not belong to this room.");
+      await lockRoomInventory(p, room.roomTypeId, new Date(found.startDate), new Date(found.endDate));
+      await p.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-room:${room.id}`);
+      const [maintenance, tasks] = await Promise.all([p.maintenanceRequest.count({ where: { roomId: room.id, status: { notIn: ["verified", "cancelled"] } } }), p.housekeepingTask.count({ where: { roomId: room.id, status: { not: "completed" } } })]);
+      if (maintenance || tasks) throw new Error("Resolve maintenance and housekeeping before returning outage capacity.");
+      outage = { ...found, revision: found.revision + 1, status: "cancelled", reason };
+    }
+    await recordHotelLifecycleEvent({ prisma: p, eventKey, actorId: context.session.itemId, identity, beforeSnapshot: existing.find((item) => item.id === outageId) || null, afterSnapshot: { outage } });
+    return JSON.stringify(await loadRoomOutages(p));
+  });
+}
+var import_node_crypto4;
+var init_roomOutages = __esm({
+  "features/keystone/operations/roomOutages.ts"() {
+    "use strict";
+    import_node_crypto4 = require("node:crypto");
+    init_access();
+    init_hotelLifecycle();
+    init_roomNightLocks();
+    init_serializableTransaction();
+    init_hotelBusinessTime();
+  }
+});
+
+// features/keystone/inventory/roomAvailability.ts
+function hotelStayDates(checkInValue, checkOutValue) {
+  const checkIn = new Date(checkInValue);
+  const checkOut = new Date(checkOutValue);
+  checkIn.setUTCHours(0, 0, 0, 0);
+  checkOut.setUTCHours(0, 0, 0, 0);
+  if (Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime()) || checkOut <= checkIn) {
+    throw new Error("Invalid stay dates.");
+  }
+  if ((checkOut.getTime() - checkIn.getTime()) / 864e5 > MAX_PUBLIC_STAY_NIGHTS) throw new Error(`Stays may not exceed ${MAX_PUBLIC_STAY_NIGHTS} nights.`);
+  const days = [];
+  for (const day2 = new Date(checkIn); day2 < checkOut; day2.setUTCDate(day2.getUTCDate() + 1)) days.push(new Date(day2));
+  if (days.length > MAX_PUBLIC_STAY_NIGHTS) throw new Error(`Stays may not exceed ${MAX_PUBLIC_STAY_NIGHTS} nights.`);
+  return { checkIn, checkOut, days };
+}
+function key(date) {
+  return date.toISOString().slice(0, 10);
+}
+async function getHotelAvailability(context, options) {
+  const { checkIn, checkOut, days } = hotelStayDates(options.checkInDate, options.checkOutDate);
+  const roomTypes = await context.prisma.roomType.findMany({
+    where: options.roomTypeId ? { id: options.roomTypeId } : void 0,
+    orderBy: [{ baseRateMinor: "asc" }, { id: "asc" }],
+    take: options.roomTypeId ? 1 : 100,
+    include: {
+      rooms: { select: { id: true, status: true } },
+      roomImages: { orderBy: { order: "asc" }, take: 12 }
+    }
+  });
+  if (options.roomTypeId && !roomTypes.length) throw new Error("Room type not found.");
+  const roomTypeIds = roomTypes.map((item) => item.id);
+  const [bookings, inventories, allocations] = await Promise.all([
+    context.prisma.booking.findMany({
+      where: {
+        OR: [
+          { status: { in: ["confirmed", "checked_in", "cancellation_pending"] } },
+          { status: "pending", holdExpiresAt: { gt: /* @__PURE__ */ new Date() } }
+        ],
+        checkInDate: { lt: checkOut },
+        checkOutDate: { gt: checkIn },
+        roomAssignments: { some: { roomTypeId: { in: roomTypeIds } } },
+        ...options.excludeBookingId ? { id: { not: options.excludeBookingId } } : {}
+      },
+      select: { id: true, checkInDate: true, checkOutDate: true, roomAssignments: { select: { roomTypeId: true, roomId: true } } }
+    }),
+    context.prisma.roomInventory.findMany({
+      where: { roomTypeId: { in: roomTypeIds }, date: { gte: checkIn, lt: checkOut } },
+      take: roomTypeIds.length * days.length
+    }),
+    context.prisma.groupBlockAllocation.findMany({
+      where: {
+        roomTypeId: { in: roomTypeIds },
+        groupBlock: { OR: [{ releaseDate: null }, { releaseDate: { gt: /* @__PURE__ */ new Date() } }], status: { in: ["tentative", "definite"] }, arrivalDate: { lt: checkOut }, departureDate: { gt: checkIn } }
+      },
+      include: { groupBlock: { select: { arrivalDate: true, departureDate: true, releaseDate: true } } }
+    })
+  ]);
+  const outages = await loadRoomOutages(context.prisma);
+  const repairs = await context.prisma.maintenanceRequest.findMany({ where: { status: { notIn: ["verified", "cancelled"] }, room: { roomTypeId: { in: roomTypeIds } } }, select: { roomId: true } });
+  const repairRooms = new Set(repairs.map((repair) => repair.roomId));
+  const inventoryMap = new Map(inventories.map((item) => [`${item.roomTypeId}:${key(item.date)}`, item]));
+  return roomTypes.map((roomType) => {
+    const byDay = days.map((day2) => {
+      const next2 = new Date(day2);
+      next2.setUTCDate(next2.getUTCDate() + 1);
+      const booked = bookings.reduce((count, booking) => count + (booking.checkInDate < next2 && booking.checkOutDate > day2 ? booking.roomAssignments.filter((assignment) => assignment.roomTypeId === roomType.id).length : 0), 0);
+      const held = allocations.filter(
+        (allocation) => (!allocation.groupBlock.releaseDate || new Date(allocation.groupBlock.releaseDate) > /* @__PURE__ */ new Date()) && allocation.roomTypeId === roomType.id && allocation.groupBlock.arrivalDate < next2 && allocation.groupBlock.departureDate > day2
+      ).reduce((sum, allocation) => sum + Math.max(0, allocation.roomsHeld - allocation.roomsPickedUp), 0);
+      const inventory = inventoryMap.get(`${roomType.id}:${key(day2)}`);
+      const occupiedPhysical = new Set(bookings.filter((booking) => booking.checkInDate < next2 && booking.checkOutDate > day2).flatMap((booking) => booking.roomAssignments.map((assignment) => assignment.roomId).filter(Boolean)));
+      const unavailablePhysical = roomType.rooms.filter((room) => !occupiedPhysical.has(room.id) && (UNSAFE_SELL_STATUSES.has(room.status) || repairRooms.has(room.id) || outages.some((outage) => roomOutageOverlaps(outage, room.id, day2, next2)))).length;
+      const total = Math.min(inventory?.totalRooms ?? roomType.rooms.length, roomType.rooms.length);
+      const blocked = Math.max(inventory?.blockedRooms ?? 0, unavailablePhysical);
+      const excludedInventory = options.excludeInventoryBooking;
+      const selfInventory = excludedInventory && excludedInventory.roomTypeId === roomType.id && excludedInventory.checkInDate < next2 && excludedInventory.checkOutDate > day2 ? 1 : 0;
+      const occupied = Math.max(Math.max(0, Number(inventory?.bookedRooms ?? 0) - selfInventory), booked);
+      return { date: key(day2), available: Math.max(0, total - blocked - occupied - held), booked: occupied, held, blocked, total };
+    });
+    return { ...roomType, availabilityByDay: byDay, availableCount: Math.min(...byDay.map((day2) => day2.available)) };
+  });
+}
+async function assertHotelAvailability(context, options) {
+  const result = (await getHotelAvailability(context, options))[0];
+  if (!result || result.availableCount < 1) {
+    const soldOut = result?.availabilityByDay.find((day2) => day2.available < 1);
+    throw new Error(`Room type is sold out${soldOut ? ` on ${soldOut.date}` : ""}.`);
+  }
+  return result;
+}
+var UNSAFE_SELL_STATUSES, MAX_PUBLIC_STAY_NIGHTS;
+var init_roomAvailability = __esm({
+  "features/keystone/inventory/roomAvailability.ts"() {
+    "use strict";
+    init_roomOutages();
+    UNSAFE_SELL_STATUSES = /* @__PURE__ */ new Set(["maintenance", "out_of_order"]);
+    MAX_PUBLIC_STAY_NIGHTS = 31;
+  }
+});
+
+// features/keystone/lib/guestBookingAccess.ts
+function getGuestAccessSecret() {
+  const secret = process.env.GUEST_ACCESS_SECRET || process.env.SESSION_SECRET || process.env.NEXTAUTH_SECRET || (process.env.NODE_ENV === "production" ? "" : "hotel-guest-access-development-secret");
+  if (secret.length < 32) throw new Error("Guest access signing is not configured.");
+  return secret;
+}
+function normalizeEmail(email) {
+  return email.trim().toLowerCase();
+}
+function encodePayload(entries) {
+  return Buffer.from(JSON.stringify(entries), "utf8").toString("base64url");
+}
+function signPayload(payload) {
+  return (0, import_node_crypto5.createHmac)("sha256", getGuestAccessSecret()).update(payload).digest("base64url");
+}
+function safeEqual2(left, right) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && (0, import_node_crypto5.timingSafeEqual)(leftBuffer, rightBuffer);
+}
+function parseCookies(cookieHeader) {
+  if (!cookieHeader) return /* @__PURE__ */ new Map();
+  return new Map(
+    cookieHeader.split(";").map((part) => {
+      const [rawName, ...rawValue] = part.trim().split("=");
+      return [rawName, decodeURIComponent(rawValue.join("="))];
+    })
+  );
+}
+function getCookieHeader(context) {
+  return context.req?.headers?.cookie || context.req?.headers?.get?.("cookie") || "";
+}
+function getRequestHeader(context, name) {
+  return context.req?.headers?.[name] || context.req?.headers?.get?.(name) || "";
+}
+function parseGuestAccessEntries(context) {
+  const value = parseCookies(getCookieHeader(context)).get(GUEST_ACCESS_COOKIE);
+  if (!value) return [];
+  const [payload, signature2] = value.split(".");
+  if (!payload || !signature2 || !safeEqual2(signPayload(payload), signature2)) return [];
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!Array.isArray(decoded)) return [];
+    return decoded.filter(
+      (entry) => typeof entry?.bookingId === "string" && typeof entry?.token === "string" && entry.bookingId.length > 0 && entry.token.length >= 32
+    ).slice(-MAX_GUEST_ACCESS_ENTRIES);
+  } catch {
+    return [];
+  }
+}
+function appendSetCookieHeader(context, cookie) {
+  if (!context.res?.setHeader) return;
+  const existing = context.res.getHeader?.("Set-Cookie");
+  const existingValues = Array.isArray(existing) ? existing : existing ? [String(existing)] : [];
+  context.res.setHeader("Set-Cookie", [...existingValues, cookie]);
+}
+function shouldUseSecureCookie(context) {
+  const forwardedProtocol = String(getRequestHeader(context, "x-forwarded-proto")).toLowerCase();
+  const host = String(getRequestHeader(context, "host")).toLowerCase();
+  return forwardedProtocol === "https" || process.env.NODE_ENV === "production" || Boolean(process.env.PORTLESS_URL && !host.startsWith("127.0.0.1") && !host.startsWith("localhost"));
+}
+function createGuestAccessToken() {
+  return (0, import_node_crypto5.randomBytes)(32).toString("base64url");
+}
+function hashGuestAccessToken(token) {
+  return (0, import_node_crypto5.createHash)("sha256").update(token).digest("hex");
+}
+function guestAccessTokenMatches(tokenHash, token) {
+  if (!tokenHash || !token || token.length < 32) return false;
+  return safeEqual2(tokenHash, hashGuestAccessToken(token));
+}
+function setGuestBookingAccess(context, bookingId, token) {
+  const entries = parseGuestAccessEntries(context).filter((entry) => entry.bookingId !== bookingId);
+  entries.push({ bookingId, token });
+  const payload = encodePayload(entries.slice(-MAX_GUEST_ACCESS_ENTRIES));
+  const value = `${payload}.${signPayload(payload)}`;
+  const secure = shouldUseSecureCookie(context) ? "; Secure" : "";
+  appendSetCookieHeader(
+    context,
+    `${GUEST_ACCESS_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${GUEST_ACCESS_MAX_AGE_SECONDS}${secure}`
+  );
+}
+function listGuestBookingAccess(context) {
+  return parseGuestAccessEntries(context);
+}
+function getGuestBookingToken(context, bookingId) {
+  return parseGuestAccessEntries(context).find((entry) => entry.bookingId === bookingId)?.token || null;
+}
+function canManageBookingRecords(context) {
+  return Boolean(
+    context.session?.data?.role?.canManageBookings || context.session?.data?.role?.canManagePayments
+  );
+}
+async function assertGuestBookingAccess(context, bookingId) {
+  const sudoContext = context.sudo();
+  const booking = await sudoContext.query.Booking.findOne({
+    where: { id: bookingId },
+    query: `
+      id
+      guestEmail
+      guestAccessTokenHash
+      guest { id }
+    `
+  });
+  if (!booking) throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
+  if (canManageBookingRecords(context)) return booking;
+  const session = context.session;
+  if (session?.itemId && session.data?.isActive === true && !session.data?.role && booking.guest?.id === session.itemId) return booking;
+  const token = getGuestBookingToken(context, bookingId);
+  if (!token || !guestAccessTokenMatches(booking.guestAccessTokenHash, token)) {
+    throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
+  }
+  return booking;
+}
+async function issueGuestBookingAccess(context, bookingId) {
+  const token = createGuestAccessToken();
+  await context.sudo().query.Booking.updateOne({
+    where: { id: bookingId },
+    data: {
+      guestAccessTokenHash: hashGuestAccessToken(token),
+      guestAccessTokenIssuedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }
+  });
+  setGuestBookingAccess(context, bookingId, token);
+  return token;
+}
+async function verifyBookingEmailOwnership(context, booking, email) {
+  if (!email || normalizeEmail(booking.guestEmail || "") !== normalizeEmail(email)) {
+    throw new Error(BOOKING_ACCESS_DENIED_MESSAGE);
+  }
+  await issueGuestBookingAccess(context, booking.id);
+}
+async function ensureBookingHasGuestAccess(context, bookingId) {
+  const booking = await context.sudo().query.Booking.findOne({
+    where: { id: bookingId },
+    query: "id guestAccessTokenHash"
+  });
+  if (!booking) throw new Error("Booking not found.");
+  if (booking.guestAccessTokenHash) return false;
+  const token = createGuestAccessToken();
+  await context.sudo().query.Booking.updateOne({
+    where: { id: bookingId },
+    data: {
+      guestAccessTokenHash: hashGuestAccessToken(token),
+      guestAccessTokenIssuedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }
+  });
+  return true;
+}
+function getGuestAccessBookingIds(context) {
+  return parseGuestAccessEntries(context).map((entry) => entry.bookingId);
+}
+var import_node_crypto5, GUEST_ACCESS_COOKIE, GUEST_ACCESS_MAX_AGE_SECONDS, MAX_GUEST_ACCESS_ENTRIES, BOOKING_ACCESS_DENIED_MESSAGE;
+var init_guestBookingAccess = __esm({
+  "features/keystone/lib/guestBookingAccess.ts"() {
+    "use strict";
+    import_node_crypto5 = require("node:crypto");
+    GUEST_ACCESS_COOKIE = "hotel-guest-access";
+    GUEST_ACCESS_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+    MAX_GUEST_ACCESS_ENTRIES = 20;
+    BOOKING_ACCESS_DENIED_MESSAGE = "Reservation access could not be verified.";
+  }
+});
+
+// features/keystone/lib/sensitiveData.ts
+function key2() {
+  const secret = process.env.HOTEL_DATA_ENCRYPTION_KEY || (process.env.NODE_ENV === "production" ? "" : "local-hotel-data-encryption-key-change-me");
+  if (secret.length < 32) throw new Error("Hotel data encryption is not configured.");
+  return (0, import_node_crypto6.createHash)("sha256").update(secret).digest();
+}
+function encryptSensitiveText(value) {
+  const text44 = String(value || "").trim();
+  if (!text44 || text44.startsWith("enc:v1:")) return text44;
+  const iv = (0, import_node_crypto6.randomBytes)(12);
+  const cipher = (0, import_node_crypto6.createCipheriv)("aes-256-gcm", key2(), iv);
+  const encrypted = Buffer.concat([cipher.update(text44, "utf8"), cipher.final()]);
+  return `enc:v1:${iv.toString("base64url")}:${cipher.getAuthTag().toString("base64url")}:${encrypted.toString("base64url")}`;
+}
+function decryptSensitiveText(value) {
+  const text44 = String(value || "");
+  if (!text44.startsWith("enc:v1:")) return text44;
+  const [, , iv, tag, encrypted] = text44.split(":");
+  const decipher = (0, import_node_crypto6.createDecipheriv)("aes-256-gcm", key2(), Buffer.from(iv, "base64url"));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
+}
+var import_node_crypto6;
+var init_sensitiveData = __esm({
+  "features/keystone/lib/sensitiveData.ts"() {
+    "use strict";
+    import_node_crypto6 = require("node:crypto");
+  }
+});
+
+// features/keystone/lib/moneyText.ts
+function moneyText(minor3, currencyCode = "USD") {
+  const value = Number(minor3);
+  if (!Number.isFinite(value)) return String(minor3);
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: currencyCode || "USD" }).format(value / 100);
+}
+var init_moneyText = __esm({
+  "features/keystone/lib/moneyText.ts"() {
+    "use strict";
+  }
+});
+
+// features/keystone/rates/economics.ts
+function rateEconomicsReview(plan, derivedConfig = null, seasons = []) {
+  return { name: plan.name, ...Object.fromEntries(ECONOMIC_FIELDS.map((field) => [field, plan[field]])), derivedConfig, seasons: seasonFacts(seasons) };
+}
+function rateEconomicsHash(plan, derivedConfig = null, seasons = []) {
+  return hashLifecycleRequest({ plan: Object.fromEntries(ECONOMIC_FIELDS.map((field) => [field, plan[field]])), derivedConfig, seasons: seasonFacts(seasons) });
 }
 async function loadRateEconomics(prisma, ratePlanId) {
   const [plan, events] = await Promise.all([
@@ -378,19 +691,22 @@ async function loadRateEconomics(prisma, ratePlanId) {
     prisma.hotelAuditEvent.findMany({ where: { propertyKey: HOTEL_PROPERTY_KEY, aggregateType: "derived_rate", aggregateId: ratePlanId } })
   ]);
   if (!plan) throw new Error("Rate plan not found.");
+  const seasons = plan.roomTypeId ? await prisma.seasonalRate.findMany({ where: { roomTypeId: plan.roomTypeId, isActive: true }, orderBy: [{ priority: "desc" }, { id: "asc" }] }) : [];
   const derivedConfig = events.reduce((latest2, event) => Number(event.afterSnapshot?.derivedRate?.revision || 0) > Number(latest2?.revision || 0) ? event.afterSnapshot.derivedRate : latest2, null);
-  return { plan, derivedConfig, economicsHash: rateEconomicsHash(plan, derivedConfig) };
+  return { plan, derivedConfig, seasons, economicsHash: rateEconomicsHash(plan, derivedConfig, seasons) };
 }
-var ECONOMIC_FIELDS;
-var init_rateEconomics = __esm({
-  "features/keystone/lib/rateEconomics.ts"() {
+var ECONOMIC_FIELDS, SEASON_FIELDS, seasonFacts;
+var init_economics = __esm({
+  "features/keystone/rates/economics.ts"() {
     "use strict";
     init_hotelLifecycle();
     ECONOMIC_FIELDS = ["id", "roomTypeId", "baseRateMinor", "currencyCode", "minimumStay", "maximumStay", "advanceBookingMin", "advanceBookingMax", "validFrom", "validTo", "applicableDays", "isPromotional", "promoCode", "cancellationPolicy", "mealPlan", "seasonalAdjustments"];
+    SEASON_FIELDS = ["id", "name", "startDate", "endDate", "priority", "priceMultiplier", "priceAdjustment", "minimumStay"];
+    seasonFacts = (seasons) => seasons.map((season) => Object.fromEntries(SEASON_FIELDS.map((field) => [field, season[field]])));
   }
 });
 
-// features/keystone/lib/hotelGuestGovernance.ts
+// features/keystone/guest-governance/commands.ts
 function text14(value, label, max = 500) {
   const result = String(value || "").trim();
   if (!result || result.length > max) throw new Error(`${label} is required (maximum ${max} characters).`);
@@ -400,7 +716,7 @@ function allow(context, permission) {
   if (!permissions[permission]({ session: context.session })) throw new Error("Not authorized for guest governance or independent approvals.");
 }
 function idFor(key4) {
-  return (0, import_node_crypto4.createHash)("sha256").update(key4).digest("hex").slice(0, 24);
+  return (0, import_node_crypto7.createHash)("sha256").update(key4).digest("hex").slice(0, 24);
 }
 function resolveGuestIdentityInput(resolvedData, encrypt = encryptSensitiveText) {
   if (resolvedData.idNumber === void 0) return void 0;
@@ -612,6 +928,7 @@ function assertHotelApprovalEvidence(request, decision, input) {
   if (input.parameters !== void 0 && hashLifecycleRequest(request.parameters) !== hashLifecycleRequest(input.parameters)) throw new Error("Approval parameters do not match the requested change.");
 }
 async function requireHotelApproval(prisma, input) {
+  if (!String(input.approvalId || "").trim()) throw new Error(`This needs approval from a second staff member. On the Approvals page, request a "${APPROVAL_ACTION_LABELS[input.action]}" approval for ${input.aggregateId}${input.amountMinor ? ` for ${moneyText(input.amountMinor)}` : ""}; once another authorized staff member approves it, enter its approval ID here.`);
   const approvalId = text14(input.approvalId, "Independent approval ID", 100);
   await lock(prisma, `approval:${approvalId}`);
   const [request, decision, consumed] = await Promise.all([
@@ -649,7 +966,8 @@ async function updateHotelApproval(_root, { payload, idempotencyKey }, context) 
     let after;
     if (decision) {
       const request2 = await prisma.hotelAuditEvent.findUnique({ where: { eventKey: `hotel-approval:${approvalId}:request` } });
-      if (!request2 || request2.afterSnapshot.requestedBy === context.session.itemId) throw new Error("A different authorized staff member must approve this request.");
+      if (!request2) throw new Error("Approval request not found. Refresh the approvals list and try again.");
+      if (request2.afterSnapshot.requestedBy === context.session.itemId) throw new Error("You requested this approval, so a different authorized staff member must approve or decline it. It stays awaiting a decision.");
       after = { status: data.status, approvedBy: context.session.itemId, reason: text14(data.reason, "Approval reason") };
     } else {
       if (!["refund", "write_off", "rate_publish", "cash_variance", "security_capture", "payout_reconcile"].includes(data.action) || !Number.isSafeInteger(data.amountMinor) || data.amountMinor < 0) throw new Error("Valid approval action and amount are required.");
@@ -660,11 +978,11 @@ async function updateHotelApproval(_root, { payload, idempotencyKey }, context) 
       if (data.action === "rate_publish") {
         const economics = await loadRateEconomics(prisma, text14(data.aggregateId, "Target ID", 200));
         parameters = { ...parameters, economicsHash: economics.economicsHash };
-        economicReview = { target: rateEconomicsReview(economics.plan, economics.derivedConfig) };
+        economicReview = { target: rateEconomicsReview(economics.plan, economics.derivedConfig, economics.seasons) };
         if (parameters.derivedRate?.enabled) {
           const source = await loadRateEconomics(prisma, text14(parameters.derivedRate.sourcePlanId, "Source rate ID", 200));
           parameters.sourceEconomicsHash = source.economicsHash;
-          economicReview.source = rateEconomicsReview(source.plan, source.derivedConfig);
+          economicReview.source = rateEconomicsReview(source.plan, source.derivedConfig, source.seasons);
         }
       }
       after = { action: data.action, aggregateId: text14(data.aggregateId, "Target ID", 200), amountMinor: data.amountMinor, requestedBy: context.session.itemId, reason: text14(data.reason, "Request reason"), parameters, ...economicReview ? { economicReview } : {} };
@@ -678,16 +996,17 @@ async function updateHotelApproval(_root, { payload, idempotencyKey }, context) 
     return JSON.stringify({ approvalId, ...after });
   });
 }
-var import_node_crypto4, GUEST_EXPORT_FIELDS, hotelGuestGovernanceTypeDefs, hotelGuestGovernanceResolvers;
-var init_hotelGuestGovernance = __esm({
-  "features/keystone/lib/hotelGuestGovernance.ts"() {
+var import_node_crypto7, GUEST_EXPORT_FIELDS, APPROVAL_ACTION_LABELS, hotelGuestGovernanceTypeDefs, hotelGuestGovernanceResolvers;
+var init_commands = __esm({
+  "features/keystone/guest-governance/commands.ts"() {
     "use strict";
-    import_node_crypto4 = require("node:crypto");
+    import_node_crypto7 = require("node:crypto");
     init_access();
     init_hotelLifecycle();
     init_serializableTransaction();
     init_sensitiveData();
-    init_rateEconomics();
+    init_moneyText();
+    init_economics();
     GUEST_EXPORT_FIELDS = {
       id: true,
       firstName: true,
@@ -707,6 +1026,7 @@ var init_hotelGuestGovernance = __esm({
       specialNotes: true,
       createdAt: true
     };
+    APPROVAL_ACTION_LABELS = { refund: "Refund", write_off: "Write off", rate_publish: "Rate publish", cash_variance: "Cash variance", security_capture: "Security capture", payout_reconcile: "Payout reconcile" };
     hotelGuestGovernanceTypeDefs = String.raw`
   extend type Query { hotelGuestGovernance(guestId: ID!): String!, hotelGovernanceGuestSearch(search: String!): String!, hotelApprovalWorkspace(offset: Int): String! }
   extend type Mutation {
@@ -741,7 +1061,7 @@ var init_channelCredentials = __esm({
   }
 });
 
-// features/keystone/lib/folioLedger.ts
+// features/keystone/folios/ledger.ts
 function normalizeFolioCurrency(value) {
   const currencyCode = value.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(currencyCode)) {
@@ -842,20 +1162,36 @@ function calculateFolioBalance(entries) {
 function assertFolioCanClose(entries) {
   const totals = calculateFolioBalance(entries);
   if (totals.balanceMinor > 0) {
-    throw new Error(`Folio has an outstanding debit balance of ${totals.balanceMinor} minor units.`);
+    throw new Error(`Folio has an outstanding debit balance of ${moneyText(totals.balanceMinor)}.`);
   }
   if (totals.balanceMinor < 0) {
-    throw new Error(`Folio has an outstanding credit balance of ${Math.abs(totals.balanceMinor)} minor units.`);
+    throw new Error(`Folio has an outstanding credit balance of ${moneyText(Math.abs(totals.balanceMinor))}.`);
   }
   return totals;
 }
-var init_folioLedger = __esm({
-  "features/keystone/lib/folioLedger.ts"() {
+function assertNoFutureDatedFolioEntries(entries, currentBusinessDate) {
+  const dayKey2 = (value) => {
+    const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+    if (Number.isNaN(date.getTime())) throw new Error("Folio service dates must be valid before checkout.");
+    return date.toISOString().slice(0, 10);
+  };
+  const businessDay = dayKey2(currentBusinessDate);
+  for (const entry of entries) {
+    if (!entry.serviceDate) throw new Error("Every folio entry must have a service date before checkout.");
+    const serviceDay = dayKey2(entry.serviceDate);
+    if (serviceDay > businessDay) {
+      throw new Error(`Folio contains a future-dated entry (${serviceDay}) beyond business date ${businessDay}; reconcile it before checkout.`);
+    }
+  }
+}
+var init_ledger = __esm({
+  "features/keystone/folios/ledger.ts"() {
     "use strict";
+    init_moneyText();
   }
 });
 
-// features/keystone/lib/reservationSnapshots.ts
+// features/keystone/folios/reservationSnapshots.ts
 function toMinorUnits(amount3) {
   const value = Number(amount3 || 0);
   if (!Number.isFinite(value)) throw new Error("Invalid monetary amount.");
@@ -1002,11 +1338,18 @@ async function ensureReservationSnapshots(context, bookingId) {
   const roomType = assignment?.roomType;
   if (!roomType) throw new Error("Booking must have a room type before snapshots can be created.");
   const primaryImage = roomType.roomImages?.find((image2) => image2.isPrimary) || roomType.roomImages?.[0];
-  const ratePlan = await getRatePlanSnapshot(context, booking.ratePlan?.id);
+  const currentRatePlan = await getRatePlanSnapshot(context, booking.ratePlan?.id);
   const roomTotalCents = Number.isSafeInteger(booking.roomRateMinor) ? booking.roomRateMinor : toMinorUnits(booking.roomRate);
   const taxTotalCents = Number.isSafeInteger(booking.taxAmountMinor) ? booking.taxAmountMinor : toMinorUnits(booking.taxAmount);
   const feesTotalCents = Number.isSafeInteger(booking.feesAmountMinor) ? booking.feesAmountMinor : toMinorUnits(booking.feesAmount);
   const pricingSnapshot = booking.pricingSnapshot && typeof booking.pricingSnapshot === "object" ? booking.pricingSnapshot : {};
+  const ratePlan = currentRatePlan || pricingSnapshot.ratePlanId ? {
+    ...currentRatePlan || {},
+    id: pricingSnapshot.ratePlanId || currentRatePlan?.id,
+    name: pricingSnapshot.ratePlanName || currentRatePlan?.name,
+    cancellationPolicy: pricingSnapshot.cancellationPolicy || currentRatePlan?.cancellationPolicy,
+    mealPlan: pricingSnapshot.mealPlan || currentRatePlan?.mealPlan
+  } : null;
   const nightlyRoomAmounts = Array.isArray(pricingSnapshot.nightlyRates) ? pricingSnapshot.nightlyRates.map((night) => Number(night.amountMinor)) : null;
   const taxRateBasisPoints = roomTotalCents > 0 ? Math.round(taxTotalCents / roomTotalCents * 1e4) : null;
   const lines = buildReservationSnapshotLines({
@@ -1029,96 +1372,33 @@ async function ensureReservationSnapshots(context, bookingId) {
     nightlyRoomAmounts,
     snapshotKeyPrefix: typeof pricingSnapshot.snapshotKeyPrefix === "string" ? pricingSnapshot.snapshotKeyPrefix : null
   });
+  const preservesBefore = typeof pricingSnapshot.preservesBefore === "string" ? new Date(pricingSnapshot.preservesBefore) : null;
+  const revisionLines = preservesBefore && !Number.isNaN(preservesBefore.getTime()) ? lines.filter((line) => new Date(line.date) >= preservesBefore) : lines;
   const existing = await sudo.query.ReservationLineItem.findMany({
     where: { reservation: { id: { equals: bookingId } }, snapshotStatus: { equals: "active" } },
     query: "id snapshotKey"
   });
   const existingKeys = new Set(existing.map((line) => line.snapshotKey).filter(Boolean));
-  const missing = lines.filter((line) => !existingKeys.has(line.snapshotKey));
+  const missing = revisionLines.filter((line) => !existingKeys.has(line.snapshotKey));
   for (const line of missing) {
     await sudo.query.ReservationLineItem.createOne({ data: line });
   }
   return {
     bookingId,
     created: missing.length,
-    existing: lines.length - missing.length,
-    total: lines.length
+    existing: revisionLines.length - missing.length,
+    total: revisionLines.length
   };
 }
 var DEFAULT_CURRENCY;
 var init_reservationSnapshots = __esm({
-  "features/keystone/lib/reservationSnapshots.ts"() {
+  "features/keystone/folios/reservationSnapshots.ts"() {
     "use strict";
     DEFAULT_CURRENCY = "USD";
   }
 });
 
-// features/keystone/lib/hotelBusinessTime.ts
-async function lockHotelBusinessDate(prisma) {
-  await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", HOTEL_BUSINESS_DATE_LOCK);
-}
-function validatePropertyTimeZone(value) {
-  const zone = String(value || "").trim();
-  if (!zone || zone.length > 100) throw new Error("A property IANA time zone is required.");
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone }).format();
-  } catch {
-    throw new Error("Property time zone is invalid.");
-  }
-  return zone;
-}
-function parts(instant, timeZone) {
-  const fields = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(instant);
-  return Object.fromEntries(fields.map((field) => [field.type, field.value]));
-}
-function propertyCalendarDate(now, timeZone) {
-  const p = parts(now, validatePropertyTimeZone(timeZone));
-  return /* @__PURE__ */ new Date(`${p.year}-${p.month}-${p.day}T00:00:00.000Z`);
-}
-function propertyArrivalInstant(day2, time, zone) {
-  const date = new Date(day2).toISOString().slice(0, 10);
-  const match = String(time).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-  if (!match) throw new Error("Property arrival time is invalid.");
-  let hour = Number(match[1]);
-  const minute = Number(match[2]);
-  if (minute > 59 || (match[3] ? hour < 1 || hour > 12 : hour > 23)) throw new Error("Property arrival time is invalid.");
-  if (match[3]) hour = hour % 12 + (match[3].toUpperCase() === "PM" ? 12 : 0);
-  const timeZone = validatePropertyTimeZone(zone);
-  const wall = Date.parse(`${date}T${String(hour).padStart(2, "0")}:${match[2]}:00.000Z`);
-  const offsets = /* @__PURE__ */ new Set();
-  for (const delta of [-864e5, 0, 864e5]) {
-    const sample = new Date(wall + delta);
-    const p = parts(sample, timeZone);
-    offsets.add(Date.parse(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}.000Z`) - sample.getTime());
-  }
-  const candidates = [...offsets].map((offset) => new Date(wall - offset)).filter((candidate) => {
-    const p = parts(candidate, timeZone);
-    return `${p.year}-${p.month}-${p.day}` === date && Number(p.hour) === hour && Number(p.minute) === minute;
-  }).sort((a, b) => a.getTime() - b.getTime());
-  if (!candidates.length) throw new Error("Arrival time does not exist on this date in the property time zone.");
-  return candidates[0];
-}
-async function currentPostingDate(prisma, requested) {
-  await lockHotelBusinessDate(prisma);
-  const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
-  if (!clock) throw new Error("Property business date is not configured.");
-  const current = new Date(clock.currentBusinessDate);
-  const day2 = requested ? new Date(requested) : current;
-  if (Number.isNaN(day2.getTime())) throw new Error("serviceDate must be a valid date.");
-  day2.setUTCHours(0, 0, 0, 0);
-  if (day2.getTime() !== current.getTime()) throw new Error("Post to the current business date; prior-period corrections require a current-day reasoned reversal.");
-  return day2;
-}
-var HOTEL_BUSINESS_DATE_LOCK;
-var init_hotelBusinessTime = __esm({
-  "features/keystone/lib/hotelBusinessTime.ts"() {
-    "use strict";
-    init_hotelLifecycle();
-    HOTEL_BUSINESS_DATE_LOCK = `hotel-business-date:${HOTEL_PROPERTY_KEY}`;
-  }
-});
-
-// features/keystone/lib/bookingFolio.ts
+// features/keystone/folios/bookingFolio.ts
 function must(value) {
   if (value instanceof Error || value?.extensions?.code === "KS_PRISMA_ERROR") throw value;
   return value;
@@ -1163,20 +1443,19 @@ async function ensureBookingFolio(context, bookingId, options = {}) {
     throw new Error("Reservation snapshot currency does not match the booking folio.");
   }
   const serviceDay = options.serviceDate?.toISOString().slice(0, 10) || null;
-  const postings = options.postSnapshotEntries ? booking.lineItems.filter(
-    (line) => line.snapshotStatus !== "superseded" && line.totalPrice > 0 && (!serviceDay || new Date(line.date).toISOString().slice(0, 10) === serviceDay)
-  ).map(buildSnapshotFolioPosting) : [];
-  if (postings.length) {
-    const businessDay = await currentPostingDate(prisma, options.serviceDate);
-    for (const posting of postings) {
-      if (posting.currencyCode !== folio.currencyCode) throw new Error("Snapshot posting currency does not match folio.");
-      if (posting.serviceDate < businessDay) {
-        const existing = await prisma.folioEntry.findUnique({ where: { postingKey: posting.postingKey } });
-        if (!existing) throw new Error("A closed business date is missing a reservation posting; use an audited current-day adjustment.");
-      } else if (posting.serviceDate > businessDay) {
-        posting.metadataSnapshot = { ...posting.metadataSnapshot, originalServiceDate: posting.serviceDate.toISOString() };
-        posting.serviceDate = businessDay;
-      }
+  const candidateLines = options.postSnapshotEntries ? booking.lineItems.filter((line) => line.snapshotStatus !== "superseded" && line.totalPrice > 0) : [];
+  const businessDay = candidateLines.length ? await currentPostingDate(prisma, options.serviceDate) : null;
+  const postings = candidateLines.filter((line) => {
+    const lineDate = new Date(line.date);
+    return serviceDay ? lineDate.toISOString().slice(0, 10) === serviceDay : Boolean(businessDay && lineDate <= businessDay);
+  }).map(buildSnapshotFolioPosting);
+  for (const posting of postings) {
+    if (posting.currencyCode !== folio.currencyCode) throw new Error("Snapshot posting currency does not match folio.");
+    if (posting.serviceDate < businessDay) {
+      const existing = await prisma.folioEntry.findUnique({ where: { postingKey: posting.postingKey } });
+      if (!existing) throw new Error("A closed business date is missing a reservation posting; use an audited current-day adjustment.");
+    } else if (posting.serviceDate > businessDay) {
+      throw new Error("Future reservation snapshots must be superseded or reconciled before posting.");
     }
   }
   const created = postings.length ? must(await prisma.folioEntry.createMany({
@@ -1209,10 +1488,13 @@ async function ensurePaymentFolioPosting(context, paymentId, options = {}) {
   if (!["completed", "refunded"].includes(String(payment.status))) {
     throw new Error("Only settled payments or refunds may be posted to a folio.");
   }
+  const authoritativeMinor = Number.isSafeInteger(payment.amountMinor) ? payment.amountMinor : toMinorUnits(Number(payment.amount));
+  if (!Number.isSafeInteger(authoritativeMinor) || Math.abs(authoritativeMinor) > MAX_FOLIO_ENTRY_MINOR) {
+    throw new Error("Payment folio amount exceeds the PostgreSQL Int32 minor-unit limit.");
+  }
   const ensured = await ensureBookingFolio(context, payment.bookingId, { postSnapshotEntries: false });
   const currencyCode = normalizeFolioCurrency(payment.currency || "USD");
   let folio = must(await prisma.folio.findUnique({ where: { id: ensured.folioId } }));
-  const authoritativeMinor = Number.isSafeInteger(payment.amountMinor) ? payment.amountMinor : toMinorUnits(Number(payment.amount));
   const isRefund = authoritativeMinor < 0 || payment.paymentType === "refund";
   if (!folio) throw new Error("Booking folio not found.");
   if (folio.currencyCode !== currencyCode) {
@@ -1231,7 +1513,7 @@ async function ensurePaymentFolioPosting(context, paymentId, options = {}) {
     where: { postingKey: posting.postingKey }
   }));
   if (existing) {
-    if (existing.folioId !== folio.id || existing.entryType !== posting.entryType || existing.direction !== posting.direction || existing.amountMinor !== posting.amountMinor || existing.currencyCode !== posting.currencyCode || existing.sourceId !== payment.id) {
+    if (existing.postingKey !== posting.postingKey || existing.folioId !== folio.id || existing.entryType !== posting.entryType || existing.direction !== posting.direction || existing.amountMinor !== posting.amountMinor || existing.currencyCode !== posting.currencyCode || existing.sourceType !== (isRefund ? "refund" : "payment") || existing.sourceId !== payment.id) {
       throw new Error("Payment posting identity is already bound to different folio evidence.");
     }
     return existing;
@@ -1309,55 +1591,58 @@ function calculateCollectibleBalance(entries, members, intents, currencyCode) {
   if (!Number.isSafeInteger(balanceMinor)) throw new Error("Collectible balance exceeds safe integer bounds.");
   return { balanceMinor, balanceDueMinor: Math.max(0, balanceMinor), creditMinor: Math.max(0, -balanceMinor) };
 }
+var MAX_FOLIO_ENTRY_MINOR;
 var init_bookingFolio = __esm({
-  "features/keystone/lib/bookingFolio.ts"() {
+  "features/keystone/folios/bookingFolio.ts"() {
     "use strict";
-    init_folioLedger();
+    init_ledger();
     init_reservationSnapshots();
     init_hotelBusinessTime();
+    MAX_FOLIO_ENTRY_MINOR = 2147483647;
   }
 });
 
 // features/keystone/lib/integrationConfig.ts
 function complete(value, minimum = 16) {
-  const text46 = String(value || "").trim();
-  return Boolean(text46 && text46.length >= minimum && !PLACEHOLDER.test(text46));
+  const text44 = String(value || "").trim();
+  return Boolean(text44 && text44.length >= minimum && !PLACEHOLDER.test(text44));
 }
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
-function paymentProviderCredentials(provider) {
-  const stored = object(provider.credentials);
-  return Object.fromEntries(Object.entries(stored).map(([key4, value]) => [key4, decryptSensitiveText(value)]));
+function paymentProviderUsesEnvironment(provider) {
+  return provider.code === "pp_stripe_stripe" && !Object.values(object(provider.credentials)).some((value) => value !== null && value !== void 0 && value !== "");
 }
-function paymentIntegrationConfigured(provider) {
-  if (!provider?.isInstalled) return false;
-  const credentials = paymentProviderCredentials(provider);
-  if (provider.code === "pp_stripe_stripe") {
-    return complete(credentials.secretKey, 8) && String(credentials.secretKey).startsWith("sk_") && complete(credentials.publishableKey, 8) && String(credentials.publishableKey).startsWith("pk_") && complete(credentials.webhookSecret, 8) && String(credentials.webhookSecret).startsWith("whsec_");
+function paymentProviderCredentials(provider) {
+  if (paymentProviderUsesEnvironment(provider)) {
+    return {
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET
+    };
   }
-  if (provider.code === "pp_paypal_paypal") {
-    return complete(credentials.clientId) && complete(credentials.clientSecret) && complete(credentials.webhookId);
+  const stored = object(provider.credentials);
+  return Object.fromEntries(Object.entries(stored).map(([key4, value]) => [key4, typeof value === "boolean" ? value : decryptSensitiveText(value)]));
+}
+function paymentProviderEnabled(provider) {
+  return paymentProviderUsesEnvironment(provider) ? process.env.STRIPE_ENABLED === "true" && object(provider.metadata).stripeEnvironmentDisabled !== true : Boolean(provider.isInstalled);
+}
+function paymentProviderCredentialsConfigured(provider) {
+  try {
+    const credentials = paymentProviderCredentials(provider);
+    if (provider.code === "pp_stripe_stripe") {
+      return complete(credentials.secretKey, 8) && String(credentials.secretKey).startsWith("sk_") && complete(credentials.publishableKey, 8) && String(credentials.publishableKey).startsWith("pk_") && complete(credentials.webhookSecret, 8) && String(credentials.webhookSecret).startsWith("whsec_");
+    }
+    if (provider.code === "pp_paypal_paypal") {
+      return complete(credentials.clientId) && complete(credentials.clientSecret) && complete(credentials.webhookId);
+    }
+  } catch {
+    return false;
   }
   return false;
 }
-function getOutboxDispatchConfig(env = process.env) {
-  const url = String(env.HOTEL_OUTBOX_DISPATCH_URL || "").trim();
-  const secret = String(env.HOTEL_OUTBOX_DISPATCH_SECRET || "").trim();
-  const credentialKeyId = String(env.HOTEL_OUTBOX_DISPATCH_CREDENTIAL_KEY_ID || "").trim();
-  if (!url && !secret && !credentialKeyId) return { enabled: false };
-  if (!url) throw new Error("HOTEL_OUTBOX_DISPATCH_URL is required when HTTP outbox dispatch wiring is present.");
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("HOTEL_OUTBOX_DISPATCH_URL must be a valid URL.");
-  }
-  if (env.NODE_ENV === "production" && parsed.protocol !== "https:") throw new Error("HOTEL_OUTBOX_DISPATCH_URL must use HTTPS in production.");
-  if (!["https:", "http:"].includes(parsed.protocol)) throw new Error("HOTEL_OUTBOX_DISPATCH_URL must use HTTP or HTTPS.");
-  if (!complete(secret, 32)) throw new Error("HOTEL_OUTBOX_DISPATCH_SECRET must contain at least 32 non-placeholder characters.");
-  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(credentialKeyId)) throw new Error("HOTEL_OUTBOX_DISPATCH_CREDENTIAL_KEY_ID is required and invalid.");
-  return { enabled: true, url, secret, credentialKeyId };
+function paymentIntegrationConfigured(provider) {
+  return paymentProviderEnabled(provider) && paymentProviderCredentialsConfigured(provider);
 }
 function channelIntegrationMode(channel) {
   if (!channel.isActive) return "disabled";
@@ -1371,6 +1656,18 @@ function channelIntegrationMode(channel) {
   if (configured === "disabled" || configured === "demo" || configured === "live") return configured;
   return "invalid";
 }
+function canonicalChannelOrigin(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ""));
+  } catch {
+    throw new Error("Live channel origin admission is required.");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw new Error("Live channel origins must be canonical HTTPS origins without credentials or paths.");
+  }
+  return parsed.origin;
+}
 function requireLiveChannelEndpoint(channel, operation) {
   const mode = channelIntegrationMode(channel);
   if (mode !== "live") throw new Error(`Channel outbound sync is ${mode}; live mode is required.`);
@@ -1382,7 +1679,11 @@ function requireLiveChannelEndpoint(channel, operation) {
   } catch {
     throw new Error(`Live channel ${operation} endpoint is required and must be valid.`);
   }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw new Error(`Live channel ${operation} endpoint must use HTTPS without URL credentials.`);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error(`Live channel ${operation} endpoint must use HTTPS without URL credentials, query, or fragment.`);
+  const allowedOrigins = credentials.allowedOrigins;
+  if (!Array.isArray(allowedOrigins) || allowedOrigins.length < 1 || allowedOrigins.length > 20) throw new Error("Live channel requires an explicitly admitted HTTPS origin.");
+  const admittedOrigins = new Set(allowedOrigins.map(canonicalChannelOrigin));
+  if (!admittedOrigins.has(parsed.origin)) throw new Error(`Live channel ${operation} endpoint origin is not admitted.`);
   const authorization = credentials.accessToken ? `Bearer ${credentials.accessToken}` : credentials.apiKey ? `ApiKey ${credentials.apiKey}` : credentials.clientId && credentials.clientSecret ? `Basic ${Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64")}` : "";
   if (!complete(authorization, 16)) throw new Error("Live channel credential material is required.");
   return { endpoint: parsed.toString(), headers: { Authorization: authorization } };
@@ -1414,11 +1715,23 @@ function assertCustomerPaymentProvider(providerCode) {
 function isPaymentProviderConfigured(provider) {
   return paymentIntegrationConfigured(provider);
 }
+function isPaymentProviderRecoveryConfigured(provider) {
+  return paymentProviderCredentialsConfigured(provider);
+}
 function assertPaymentIntegrationAvailable(provider) {
   const providerCode = String(provider?.code || "");
   assertCustomerPaymentProvider(providerCode);
-  if (!provider?.isInstalled) throw new Error(`Payment provider ${providerCode} is disabled.`);
-  if (!isPaymentProviderConfigured(provider)) throw new Error(`Payment provider ${providerCode} is not completely configured.`);
+  if (!paymentProviderEnabled(provider)) throw new PaymentProviderConfigurationError(providerCode, "disabled");
+  if (!isPaymentProviderConfigured(provider)) {
+    throw new PaymentProviderConfigurationError(providerCode, "credentials_incomplete");
+  }
+}
+function assertPaymentRecoveryAvailable(provider) {
+  const providerCode = String(provider?.code || "");
+  assertCustomerPaymentProvider(providerCode);
+  if (!isPaymentProviderRecoveryConfigured(provider)) {
+    throw new PaymentProviderConfigurationError(providerCode, "credentials_incomplete");
+  }
 }
 function validateRefundSettlement(result, expected) {
   const id = String(result?.data?.id || result?.data?.refund_id || "").trim();
@@ -1434,7 +1747,7 @@ function validateRefundSettlement(result, expected) {
 }
 function captureRecoveryAmount(booking, capturedMinor, outstandingMinor, confirmationAvailable) {
   if (!Number.isSafeInteger(capturedMinor) || capturedMinor <= 0 || !Number.isSafeInteger(outstandingMinor) || outstandingMinor < 0) throw new Error("Invalid capture obligation.");
-  if (!["pending", "confirmed"].includes(booking.status) || !confirmationAvailable) return capturedMinor;
+  if (!["pending", "confirmed", "checked_in"].includes(booking.status) || !confirmationAvailable) return capturedMinor;
   return Math.max(0, capturedMinor - outstandingMinor);
 }
 function bookingPaymentDueNow(booking, collectibleMinor) {
@@ -1448,7 +1761,7 @@ function bookingPaymentDueNow(booking, collectibleMinor) {
   const alreadySettledMinor = Math.max(0, totalMinor - collectibleMinor);
   return Math.min(collectibleMinor, Math.max(0, requiredMinor - alreadySettledMinor));
 }
-var ONLINE_PAYMENT_PROVIDER_CODES;
+var ONLINE_PAYMENT_PROVIDER_CODES, PaymentProviderConfigurationError;
 var init_paymentSecurity = __esm({
   "features/keystone/lib/paymentSecurity.ts"() {
     "use strict";
@@ -1457,6 +1770,27 @@ var init_paymentSecurity = __esm({
       "pp_stripe_stripe",
       "pp_paypal_paypal"
     ];
+    PaymentProviderConfigurationError = class extends Error {
+      constructor(providerCode, reason) {
+        const message = reason === "disabled" ? `Payment provider ${providerCode} is disabled for new checkout.` : reason === "credentials_rejected" ? `Payment provider ${providerCode} rejected its configured credentials; reconciliation is required.` : `Payment provider ${providerCode} has incomplete credentials.`;
+        super(message);
+        this.name = "PaymentProviderConfigurationError";
+      }
+    };
+  }
+});
+
+// features/integrations/payment/providerErrors.ts
+var PaymentProviderCredentialRejectedError;
+var init_providerErrors = __esm({
+  "features/integrations/payment/providerErrors.ts"() {
+    "use strict";
+    PaymentProviderCredentialRejectedError = class extends Error {
+      constructor() {
+        super("Payment provider rejected its configured credentials.");
+        this.name = "PaymentProviderCredentialRejectedError";
+      }
+    };
   }
 });
 
@@ -1503,7 +1837,7 @@ async function createPaymentFunction({
       amount: normalizeAmount(amount3),
       currency: (currency || "usd").toLowerCase(),
       automatic_payment_methods: { enabled: true },
-      metadata
+      metadata: { ...metadata, source: "openfront-hotel" }
     },
     { idempotencyKey }
   );
@@ -1529,7 +1863,12 @@ async function completePaymentFunction({ paymentId, providerCredentials }) {
 }
 async function refundPaymentFunction({ paymentId, amount: amount3, metadata = {}, idempotencyKey, providerCredentials }) {
   if (!idempotencyKey) throw new Error("Stripe refund idempotency key is required");
-  const refund = await getStripeClient(providerCredentials).refunds.create({
+  const stripe = getStripeClient(providerCredentials);
+  if (metadata?.refundIntentKey) {
+    const existing = (await stripe.refunds.list({ payment_intent: paymentId, limit: 100 })).data.find((candidate) => candidate.metadata?.refundIntentKey === metadata.refundIntentKey);
+    if (existing) return { status: existing.status, amount: existing.amount, currencyCode: existing.currency.toUpperCase(), data: existing };
+  }
+  const refund = await stripe.refunds.create({
     payment_intent: paymentId,
     amount: amount3 ? normalizeAmount(Math.abs(amount3)) : void 0,
     metadata
@@ -1564,6 +1903,16 @@ async function handleWebhookFunction({ rawBody, headers, providerCredentials }) 
     type: event.type,
     resource,
     settlement: settlementFromResource(resource),
+    // Refunds created anywhere, including the Stripe dashboard, arrive as refund objects.
+    refund: resource.object === "refund" ? {
+      id: String(resource.id || ""),
+      providerPaymentId: typeof resource.payment_intent === "string" ? resource.payment_intent : String(resource.payment_intent?.id || ""),
+      amountMinor: resource.amount,
+      currencyCode: String(resource.currency || "").toUpperCase(),
+      status: resource.status === "succeeded" ? "succeeded" : ["failed", "canceled"].includes(resource.status) ? "failed" : "pending",
+      requestKey: resource.metadata?.refundIntentKey || null,
+      data: resource
+    } : null,
     dispute: resource.object === "dispute" && event.type.startsWith("charge.dispute.") ? { id: resource.id, providerPaymentId: typeof resource.payment_intent === "string" ? resource.payment_intent : resource.payment_intent?.id, amountMinor: resource.amount, currencyCode: String(resource.currency || "").toUpperCase(), status: resource.status, reason: resource.reason, evidenceDueBy: resource.evidence_details?.due_by || null, eventCreated: event.created, balanceTransactions: resource.balance_transactions || [] } : null
   };
 }
@@ -1600,7 +1949,7 @@ async function securityAuthorizationFunction({ action, paymentId, amountMinor, a
     currency: "usd",
     capture_method: "manual",
     payment_method_types: ["card"],
-    metadata: { bookingId, securityAuthorizationId: authorizationId, purpose: "hotel_security" }
+    metadata: { source: "openfront-hotel", bookingId, securityAuthorizationId: authorizationId, purpose: "hotel_security" }
   }, { idempotencyKey });
   else {
     intent = await stripe.paymentIntents.retrieve(paymentId, { expand: ["latest_charge"] });
@@ -1637,6 +1986,9 @@ __export(paypal_exports, {
 function paypalFetch(input, init = {}) {
   return fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(2e4) });
 }
+function rejectAuthenticationFailure(response) {
+  if ([401, 403].includes(response.status)) throw new PaymentProviderCredentialRejectedError();
+}
 async function getPayPalAccessToken(credentials) {
   const { clientId, clientSecret } = credentials;
   if (!clientId || !clientSecret) throw new Error("PayPal credentials are not configured.");
@@ -1649,6 +2001,7 @@ async function getPayPalAccessToken(credentials) {
     },
     body: "grant_type=client_credentials"
   });
+  rejectAuthenticationFailure(response);
   if (!response.ok) throw new Error("Failed to get PayPal access token");
   const body = await response.json();
   if (!body.access_token) throw new Error("Failed to get PayPal access token");
@@ -1693,16 +2046,41 @@ async function handleWebhookFunction2({ rawBody, headers, providerCredentials })
       })
     }
   );
+  rejectAuthenticationFailure(response);
   if (!response.ok) throw new Error("PayPal webhook signature verification failed");
   const verification = await response.json();
   if (verification.verification_status !== "SUCCESS") {
     throw new Error("Invalid webhook signature");
+  }
+  if (event.event_type === "PAYMENT.CAPTURE.REFUNDED") {
+    const resource = event.resource || {};
+    const captureLink = (resource.links || []).find((link) => link?.rel === "up" && /\/v2\/payments\/captures\//.test(String(link.href || "")));
+    const captureId = captureLink ? decodeURIComponent(String(captureLink.href).split("/v2/payments/captures/")[1]?.split(/[/?#]/)[0] || "") : "";
+    const currencyCode = String(resource.amount?.currency_code || "").toUpperCase();
+    return {
+      isValid: true,
+      event,
+      eventId: event.id,
+      type: event.event_type,
+      resource,
+      settlement: {},
+      refund: {
+        id: String(resource.id || ""),
+        providerPaymentId: captureId,
+        amountMinor: parsePayPalAmount(resource.amount?.value, currencyCode),
+        currencyCode,
+        status: resource.status === "COMPLETED" ? "succeeded" : ["FAILED", "CANCELLED"].includes(resource.status) ? "failed" : "pending",
+        requestKey: null,
+        data: resource
+      }
+    };
   }
   const settlement = settlementFromCapture(event.resource);
   if (settlement.providerPaymentId && !settlement.bookingId && String(event.event_type || "").startsWith("PAYMENT.CAPTURE.")) {
     const orderResponse = await paypalFetch(`${getPayPalBaseUrl(providerCredentials)}/v2/checkout/orders/${encodeURIComponent(settlement.providerPaymentId)}`, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
+    rejectAuthenticationFailure(orderResponse);
     if (!orderResponse.ok) throw new Error("Verified PayPal capture order could not be resolved.");
     const order = await orderResponse.json();
     settlement.bookingId = String(order.purchase_units?.[0]?.custom_id || "");
@@ -1753,6 +2131,7 @@ async function createPaymentFunction2({
     })
   });
   const order = await response.json();
+  rejectAuthenticationFailure(response);
   if (!response.ok || order.error) {
     throw new Error(`PayPal order creation failed: ${order.error?.message || response.status}`);
   }
@@ -1777,6 +2156,7 @@ async function completePaymentFunction2({ paymentId, providerCredentials }) {
     }
   );
   const order = await response.json();
+  rejectAuthenticationFailure(response);
   if (!response.ok || order.error) {
     if (order.details?.some((detail) => detail.issue === "ORDER_ALREADY_CAPTURED")) return getPaymentStatusFunction2({ paymentId, providerCredentials });
     throw new Error(`PayPal capture failed: ${order.error?.message || response.status}`);
@@ -1816,6 +2196,7 @@ async function refundPaymentFunction2({ paymentId, amount: amount3, currency = "
     }
   );
   const refund = await response.json();
+  rejectAuthenticationFailure(response);
   if (!response.ok || refund.error) {
     throw new Error(`PayPal refund failed: ${refund.error?.message || response.status}`);
   }
@@ -1833,6 +2214,7 @@ async function getPaymentStatusFunction2({ paymentId, providerCredentials }) {
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   const order = await response.json();
+  rejectAuthenticationFailure(response);
   if (!response.ok || order.error) {
     throw new Error(`PayPal status check failed: ${order.error?.message || response.status}`);
   }
@@ -1851,6 +2233,7 @@ async function getRefundStatusFunction2({ refundId, providerCredentials }) {
     headers: { Authorization: `Bearer ${accessToken}` }
   });
   const refund = await response.json();
+  rejectAuthenticationFailure(response);
   if (!response.ok || refund.error) throw new Error(`PayPal refund status check failed: ${response.status}`);
   return {
     status: refund.status,
@@ -1866,6 +2249,7 @@ var NO_DIVISION_CURRENCIES, getPayPalBaseUrl, formatPayPalAmount, parsePayPalAmo
 var init_paypal = __esm({
   "features/integrations/payment/paypal.ts"() {
     "use strict";
+    init_providerErrors();
     NO_DIVISION_CURRENCIES = [
       "JPY",
       "KRW",
@@ -1889,16 +2273,43 @@ var init_paypal = __esm({
     ];
     getPayPalBaseUrl = (credentials) => credentials.sandbox === false ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
     formatPayPalAmount = (amount3, currency) => NO_DIVISION_CURRENCIES.includes(currency.toUpperCase()) ? Math.round(amount3).toString() : (Math.round(amount3) / 100).toFixed(2);
-    parsePayPalAmount = (value, currency) => NO_DIVISION_CURRENCIES.includes(currency.toUpperCase()) ? parseInt(value, 10) : Math.round(parseFloat(value) * 100);
+    parsePayPalAmount = (value, currency) => {
+      const normalized = String(value ?? "").trim();
+      if (!/^\d+(?:\.\d+)?$/.test(normalized)) throw new Error("PayPal returned an invalid decimal amount.");
+      const digits = NO_DIVISION_CURRENCIES.includes(currency.toUpperCase()) ? 0 : 2;
+      const [whole, fraction = ""] = normalized.split(".");
+      if (/[1-9]/.test(fraction.slice(digits))) throw new Error("PayPal amount has more decimal places than the currency allows.");
+      const amount3 = Number(`${whole}${fraction.slice(0, digits).padEnd(digits, "0")}`);
+      if (!Number.isSafeInteger(amount3)) throw new Error("PayPal amount exceeds the supported range.");
+      return amount3;
+    };
   }
 });
 
 // features/keystone/utils/paymentProviderAdapter.ts
-async function getAdapter(provider) {
+function configuredSelector(provider, functionName) {
+  const field = operationSelectorFields[functionName];
+  const selector = field ? provider[field] : "static-registry";
+  if (selector !== "static-registry") {
+    throw new Error(`Payment provider selector for ${functionName} is unsupported; only the bounded static registry is allowed.`);
+  }
+  return selector;
+}
+async function getAdapter(provider, functionName, admission) {
   const providerCode = String(provider?.code || "");
   assertCustomerPaymentProvider(providerCode);
-  assertPaymentIntegrationAvailable(provider);
-  return { adapter: await adapterLoaders[providerCode](), credentials: paymentProviderCredentials(provider) };
+  const selector = configuredSelector(provider, functionName);
+  if (admission === "new-checkout") assertPaymentIntegrationAvailable(provider);
+  else assertPaymentRecoveryAvailable(provider);
+  return { adapter: await adapterRegistries[selector](providerCode), credentials: paymentProviderCredentials(provider) };
+}
+function paymentAdapterAdmission(functionName, args) {
+  return functionName === "createPaymentFunction" || functionName === "securityAuthorizationFunction" && args.action === "initiate" ? "new-checkout" : "historical-recovery";
+}
+function isCredentialRejection(error) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error;
+  return candidate.statusCode === 401 || candidate.type === "StripeAuthenticationError";
 }
 async function executeAdapterFunction({
   provider,
@@ -1906,12 +2317,31 @@ async function executeAdapterFunction({
   args
 }) {
   const providerCode = String(provider?.code || "");
-  const { adapter, credentials } = await getAdapter(provider);
+  const supported = /* @__PURE__ */ new Set([
+    "securityAuthorizationFunction",
+    "createPaymentFunction",
+    "cancelPaymentFunction",
+    "completePaymentFunction",
+    "refundPaymentFunction",
+    "getPaymentStatusFunction",
+    "getRefundStatusFunction",
+    "generatePaymentLinkFunction",
+    "handleWebhookFunction"
+  ]);
+  if (!supported.has(functionName)) throw new Error("Unknown payment adapter operation.");
+  const { adapter, credentials } = await getAdapter(provider, functionName, paymentAdapterAdmission(functionName, args));
   const fn = adapter[functionName];
   if (typeof fn !== "function") {
     throw new Error(`Payment provider ${providerCode} does not support ${functionName}.`);
   }
-  return fn({ ...args, providerCredentials: credentials });
+  try {
+    return await fn({ ...args, providerCredentials: credentials });
+  } catch (error) {
+    if (error instanceof PaymentProviderCredentialRejectedError || isCredentialRejection(error)) {
+      throw new PaymentProviderConfigurationError(providerCode, "credentials_rejected");
+    }
+    throw error;
+  }
 }
 async function createPayment({ provider, amount: amount3, currency, metadata, idempotencyKey }) {
   return executeAdapterFunction({
@@ -1944,27 +2374,36 @@ async function getPaymentStatus({ provider, paymentId }) {
 async function getRefundStatus({ provider, refundId }) {
   return executeAdapterFunction({ provider, functionName: "getRefundStatusFunction", args: { refundId } });
 }
-async function cancelPayment({ provider, paymentId, idempotencyKey }) {
-  return executeAdapterFunction({ provider, functionName: "cancelPaymentFunction", args: { paymentId, idempotencyKey } });
-}
 async function securityAuthorization({ provider, ...args }) {
   if (provider?.code !== "pp_stripe_stripe") throw new Error("Security card authorizations currently require configured Stripe.");
   return executeAdapterFunction({ provider, functionName: "securityAuthorizationFunction", args });
 }
-var adapterLoaders;
+var adapterLoaders, operationSelectorFields, adapterRegistries;
 var init_paymentProviderAdapter = __esm({
   "features/keystone/utils/paymentProviderAdapter.ts"() {
     "use strict";
     init_paymentSecurity();
     init_integrationConfig();
+    init_providerErrors();
     adapterLoaders = {
       pp_stripe_stripe: () => Promise.resolve().then(() => (init_stripe(), stripe_exports)),
       pp_paypal_paypal: () => Promise.resolve().then(() => (init_paypal(), paypal_exports))
     };
+    operationSelectorFields = {
+      createPaymentFunction: "createPaymentFunction",
+      completePaymentFunction: "capturePaymentFunction",
+      refundPaymentFunction: "refundPaymentFunction",
+      getPaymentStatusFunction: "getPaymentStatusFunction",
+      generatePaymentLinkFunction: "generatePaymentLinkFunction",
+      handleWebhookFunction: "handleWebhookFunction"
+    };
+    adapterRegistries = {
+      "static-registry": (providerCode) => adapterLoaders[providerCode]()
+    };
   }
 });
 
-// features/keystone/lib/hotelLoyalty.ts
+// features/keystone/loyalty/commands.ts
 function loyaltyPolicy(settings) {
   const earnMinorPerPoint = Number(settings?.loyaltyEarnMinorPerPoint), redeemMinorPerPoint = Number(settings?.loyaltyRedeemMinorPerPoint), minimumRedemptionPoints = Number(settings?.loyaltyMinimumRedemptionPoints);
   if ([earnMinorPerPoint, redeemMinorPerPoint, minimumRedemptionPoints].some((value) => !Number.isSafeInteger(value) || value < 1 || value > 2147483647)) throw new Error("Loyalty earning and redemption rules are not configured.");
@@ -1986,11 +2425,12 @@ function loyaltyRedemptionValue(points, balance, dueMinor, policy) {
   return amountMinor;
 }
 async function bookingAccess(context, bookingId, redeem = false) {
+  const session = context.session;
+  const operator = redeem ? permissions.canManagePayments({ session }) : permissions.canManageGuests({ session }) || permissions.canManageBookings({ session }) || permissions.canManagePayments({ session });
+  if (!operator) throw new Error("Loyalty points are managed by the front desk.");
   const booking = await context.prisma.booking.findUnique({ where: { id: bookingId } });
-  const operator = redeem ? permissions.canManagePayments({ session: context.session }) : permissions.canManageGuests({ session: context.session }) || permissions.canManageBookings({ session: context.session }) || permissions.canManagePayments({ session: context.session });
-  const token = getGuestBookingToken(context, bookingId);
-  if (!booking || !operator && (!token || !guestAccessTokenMatches(booking.guestAccessTokenHash, token))) throw new Error("Reservation loyalty access could not be verified.");
-  if (!booking.guestProfileId) throw new Error("Reservation has no verified guest profile.");
+  if (!booking) throw new Error("Reservation not found.");
+  if (!booking.guestProfileId) throw new Error("Reservation has no guest profile.");
   return booking;
 }
 async function reconcileBookingLoyalty(prisma, bookingId, reasonKey, actorId) {
@@ -2001,7 +2441,7 @@ async function reconcileBookingLoyalty(prisma, bookingId, reasonKey, actorId) {
   const booking = await prisma.booking.findUnique({ where: { id: bookingId }, include: { folio: { include: { entries: true } }, groupBlock: true } });
   if (!booking || booking.status !== "checked_out" || !booking.guestProfileId || booking.billingFolioId || booking.groupBlock?.billingType === "master_folio") return { pointsChanged: 0 };
   await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-loyalty-guest:${booking.guestProfileId}`);
-  const eventKey = initial ? `hotel-loyalty:adjust:${bookingId}:${(0, import_node_crypto6.createHash)("sha256").update(reasonKey).digest("hex").slice(0, 24)}` : initialKey;
+  const eventKey = initial ? `hotel-loyalty:adjust:${bookingId}:${(0, import_node_crypto9.createHash)("sha256").update(reasonKey).digest("hex").slice(0, 24)}` : initialKey;
   if (await prisma.hotelAuditEvent.findUnique({ where: { eventKey } })) return { pointsChanged: 0 };
   if (!initial && (!booking.folio || calculateFolioBalance(booking.folio.entries).balanceMinor !== 0)) return { pointsChanged: 0 };
   const policy = initial?.afterSnapshot?.policy || loyaltyPolicy(settings);
@@ -2019,18 +2459,38 @@ async function reconcileBookingLoyalty(prisma, bookingId, reasonKey, actorId) {
   await recordHotelLifecycleEvent({ prisma, eventKey, actorId, identity: { request: { bookingId, reasonKey }, aggregateType: "loyalty", aggregateId: booking.guestProfileId, action: initial ? "stay_adjusted" : "stay_earned" }, afterSnapshot: { bookingId, pointsChanged: delta, awardedPoints: targetPoints, eligibleRoomMinor, netPaidMinor, policy } });
   return { pointsChanged: delta };
 }
+async function guestStayLoyalty(context, bookingId) {
+  await assertGuestBookingAccess(context, bookingId);
+  const booking = await context.prisma.booking.findUnique({ where: { id: bookingId }, select: { guestProfileId: true } });
+  const [settings, entries] = await Promise.all([
+    context.prisma.hotelSettings.findUnique({ where: { id: 1 } }),
+    booking?.guestProfileId ? context.prisma.loyaltyTransaction.findMany({ where: { bookingId, guestId: booking.guestProfileId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 50 }) : []
+  ]);
+  const policy = settings?.loyaltyEnabled ? loyaltyPolicy(settings) : null;
+  return JSON.stringify({
+    scope: "stay",
+    enabled: settings?.loyaltyEnabled === true,
+    stayPoints: loyaltyBalance(entries),
+    policy,
+    canRedeem: false,
+    entries: entries.map((entry) => ({ id: entry.id, points: entry.points, type: entry.type, description: entry.description, createdAt: entry.createdAt }))
+  });
+}
 async function hotelLoyaltyAccount(_root, { bookingId }, context) {
+  const session = context.session;
+  const operator = permissions.canManageGuests({ session }) || permissions.canManageBookings({ session }) || permissions.canManagePayments({ session });
+  if (!operator) return guestStayLoyalty(context, bookingId);
   const booking = await bookingAccess(context, bookingId);
   const [settings, entries] = await Promise.all([context.prisma.hotelSettings.findUnique({ where: { id: 1 } }), context.prisma.loyaltyTransaction.findMany({ where: { guestId: booking.guestProfileId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] })]);
   const balance = loyaltyBalance(entries);
   const policy = settings?.loyaltyEnabled ? loyaltyPolicy(settings) : null;
-  return JSON.stringify({ enabled: settings?.loyaltyEnabled === true, balance, policy, canRedeem: settings?.loyaltyEnabled === true && booking.status === "checked_in" && !booking.billingFolioId, entries: entries.slice(0, 50).map((entry) => ({ id: entry.id, points: entry.points, type: entry.type, description: entry.description, createdAt: entry.createdAt })) });
+  return JSON.stringify({ scope: "profile", enabled: settings?.loyaltyEnabled === true, balance, policy, canRedeem: settings?.loyaltyEnabled === true && booking.status === "checked_in" && !booking.billingFolioId, entries: entries.slice(0, 50).map((entry) => ({ id: entry.id, points: entry.points, type: entry.type, description: entry.description, createdAt: entry.createdAt })) });
 }
 async function redeemHotelLoyalty(_root, { bookingId, points, idempotencyKey }, context) {
   await bookingAccess(context, bookingId, true);
   const key4 = String(idempotencyKey || "").trim();
   if (!key4 || key4.length > 200) throw new Error("A stable bounded loyalty redemption key is required.");
-  const eventKey = `hotel-loyalty:redeem:${(0, import_node_crypto6.createHash)("sha256").update(key4).digest("hex")}`;
+  const eventKey = `hotel-loyalty:redeem:${(0, import_node_crypto9.createHash)("sha256").update(key4).digest("hex")}`;
   return runSerializableTransaction(context, async (tx) => {
     const p = tx.prisma;
     await p.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
@@ -2060,15 +2520,15 @@ async function redeemHotelLoyalty(_root, { bookingId, points, idempotencyKey }, 
     return JSON.stringify(result);
   });
 }
-var import_node_crypto6;
-var init_hotelLoyalty = __esm({
-  "features/keystone/lib/hotelLoyalty.ts"() {
+var import_node_crypto9;
+var init_commands2 = __esm({
+  "features/keystone/loyalty/commands.ts"() {
     "use strict";
-    import_node_crypto6 = require("node:crypto");
+    import_node_crypto9 = require("node:crypto");
     init_access();
     init_guestBookingAccess();
     init_bookingFolio();
-    init_folioLedger();
+    init_ledger();
     init_hotelBusinessTime();
     init_hotelLifecycle();
     init_serializableTransaction();
@@ -2090,10 +2550,13 @@ var init_boundedLaunch = __esm({
 });
 
 // features/keystone/lib/guestProfiles.ts
+function guestCommunicationPreferencesForCreate(value) {
+  return value ?? { ...DEFAULT_GUEST_COMMUNICATION_PREFERENCES };
+}
 function normalizeGuestEmail(value) {
-  const email2 = value.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email2)) throw new Error("A valid guest email is required.");
-  return email2;
+  const email = value.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("A valid guest email is required.");
+  return email;
 }
 function splitGuestName(value) {
   const parts2 = value.trim().split(/\s+/).filter(Boolean);
@@ -2103,8 +2566,8 @@ function splitGuestName(value) {
     lastName: parts2.slice(1).join(" ") || "Guest"
   };
 }
-async function ensureGuestProfile(context, { name, email: email2, phone }) {
-  const normalizedEmail = normalizeGuestEmail(email2);
+async function ensureGuestProfile(context, { name, email, phone }) {
+  const normalizedEmail = normalizeGuestEmail(email);
   const existing = await context.prisma.guest.findUnique({ where: { email: normalizedEmail } });
   if (existing) {
     if (existing.isBlacklisted) throw new Error("This guest cannot be accepted; contact the property manager.");
@@ -2115,241 +2578,27 @@ async function ensureGuestProfile(context, { name, email: email2, phone }) {
     data: {
       ...names,
       email: normalizedEmail,
-      phone: phone?.trim() || ""
+      phone: phone?.trim() || "",
+      // Do not let the checked-in database default infer promotional consent.
+      communicationPreferences: guestCommunicationPreferencesForCreate()
     }
   });
 }
+var DEFAULT_GUEST_COMMUNICATION_PREFERENCES;
 var init_guestProfiles = __esm({
   "features/keystone/lib/guestProfiles.ts"() {
     "use strict";
+    DEFAULT_GUEST_COMMUNICATION_PREFERENCES = {
+      emailMarketing: false,
+      smsNotifications: false,
+      phoneNotifications: false,
+      preferredLanguage: "en",
+      newsletterSubscribed: false
+    };
   }
 });
 
-// features/keystone/lib/inventoryLock.ts
-function utcDay(date) {
-  const day2 = new Date(date.getTime());
-  day2.setUTCHours(0, 0, 0, 0);
-  return day2;
-}
-function getInventoryLockKeys(roomTypeId, checkIn, checkOut) {
-  if (!roomTypeId || Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime()) || checkOut <= checkIn) {
-    throw new Error("Invalid booking dates.");
-  }
-  const keys = [];
-  const current = utcDay(checkIn);
-  const end = utcDay(checkOut);
-  if ((end.getTime() - current.getTime()) / 864e5 > 366) throw new Error("Inventory lock range cannot exceed 366 nights.");
-  while (current < end) {
-    keys.push(
-      `hotel-inventory:${roomTypeId}:${current.toISOString().slice(0, 10)}`
-    );
-    current.setUTCDate(current.getUTCDate() + 1);
-  }
-  return keys.sort();
-}
-async function lockRoomInventory(prisma, roomTypeId, checkIn, checkOut) {
-  for (const key4 of getInventoryLockKeys(roomTypeId, checkIn, checkOut)) {
-    await prisma.$executeRawUnsafe(
-      "SELECT pg_advisory_xact_lock(hashtext($1))",
-      key4
-    );
-  }
-}
-var init_inventoryLock = __esm({
-  "features/keystone/lib/inventoryLock.ts"() {
-    "use strict";
-  }
-});
-
-// features/keystone/lib/roomOutages.ts
-async function loadRoomOutages(prisma) {
-  const events = await prisma.hotelAuditEvent.findMany({ where: { aggregateType: "room_outage" }, orderBy: [{ occurredAt: "asc" }, { id: "asc" }] });
-  const latest2 = /* @__PURE__ */ new Map();
-  for (const event of events) {
-    const outage = event.afterSnapshot?.outage;
-    if (outage && Number(outage.revision || 0) > Number(latest2.get(event.aggregateId)?.revision || 0)) latest2.set(event.aggregateId, outage);
-  }
-  return [...latest2.values()];
-}
-function roomOutageOverlaps(outage, roomId, start, end) {
-  return outage.status === "scheduled" && outage.roomId === roomId && new Date(outage.startDate) < end && new Date(outage.endDate) > start;
-}
-async function assertRoomNotOutOfOrder(prisma, roomId, start, end) {
-  if ((await loadRoomOutages(prisma)).some((outage) => roomOutageOverlaps(outage, roomId, start, end))) throw new Error("Physical room has a scheduled out-of-order interval during this stay.");
-}
-async function getHotelRoomOutages(_root, _args, context) {
-  if (!permissions.canManageRooms({ session: context.session }) && !permissions.canManageHousekeeping({ session: context.session })) throw new Error("Not authorized to read room outages.");
-  return JSON.stringify(await loadRoomOutages(context.prisma));
-}
-async function updateHotelRoomOutage(_root, input, context) {
-  if (!permissions.canManageRooms({ session: context.session })) throw new Error("Only room managers may schedule or cancel room outages.");
-  const reason = String(input.reason || "").trim();
-  const eventKey = String(input.idempotencyKey || "").trim();
-  if (!reason || reason.length > 1e3 || !eventKey || eventKey.length > 200) throw new Error("A reason and stable idempotency key are required.");
-  if (!["schedule", "cancel"].includes(input.action)) throw new Error("Unsupported outage command.");
-  const outageId = input.action === "schedule" ? `outage_${(0, import_node_crypto7.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24)}` : String(input.outageId || "");
-  const identity = { request: input, aggregateType: "room_outage", aggregateId: outageId, action: input.action };
-  return runSerializableTransaction(context, async (tx) => {
-    const p = tx.prisma;
-    await lockHotelLifecycle(p, eventKey);
-    await lockHotelBusinessDate(p);
-    if (await findHotelLifecycleReplay(p, eventKey, identity)) return JSON.stringify(await loadRoomOutages(p));
-    const room = await p.room.findUnique({ where: { id: input.roomId } });
-    if (!room?.roomTypeId) throw new Error("Physical room not found.");
-    let outage;
-    const existing = await loadRoomOutages(p);
-    if (input.action === "schedule") {
-      const start = new Date(String(input.startDate || "")), end = new Date(String(input.endDate || ""));
-      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start || (end.getTime() - start.getTime()) / 864e5 > 366) throw new Error("Outage dates must be a valid range of at most 366 nights.");
-      if (start.getUTCHours() || start.getUTCMinutes() || start.getUTCSeconds() || start.getUTCMilliseconds() || end.getUTCHours() || end.getUTCMinutes() || end.getUTCSeconds() || end.getUTCMilliseconds()) throw new Error("Outage dates must be property calendar dates at midnight UTC.");
-      await lockRoomInventory(p, room.roomTypeId, start, end);
-      await p.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-room:${room.id}`);
-      const conflicting = await p.roomAssignment.findFirst({ where: { roomId: room.id, booking: { OR: [{ status: { in: ["confirmed", "checked_in", "cancellation_pending"] } }, { status: "pending", holdExpiresAt: { gt: /* @__PURE__ */ new Date() } }], checkInDate: { lt: end }, checkOutDate: { gt: start } } } });
-      if (conflicting) throw new Error("Move or amend reservations assigned to this room before scheduling an overlapping outage.");
-      if (existing.some((item) => roomOutageOverlaps(item, room.id, start, end))) throw new Error("This room already has an overlapping outage.");
-      const bookings = await p.booking.findMany({ where: { OR: [{ status: { in: ["confirmed", "checked_in", "cancellation_pending"] } }, { status: "pending", holdExpiresAt: { gt: /* @__PURE__ */ new Date() } }], checkInDate: { lt: end }, checkOutDate: { gt: start }, roomAssignments: { some: { roomTypeId: room.roomTypeId } } }, include: { roomAssignments: true } });
-      const rooms = await p.room.findMany({ where: { roomTypeId: room.roomTypeId } });
-      const repairs = await p.maintenanceRequest.findMany({ where: { room: { roomTypeId: room.roomTypeId }, status: { notIn: ["verified", "cancelled"] } }, select: { roomId: true } });
-      const repairRoomIds = new Set(repairs.map((repair) => repair.roomId));
-      const inventories = await p.roomInventory.findMany({ where: { roomTypeId: room.roomTypeId, date: { gte: start, lt: end } } });
-      const allocations = await p.groupBlockAllocation.findMany({ where: { roomTypeId: room.roomTypeId, groupBlock: { status: { in: ["tentative", "definite"] }, arrivalDate: { lt: end }, departureDate: { gt: start }, OR: [{ releaseDate: null }, { releaseDate: { gt: /* @__PURE__ */ new Date() } }] } }, include: { groupBlock: true } });
-      for (let day2 = new Date(start); day2 < end; day2 = new Date(day2.getTime() + 864e5)) {
-        const next2 = new Date(day2.getTime() + 864e5);
-        const capacity = rooms.filter((candidate) => candidate.id !== room.id && !repairRoomIds.has(candidate.id) && !["maintenance", "out_of_order"].includes(candidate.status) && !existing.some((item) => roomOutageOverlaps(item, candidate.id, day2, next2))).length;
-        const sold = bookings.filter((booking) => booking.checkInDate < next2 && booking.checkOutDate > day2).reduce((sum, booking) => sum + booking.roomAssignments.filter((a) => a.roomTypeId === room.roomTypeId).length, 0);
-        const inventory = inventories.find((item) => new Date(item.date).toISOString().slice(0, 10) === day2.toISOString().slice(0, 10));
-        const contracted = allocations.filter((item) => item.groupBlock.arrivalDate < next2 && item.groupBlock.departureDate > day2).reduce((sum, item) => sum + Math.max(0, item.roomsHeld - item.roomsPickedUp), 0);
-        const inventoryCapacity = inventory ? Math.max(0, Math.min(rooms.length, inventory.totalRooms) - Math.max(inventory.blockedRooms, rooms.length - capacity)) : capacity;
-        if (Math.max(sold, Number(inventory?.bookedRooms || 0)) + contracted > inventoryCapacity) throw new Error(`Outage would remove sold room capacity on ${day2.toISOString().slice(0, 10)}.`);
-      }
-      outage = { revision: 1, id: outageId, roomId: room.id, roomTypeId: room.roomTypeId, startDate: start.toISOString(), endDate: end.toISOString(), reason, status: "scheduled" };
-    } else {
-      const found = existing.find((item) => item.id === outageId && item.roomId === room.id);
-      if (!found || found.status !== "scheduled") throw new Error("Active outage does not belong to this room.");
-      await lockRoomInventory(p, room.roomTypeId, new Date(found.startDate), new Date(found.endDate));
-      await p.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-room:${room.id}`);
-      const [maintenance, tasks] = await Promise.all([p.maintenanceRequest.count({ where: { roomId: room.id, status: { notIn: ["verified", "cancelled"] } } }), p.housekeepingTask.count({ where: { roomId: room.id, status: { not: "completed" } } })]);
-      if (maintenance || tasks) throw new Error("Resolve maintenance and housekeeping before returning outage capacity.");
-      outage = { ...found, revision: found.revision + 1, status: "cancelled", reason };
-    }
-    await recordHotelLifecycleEvent({ prisma: p, eventKey, actorId: context.session.itemId, identity, beforeSnapshot: existing.find((item) => item.id === outageId) || null, afterSnapshot: { outage } });
-    return JSON.stringify(await loadRoomOutages(p));
-  });
-}
-var import_node_crypto7;
-var init_roomOutages = __esm({
-  "features/keystone/lib/roomOutages.ts"() {
-    "use strict";
-    import_node_crypto7 = require("node:crypto");
-    init_access();
-    init_hotelLifecycle();
-    init_inventoryLock();
-    init_serializableTransaction();
-    init_hotelBusinessTime();
-  }
-});
-
-// features/keystone/lib/hotelAvailability.ts
-function hotelStayDates(checkInValue, checkOutValue) {
-  const checkIn = new Date(checkInValue);
-  const checkOut = new Date(checkOutValue);
-  checkIn.setUTCHours(0, 0, 0, 0);
-  checkOut.setUTCHours(0, 0, 0, 0);
-  if (Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime()) || checkOut <= checkIn) {
-    throw new Error("Invalid stay dates.");
-  }
-  if ((checkOut.getTime() - checkIn.getTime()) / 864e5 > MAX_PUBLIC_STAY_NIGHTS) throw new Error(`Stays may not exceed ${MAX_PUBLIC_STAY_NIGHTS} nights.`);
-  const days = [];
-  for (const day2 = new Date(checkIn); day2 < checkOut; day2.setUTCDate(day2.getUTCDate() + 1)) days.push(new Date(day2));
-  if (days.length > MAX_PUBLIC_STAY_NIGHTS) throw new Error(`Stays may not exceed ${MAX_PUBLIC_STAY_NIGHTS} nights.`);
-  return { checkIn, checkOut, days };
-}
-function key2(date) {
-  return date.toISOString().slice(0, 10);
-}
-async function getHotelAvailability(context, options) {
-  const { checkIn, checkOut, days } = hotelStayDates(options.checkInDate, options.checkOutDate);
-  const roomTypes = await context.prisma.roomType.findMany({
-    where: options.roomTypeId ? { id: options.roomTypeId } : void 0,
-    orderBy: [{ baseRateMinor: "asc" }, { id: "asc" }],
-    take: options.roomTypeId ? 1 : 100,
-    include: {
-      rooms: { select: { id: true, status: true } },
-      roomImages: { orderBy: { order: "asc" }, take: 12 }
-    }
-  });
-  if (options.roomTypeId && !roomTypes.length) throw new Error("Room type not found.");
-  const roomTypeIds = roomTypes.map((item) => item.id);
-  const [bookings, inventories, allocations] = await Promise.all([
-    context.prisma.booking.findMany({
-      where: {
-        OR: [
-          { status: { in: ["confirmed", "checked_in", "cancellation_pending"] } },
-          { status: "pending", holdExpiresAt: { gt: /* @__PURE__ */ new Date() } }
-        ],
-        checkInDate: { lt: checkOut },
-        checkOutDate: { gt: checkIn },
-        roomAssignments: { some: { roomTypeId: { in: roomTypeIds } } },
-        ...options.excludeBookingId ? { id: { not: options.excludeBookingId } } : {}
-      },
-      select: { id: true, checkInDate: true, checkOutDate: true, roomAssignments: { select: { roomTypeId: true, roomId: true } } }
-    }),
-    context.prisma.roomInventory.findMany({
-      where: { roomTypeId: { in: roomTypeIds }, date: { gte: checkIn, lt: checkOut } },
-      take: roomTypeIds.length * days.length
-    }),
-    context.prisma.groupBlockAllocation.findMany({
-      where: {
-        roomTypeId: { in: roomTypeIds },
-        groupBlock: { OR: [{ releaseDate: null }, { releaseDate: { gt: /* @__PURE__ */ new Date() } }], status: { in: ["tentative", "definite"] }, arrivalDate: { lt: checkOut }, departureDate: { gt: checkIn } }
-      },
-      include: { groupBlock: { select: { arrivalDate: true, departureDate: true, releaseDate: true } } }
-    })
-  ]);
-  const outages = await loadRoomOutages(context.prisma);
-  const repairs = await context.prisma.maintenanceRequest.findMany({ where: { status: { notIn: ["verified", "cancelled"] }, room: { roomTypeId: { in: roomTypeIds } } }, select: { roomId: true } });
-  const repairRooms = new Set(repairs.map((repair) => repair.roomId));
-  const inventoryMap = new Map(inventories.map((item) => [`${item.roomTypeId}:${key2(item.date)}`, item]));
-  return roomTypes.map((roomType) => {
-    const byDay = days.map((day2) => {
-      const next2 = new Date(day2);
-      next2.setUTCDate(next2.getUTCDate() + 1);
-      const booked = bookings.reduce((count, booking) => count + (booking.checkInDate < next2 && booking.checkOutDate > day2 ? booking.roomAssignments.filter((assignment) => assignment.roomTypeId === roomType.id).length : 0), 0);
-      const held = allocations.filter(
-        (allocation) => (!allocation.groupBlock.releaseDate || new Date(allocation.groupBlock.releaseDate) > /* @__PURE__ */ new Date()) && allocation.roomTypeId === roomType.id && allocation.groupBlock.arrivalDate < next2 && allocation.groupBlock.departureDate > day2
-      ).reduce((sum, allocation) => sum + Math.max(0, allocation.roomsHeld - allocation.roomsPickedUp), 0);
-      const inventory = inventoryMap.get(`${roomType.id}:${key2(day2)}`);
-      const occupiedPhysical = new Set(bookings.filter((booking) => booking.checkInDate < next2 && booking.checkOutDate > day2).flatMap((booking) => booking.roomAssignments.map((assignment) => assignment.roomId).filter(Boolean)));
-      const unavailablePhysical = roomType.rooms.filter((room) => !occupiedPhysical.has(room.id) && (UNSAFE_SELL_STATUSES.has(room.status) || repairRooms.has(room.id) || outages.some((outage) => roomOutageOverlaps(outage, room.id, day2, next2)))).length;
-      const total = Math.min(inventory?.totalRooms ?? roomType.rooms.length, roomType.rooms.length);
-      const blocked = Math.max(inventory?.blockedRooms ?? 0, unavailablePhysical);
-      const excludedInventory = options.excludeInventoryBooking;
-      const selfInventory = excludedInventory && excludedInventory.roomTypeId === roomType.id && excludedInventory.checkInDate < next2 && excludedInventory.checkOutDate > day2 ? 1 : 0;
-      const occupied = Math.max(Math.max(0, Number(inventory?.bookedRooms ?? 0) - selfInventory), booked);
-      return { date: key2(day2), available: Math.max(0, total - blocked - occupied - held), booked: occupied, held, blocked, total };
-    });
-    return { ...roomType, availabilityByDay: byDay, availableCount: Math.min(...byDay.map((day2) => day2.available)) };
-  });
-}
-async function assertHotelAvailability(context, options) {
-  const result = (await getHotelAvailability(context, options))[0];
-  if (!result || result.availableCount < 1) {
-    const soldOut = result?.availabilityByDay.find((day2) => day2.available < 1);
-    throw new Error(`Room type is sold out${soldOut ? ` on ${soldOut.date}` : ""}.`);
-  }
-  return result;
-}
-var UNSAFE_SELL_STATUSES, MAX_PUBLIC_STAY_NIGHTS;
-var init_hotelAvailability = __esm({
-  "features/keystone/lib/hotelAvailability.ts"() {
-    "use strict";
-    init_roomOutages();
-    UNSAFE_SELL_STATUSES = /* @__PURE__ */ new Set(["maintenance", "out_of_order"]);
-    MAX_PUBLIC_STAY_NIGHTS = 31;
-  }
-});
-
-// features/keystone/lib/bookingConfirmation.ts
+// features/keystone/bookings/confirmation.ts
 async function assertGuestEligible(prisma, guestId) {
   if (!guestId) throw new BookingConfirmationError("A guest profile is required.");
   await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-guest:${guestId}`);
@@ -2384,12 +2633,12 @@ async function assertBookingConfirmationInventory(tx, booking, _now = /* @__PURE
   }
 }
 var BookingConfirmationError;
-var init_bookingConfirmation = __esm({
-  "features/keystone/lib/bookingConfirmation.ts"() {
+var init_confirmation = __esm({
+  "features/keystone/bookings/confirmation.ts"() {
     "use strict";
     init_hotelBusinessTime();
-    init_hotelAvailability();
-    init_inventoryLock();
+    init_roomAvailability();
+    init_roomNightLocks();
     BookingConfirmationError = class extends Error {
       constructor() {
         super(...arguments);
@@ -2399,180 +2648,7 @@ var init_bookingConfirmation = __esm({
   }
 });
 
-// features/keystone/lib/hotelCommunications.ts
-function requirePrismaResult2(value) {
-  if (value instanceof Error || value?.extensions?.code === "KS_PRISMA_ERROR") throw value;
-  return value;
-}
-function email(value, label) {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) || normalized.length > 320) {
-    throw new Error(`${label} must be a valid email address.`);
-  }
-  return normalized;
-}
-function bounded(value, label, max) {
-  const normalized = String(value || "").trim();
-  if (!normalized || normalized.length > max) throw new Error(`${label} is required and must be at most ${max} characters.`);
-  return normalized;
-}
-function topicFor(kind) {
-  return `hotel.communication.${kind}`;
-}
-function isHotelCommunicationTopic(value) {
-  return HOTEL_COMMUNICATION_TOPICS.includes(value);
-}
-async function enqueueCommunication(prisma, {
-  eventKey,
-  aggregateType,
-  aggregateId,
-  payload
-}) {
-  const key4 = `hotel-communication:${eventKey}`;
-  const requestHash = hashLifecycleRequest(payload);
-  const existing = requirePrismaResult2(await prisma.hotelOutboxEvent.findUnique({ where: { eventKey: key4 } }));
-  if (existing) {
-    if (existing.requestHash !== requestHash || existing.topic !== topicFor(payload.kind) || existing.aggregateType !== aggregateType || existing.aggregateId !== aggregateId) {
-      throw new Error("Communication idempotency key is already bound to different evidence.");
-    }
-    return { event: existing, replayed: true };
-  }
-  const event = requirePrismaResult2(await prisma.hotelOutboxEvent.create({
-    data: {
-      eventKey: key4,
-      requestHash,
-      propertyKey: HOTEL_PROPERTY_KEY,
-      topic: topicFor(payload.kind),
-      aggregateType,
-      aggregateId,
-      payloadSnapshot: payload,
-      status: "pending",
-      attempts: 0,
-      availableAt: /* @__PURE__ */ new Date()
-    }
-  }));
-  return { event, replayed: false };
-}
-async function queueBookingCommunication(prisma, {
-  bookingId,
-  kind,
-  eventKey,
-  cancellation,
-  modification
-}) {
-  const [bookingResult, settingsResult] = await Promise.all([
-    prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: {
-        ratePlan: true,
-        roomAssignments: { take: 1, include: { roomType: true } },
-        lineItems: {
-          where: { snapshotStatus: "active" },
-          orderBy: [{ date: "asc" }, { id: "asc" }],
-          take: 1
-        }
-      }
-    }),
-    prisma.hotelSettings.findUnique({ where: { id: 1 } })
-  ]);
-  const booking = requirePrismaResult2(bookingResult);
-  const settings = requirePrismaResult2(settingsResult);
-  if (!booking) throw new Error("Booking communication target was not found.");
-  if (!settings) throw new Error("Hotel communication settings are not configured.");
-  const policy = booking.lineItems[0]?.cancellationPolicySnapshot || booking.pricingSnapshot?.cancellationPolicy || booking.ratePlan?.cancellationPolicy || null;
-  const payload = {
-    kind,
-    to: email(booking.guestEmail, "Guest email"),
-    propertyName: bounded(settings.propertyName, "Property name", 200),
-    contactEmail: email(settings.contactEmail, "Property contact email"),
-    guestName: bounded(booking.guestName, "Guest name", 255),
-    confirmationNumber: bounded(booking.confirmationNumber, "Confirmation number", 100),
-    bookingId: booking.id,
-    checkInDate: booking.checkInDate.toISOString(),
-    checkOutDate: booking.checkOutDate.toISOString(),
-    numberOfGuests: Number(booking.numberOfGuests || 1),
-    roomTypeName: booking.roomAssignments[0]?.roomType?.name || "Reserved room",
-    totalAmountMinor: Number(booking.totalAmountMinor || 0),
-    currencyCode: String(booking.currencyCode || "USD").toUpperCase(),
-    cancellationPolicy: policy,
-    cancellationSummary: cancellation?.summary || null,
-    refundableMinor: cancellation?.refundableMinor ?? null,
-    cancellationFeeMinor: cancellation?.cancellationFeeMinor ?? null,
-    modificationDecision: modification?.decision || null,
-    staffNote: modification?.staffNote || null
-  };
-  return enqueueCommunication(prisma, {
-    eventKey: `${kind}:${eventKey}`,
-    aggregateType: "booking",
-    aggregateId: bookingId,
-    payload
-  });
-}
-async function queueContactCommunication(prisma, input) {
-  const settings = requirePrismaResult2(await prisma.hotelSettings.findUnique({ where: { id: 1 } }));
-  if (!settings) throw new Error("Hotel contact settings are not configured.");
-  const reference = String(input.idempotencyKey || (0, import_node_crypto8.randomUUID)()).trim();
-  if (!reference || reference.length > 200) throw new Error("Contact message reference is invalid.");
-  const payload = {
-    kind: "contact_received",
-    to: email(settings.contactEmail, "Property contact email"),
-    replyTo: email(input.email, "Contact email"),
-    propertyName: bounded(settings.propertyName, "Property name", 200),
-    contactEmail: email(settings.contactEmail, "Property contact email"),
-    guestName: bounded(input.name, "Name", 160),
-    contactPhone: input.phone ? bounded(input.phone, "Phone", 80) : null,
-    contactSubject: bounded(input.subject, "Subject", 160),
-    contactMessage: bounded(input.message, "Message", 4e3)
-  };
-  const queued = await enqueueCommunication(prisma, {
-    eventKey: `contact_received:${reference}`,
-    aggregateType: "contact_message",
-    aggregateId: reference,
-    payload
-  });
-  return { reference, status: queued.event.status, replayed: queued.replayed };
-}
-async function bookingCommunicationStatus(prisma, bookingId) {
-  const events = await prisma.hotelOutboxEvent.findMany({
-    where: {
-      aggregateType: "booking",
-      aggregateId: bookingId,
-      topic: { in: HOTEL_COMMUNICATION_TOPICS.filter((topic) => topic !== "hotel.communication.contact_received") }
-    },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 10,
-    select: { topic: true, status: true, deliveredAt: true, lastError: true }
-  });
-  const latest2 = /* @__PURE__ */ new Map();
-  for (const event of events) if (!latest2.has(event.topic)) latest2.set(event.topic, event);
-  return {
-    prearrival: latest2.get("hotel.communication.booking_prearrival") || null,
-    confirmation: latest2.get("hotel.communication.booking_confirmation") || null,
-    update: latest2.get("hotel.communication.booking_updated") || null,
-    cancellation: latest2.get("hotel.communication.booking_cancelled") || null,
-    modification: latest2.get("hotel.communication.booking_modification_response") || null
-  };
-}
-var import_node_crypto8, HOTEL_COMMUNICATION_TOPICS;
-var init_hotelCommunications = __esm({
-  "features/keystone/lib/hotelCommunications.ts"() {
-    "use strict";
-    import_node_crypto8 = require("node:crypto");
-    init_hotelLifecycle();
-    HOTEL_COMMUNICATION_TOPICS = [
-      "hotel.communication.booking_confirmation",
-      "hotel.communication.booking_prearrival",
-      "hotel.communication.booking_updated",
-      "hotel.communication.booking_cancelled",
-      "hotel.communication.booking_no_show",
-      "hotel.communication.booking_refund",
-      "hotel.communication.booking_modification_response",
-      "hotel.communication.contact_received"
-    ];
-  }
-});
-
-// features/keystone/lib/hotelDerivedRates.ts
+// features/keystone/rates/derived.ts
 function validateDerivedRateConfiguration(input) {
   if (!input || typeof input.enabled !== "boolean" || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new Error("Derived rate requires enabled and current revision.");
   const targetPlanId = String(input.targetPlanId || "").trim(), sourcePlanId = String(input.sourcePlanId || "").trim();
@@ -2653,14 +2729,14 @@ async function updateHotelDerivedRate(_root, { payload, approvalId, idempotencyK
   });
 }
 var hotelDerivedRateTypeDefs, hotelDerivedRateResolvers;
-var init_hotelDerivedRates = __esm({
-  "features/keystone/lib/hotelDerivedRates.ts"() {
+var init_derived = __esm({
+  "features/keystone/rates/derived.ts"() {
     "use strict";
     init_access();
     init_serializableTransaction();
     init_hotelLifecycle();
-    init_hotelGuestGovernance();
-    init_rateEconomics();
+    init_commands();
+    init_economics();
     hotelDerivedRateTypeDefs = String.raw`
   extend type Query { hotelDerivedRateWorkspace:String! }
   extend type Mutation { updateHotelDerivedRate(payload:String!,approvalId:ID,idempotencyKey:String!):String! }
@@ -2669,9 +2745,22 @@ var init_hotelDerivedRates = __esm({
   }
 });
 
-// features/keystone/lib/hotelPricing.ts
-var hotelPricing_exports = {};
-__export(hotelPricing_exports, {
+// features/keystone/lib/guestRuleError.ts
+function isGuestRuleError(error) {
+  return error instanceof GuestRuleError;
+}
+var GuestRuleError;
+var init_guestRuleError = __esm({
+  "features/keystone/lib/guestRuleError.ts"() {
+    "use strict";
+    GuestRuleError = class extends Error {
+    };
+  }
+});
+
+// features/keystone/rates/pricing.ts
+var pricing_exports = {};
+__export(pricing_exports, {
   calculateHotelPrice: () => calculateHotelPrice,
   hotelQuoteCommercialTermsHash: () => hotelQuoteCommercialTermsHash,
   issueHotelQuoteToken: () => issueHotelQuoteToken,
@@ -2693,12 +2782,12 @@ function encode(value) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 function signature(payload) {
-  return (0, import_node_crypto9.createHmac)("sha256", quoteSecret()).update(payload).digest("base64url");
+  return (0, import_node_crypto10.createHmac)("sha256", quoteSecret()).update(payload).digest("base64url");
 }
-function safeEqual2(left, right) {
+function safeEqual3(left, right) {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
-  return a.length === b.length && (0, import_node_crypto9.timingSafeEqual)(a, b);
+  return a.length === b.length && (0, import_node_crypto10.timingSafeEqual)(a, b);
 }
 async function calculateHotelPrice(context, input, options = {}) {
   const ancestors = options.derivedParents || [];
@@ -2717,28 +2806,35 @@ async function calculateHotelPrice(context, input, options = {}) {
     })
   ]);
   if (!roomType || !ratePlan || ratePlan.roomTypeId !== roomType.id || ratePlan.status !== "active" || !ratePlan.isPublic) {
-    throw new Error("Selected rate plan is not bookable.");
+    throw new GuestRuleError("Selected rate plan is not bookable.");
   }
   if (!settings) throw new Error("Hotel pricing settings are not configured.");
-  if (adults + children > roomType.maxOccupancy) throw new Error(`${roomType.name} supports up to ${roomType.maxOccupancy} guests.`);
-  if (days.length < Number(ratePlan.minimumStay || 1) || ratePlan.maximumStay && days.length > ratePlan.maximumStay) {
-    throw new Error("Stay length does not satisfy the selected rate plan.");
+  if (adults + children > roomType.maxOccupancy) throw new GuestRuleError(`${roomType.name} supports up to ${roomType.maxOccupancy} guests.`);
+  if (days.length < Number(ratePlan.minimumStay || 1)) {
+    throw new GuestRuleError(`This rate requires at least ${Number(ratePlan.minimumStay || 1)} nights.`);
+  }
+  if (ratePlan.maximumStay && days.length > ratePlan.maximumStay) {
+    throw new GuestRuleError(`This rate allows at most ${ratePlan.maximumStay} nights.`);
   }
   const now = /* @__PURE__ */ new Date();
   const advanceDays = Math.floor((checkIn.getTime() - propertyCalendarDate(now, settings.timeZone || "UTC").getTime()) / 864e5);
-  if (!options.existingStay && (advanceDays < Number(ratePlan.advanceBookingMin || 0) || ratePlan.advanceBookingMax && advanceDays > ratePlan.advanceBookingMax)) {
-    throw new Error("Booking window does not satisfy the selected rate plan.");
+  if (!options.existingStay && advanceDays < 0) throw new GuestRuleError("Check-in date has already passed. Choose today or a later date.");
+  if (!options.existingStay && advanceDays < Number(ratePlan.advanceBookingMin || 0)) {
+    throw new GuestRuleError(`This rate must be booked at least ${Number(ratePlan.advanceBookingMin || 0)} days ahead.`);
+  }
+  if (!options.existingStay && ratePlan.advanceBookingMax && advanceDays > ratePlan.advanceBookingMax) {
+    throw new GuestRuleError(`This rate can be booked up to ${ratePlan.advanceBookingMax} days ahead.`);
   }
   if (ratePlan.validFrom && checkIn < ratePlan.validFrom || ratePlan.validTo && checkOut > ratePlan.validTo) {
-    throw new Error("Selected rate plan is not valid for the complete stay.");
+    throw new GuestRuleError("This rate is not available for every night of the stay.");
   }
   const expectedPromo = String(ratePlan.promoCode || "").trim().toLowerCase();
   if (ratePlan.isPromotional && (!expectedPromo || String(input.promoCode || "").trim().toLowerCase() !== expectedPromo)) {
-    throw new Error("A valid promotional code is required for this rate plan.");
+    throw new GuestRuleError("A valid promotional code is required for this rate.");
   }
   const applicableDays = ratePlan.applicableDays || {};
   const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  if (days.some((day2) => applicableDays[weekdays[day2.getUTCDay()]] === false)) throw new Error("Selected rate plan is unavailable on one or more stay nights.");
+  if (days.some((day2) => applicableDays[weekdays[day2.getUTCDay()]] === false)) throw new GuestRuleError("This rate is not available on one or more nights of the stay.");
   const { derivedConfig, economicsHash: ratePlanEconomicsHash } = await loadRateEconomics(context.prisma, ratePlan.id);
   const parentQuote = derivedConfig?.enabled ? await calculateHotelPrice(context, { ...input, ratePlanId: derivedConfig.sourcePlanId }, { ...options, derivedParents: [...ancestors, input.ratePlanId] }) : null;
   const baseRateMinor = minor(ratePlan.baseRateMinor, ratePlan.baseRate);
@@ -2748,10 +2844,11 @@ async function calculateHotelPrice(context, input, options = {}) {
     if (season) {
       if (season.priceMultiplier !== null && season.priceMultiplier !== void 0) amount3 = Math.round(amount3 * Number(season.priceMultiplier));
       amount3 += Number(season.priceAdjustment || 0);
-      if (days.length < Number(season.minimumStay || 1)) throw new Error(`Stay does not satisfy seasonal rule ${season.name}.`);
+      if (days.length < Number(season.minimumStay || 1)) throw new GuestRuleError(`Stays on these dates require at least ${Number(season.minimumStay || 1)} nights.`);
     }
     if (parentQuote) amount3 = resolveDerivedRateAmount(ratePlan.id, /* @__PURE__ */ new Map([[ratePlan.id, ratePlan], [parentQuote.ratePlan.id, parentQuote.ratePlan]]), /* @__PURE__ */ new Map([[ratePlan.id, derivedConfig]]), () => parentQuote.nightlyRates.find((night) => night.date === day2.toISOString().slice(0, 10)).amountMinor);
     if (!Number.isSafeInteger(amount3) || amount3 < 0) throw new Error("Seasonal pricing produced an invalid amount.");
+    if (amount3 > MAX_STORED_MINOR) throw new GuestRuleError(STAY_TOO_LARGE);
     return { date: day2.toISOString().slice(0, 10), amountMinor: amount3, seasonalRateId: season?.id || null, seasonalRateName: season?.name || null };
   });
   const roomSubtotalMinor = nightlyRates.reduce((sum, night) => sum + night.amountMinor, 0);
@@ -2759,6 +2856,9 @@ async function calculateHotelPrice(context, input, options = {}) {
   const taxMinor = Math.round(roomSubtotalMinor * taxRateBasisPoints / 1e4);
   const feesMinor = Number(settings.serviceFeeMinor || 0);
   const totalMinor = roomSubtotalMinor + taxMinor + feesMinor;
+  if ([roomSubtotalMinor, taxMinor, feesMinor, totalMinor, Number(settings.securityDepositMinor ?? 0)].some((value) => !Number.isSafeInteger(value) || value < 0 || value > MAX_STORED_MINOR)) {
+    throw new GuestRuleError(STAY_TOO_LARGE);
+  }
   const currencyCode = String(ratePlan.currencyCode || roomType.currencyCode || settings.currencyCode || "USD").toUpperCase();
   if (new Set([ratePlan.currencyCode, roomType.currencyCode, settings.currencyCode].filter(Boolean).map((v) => v.toUpperCase())).size > 1) {
     throw new Error("Pricing currency configuration is inconsistent.");
@@ -2816,7 +2916,7 @@ async function calculateHotelPrice(context, input, options = {}) {
   };
 }
 function hotelQuoteCommercialTermsHash(quote) {
-  return (0, import_node_crypto9.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify({
     economicsHash: quote.economicsHash || null,
     roomTypeId: quote.roomType?.id || null,
     roomTypeName: quote.roomType?.name || null,
@@ -2873,7 +2973,7 @@ function issueHotelQuoteToken(quote) {
 }
 function verifyHotelQuoteToken(token, quote) {
   const [payload, supplied] = String(token || "").split(".");
-  if (!payload || !supplied || !safeEqual2(signature(payload), supplied)) throw new Error("Quote identity is invalid.");
+  if (!payload || !supplied || !safeEqual3(signature(payload), supplied)) throw new Error("Quote identity is invalid.");
   let claims;
   try {
     claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
@@ -2904,23 +3004,26 @@ function verifyHotelQuoteToken(token, quote) {
   }
   return claims;
 }
-var import_node_crypto9, QUOTE_TTL_MS;
-var init_hotelPricing = __esm({
-  "features/keystone/lib/hotelPricing.ts"() {
+var import_node_crypto10, QUOTE_TTL_MS, MAX_STORED_MINOR, STAY_TOO_LARGE;
+var init_pricing = __esm({
+  "features/keystone/rates/pricing.ts"() {
     "use strict";
-    init_rateEconomics();
-    init_hotelDerivedRates();
-    import_node_crypto9 = require("node:crypto");
-    init_hotelAvailability();
+    init_economics();
+    init_derived();
+    import_node_crypto10 = require("node:crypto");
+    init_roomAvailability();
     init_hotelBusinessTime();
     init_hotelLifecycle();
+    init_guestRuleError();
     QUOTE_TTL_MS = 15 * 6e4;
+    MAX_STORED_MINOR = 2147483647;
+    STAY_TOO_LARGE = "This stay is too large to price online. Choose fewer nights or contact the property.";
   }
 });
 
-// features/keystone/lib/bookingAmendment.ts
-var bookingAmendment_exports = {};
-__export(bookingAmendment_exports, {
+// features/keystone/bookings/amendment.ts
+var amendment_exports = {};
+__export(amendment_exports, {
   amendUnpaidBooking: () => amendUnpaidBooking
 });
 function must2(value) {
@@ -2999,7 +3102,7 @@ async function amendUnpaidBooking({
     if (booking.groupBlockId || booking.billingFolioId) throw new Error("Picked-up group commercial terms must remain attached to their contract; cancel/rebook through group operations for a different contract.");
     const netPaidMinor = Math.max(0, booking.payments.filter((payment) => ["completed", "refunded"].includes(payment.status)).reduce((sum, payment) => sum + (payment.paymentType === "refund" ? -Math.abs(Number(payment.amountMinor || 0)) : Math.max(0, Number(payment.amountMinor || 0))), 0));
     if (totalAmountMinor < netPaidMinor) {
-      throw new Error(`Refund ${netPaidMinor - totalAmountMinor} minor units through the payment workflow before applying this lower-priced amendment.`);
+      throw new Error(`Refund ${moneyText(netPaidMinor - totalAmountMinor)} through the payment workflow before applying this lower-priced amendment.`);
     }
     const currentRoomTypeId = booking.roomAssignments[0]?.roomTypeId;
     if (!currentRoomTypeId) throw new Error("Booking room type is missing.");
@@ -3051,6 +3154,10 @@ async function amendUnpaidBooking({
     const taxMinor = commercialPricing?.taxMinor ?? 0;
     const feesMinor = commercialPricing?.feesMinor ?? 0;
     const nightlyRates = commercialPricing?.nightlyRates ?? fallbackNightly;
+    const ratePlanId = commercialPricing?.ratePlanId ?? booking.ratePlanId;
+    const sameBookedRate = (booking.pricingSnapshot?.ratePlanId ?? booking.ratePlanId) === ratePlanId;
+    const ratePlanName = commercialPricing?.ratePlanName || (sameBookedRate ? booking.pricingSnapshot?.ratePlanName : null) || null;
+    const mealPlan = commercialPricing?.mealPlan || (sameBookedRate ? booking.pricingSnapshot?.mealPlan : null) || null;
     const depositPercent = Number(commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent ?? (booking.totalAmountMinor > 0 ? Number(booking.depositAmountMinor || 0) / booking.totalAmountMinor * 100 : 0));
     if (!Number.isFinite(depositPercent) || depositPercent < 0 || depositPercent > 100) throw new Error("Booked deposit policy is invalid.");
     const depositAmountMinor = Math.round(totalAmountMinor * depositPercent / 100);
@@ -3077,10 +3184,10 @@ async function amendUnpaidBooking({
       feesAmount: feesMinor / 100,
       totalAmount: totalAmountMinor / 100,
       balanceDue: balanceDueMinor / 100,
-      ratePlanId: commercialPricing?.ratePlanId ?? booking.ratePlanId,
+      ratePlanId,
       pricingVersion: commercialPricing?.pricingVersion ?? `${source}-amendment-v1`,
       pricingRevision: revision,
-      pricingSnapshot: { depositPercent: commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent, securityDepositMinor: commercialPricing?.securityDepositMinor ?? booking.pricingSnapshot?.securityDepositMinor, arrivalInstant: commercialPricing?.arrivalInstant || booking.pricingSnapshot?.arrivalInstant, propertyTimeZone: commercialPricing?.propertyTimeZone || booking.pricingSnapshot?.propertyTimeZone, cancellationPolicy: commercialPricing?.cancellationPolicy || booking.pricingSnapshot?.cancellationPolicy, snapshotKeyPrefix: `v${revision}`, source, nightlyRates, roomSubtotalMinor, taxMinor, feesMinor, totalMinor: totalAmountMinor, currencyCode, taxRateBasisPoints: commercialPricing?.taxRateBasisPoints ?? 0 }
+      pricingSnapshot: { depositPercent: commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent, securityDepositMinor: commercialPricing?.securityDepositMinor ?? booking.pricingSnapshot?.securityDepositMinor, arrivalInstant: commercialPricing?.arrivalInstant || booking.pricingSnapshot?.arrivalInstant, propertyTimeZone: commercialPricing?.propertyTimeZone || booking.pricingSnapshot?.propertyTimeZone, cancellationPolicy: commercialPricing?.cancellationPolicy || booking.pricingSnapshot?.cancellationPolicy, ratePlanId, ratePlanName, mealPlan, previousRevision: { revision: Number(booking.pricingRevision || 1), checkInDate: new Date(booking.checkInDate).toISOString(), checkOutDate: new Date(booking.checkOutDate).toISOString(), totalMinor: booking.totalAmountMinor, arrivalInstant: booking.pricingSnapshot?.arrivalInstant || null }, snapshotKeyPrefix: `v${revision}`, source, nightlyRates, roomSubtotalMinor, taxMinor, feesMinor, totalMinor: totalAmountMinor, currencyCode, taxRateBasisPoints: commercialPricing?.taxRateBasisPoints ?? 0 }
     } });
     testFailure("booking");
     const assignment = booking.roomAssignments[0];
@@ -3097,34 +3204,27 @@ async function amendUnpaidBooking({
       afterSnapshot: { checkInDate: updated.checkInDate, checkOutDate: updated.checkOutDate, roomTypeId, totalAmountMinor, pricingRevision: revision, netPaidMinor, balanceDueMinor, paymentStatus },
       metadata: { source, reversedSnapshotPostingCount: posted.length }
     });
-    if (queueCommunication) {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: "booking_updated",
-        eventKey
-      });
-    }
     return updated;
   };
   if (withinTransaction) return execute(context);
   return runSerializableTransaction(context, execute);
 }
-var init_bookingAmendment = __esm({
-  "features/keystone/lib/bookingAmendment.ts"() {
+var init_amendment = __esm({
+  "features/keystone/bookings/amendment.ts"() {
     "use strict";
-    init_folioLedger();
+    init_ledger();
     init_bookingFolio();
     init_reservationSnapshots();
-    init_inventoryLock();
-    init_hotelAvailability();
+    init_roomNightLocks();
+    init_roomAvailability();
     init_hotelLifecycle();
-    init_hotelCommunications();
     init_hotelBusinessTime();
     init_serializableTransaction();
+    init_moneyText();
   }
 });
 
-// features/keystone/lib/hotelGroupLifecycle.ts
+// features/keystone/groups/commands.ts
 function authorize4(context) {
   if (!permissions.canManageBookings({ session: context.session })) throw new Error("Not authorized to operate group reservations.");
 }
@@ -3161,8 +3261,14 @@ function assertGroupPickupAllowed(block, allocation, count, now = /* @__PURE__ *
 async function groupCommercialContract(prisma, groupBlockId) {
   const event = await prisma.hotelAuditEvent.findFirst({ where: { aggregateType: "group_block", aggregateId: groupBlockId, action: "created" } });
   const contract = event?.afterSnapshot?.contract;
-  if (!contract?.ratePlanId || !Number.isSafeInteger(contract.taxRateBasisPoints) || !Number.isSafeInteger(contract.feesMinor)) throw new Error("Group commercial contract is missing; do not pick up legacy experimental records.");
+  const hasRequiredTerms = typeof contract?.ratePlanId === "string" && Boolean(contract.ratePlanId) && typeof contract.ratePlanName === "string" && Boolean(contract.ratePlanName) && typeof contract.roomTypeId === "string" && Boolean(contract.roomTypeId) && typeof contract.roomTypeName === "string" && Boolean(contract.roomTypeName) && typeof contract.cancellationPolicy === "string" && Boolean(contract.cancellationPolicy) && typeof contract.mealPlan === "string" && Boolean(contract.mealPlan) && typeof contract.propertyTimeZone === "string" && Boolean(contract.propertyTimeZone) && typeof contract.arrivalInstant === "string" && Number.isFinite(new Date(contract.arrivalInstant).getTime()) && Number.isSafeInteger(contract.maxOccupancy) && contract.maxOccupancy > 0 && Number.isSafeInteger(contract.rateMinor) && contract.rateMinor >= 0 && typeof contract.currencyCode === "string" && /^[A-Z]{3}$/.test(contract.currencyCode) && Number.isSafeInteger(contract.depositPercent) && contract.depositPercent >= 0 && contract.depositPercent <= 100 && Number.isSafeInteger(contract.securityDepositMinor) && contract.securityDepositMinor >= 0 && Number.isSafeInteger(contract.taxRateBasisPoints) && contract.taxRateBasisPoints >= 0 && Number.isSafeInteger(contract.feesMinor) && contract.feesMinor >= 0;
+  if (!hasRequiredTerms) throw new Error("Group commercial contract is missing; do not pick up legacy experimental records.");
   return contract;
+}
+function assertGroupAllocationMatchesContract(allocation, contract) {
+  if (allocation.roomTypeId !== contract.roomTypeId || allocation.rateMinor !== contract.rateMinor || String(allocation.currencyCode || "").toUpperCase() !== String(contract.currencyCode || "").toUpperCase()) {
+    throw new Error("Group allocation commercial terms do not match the recorded contract; reconcile the group block before pickup.");
+  }
 }
 async function createHotelGroupRoomingList(_root, { groupBlockId, allocationId, rows: rawRows, idempotencyKey }, context) {
   authorize4(context);
@@ -3184,6 +3290,7 @@ async function createHotelGroupRoomingList(_root, { groupBlockId, allocationId, 
     const clock = await p.hotelBusinessDate.findUnique({ where: { id: 1 } });
     if (!clock || block.arrivalDate < clock.currentBusinessDate) throw new Error("A rooming list cannot create stays in a closed business date.");
     const contract = await groupCommercialContract(p, groupBlockId);
+    assertGroupAllocationMatchesContract(allocation, contract);
     if (rows.some((row) => row.numberOfGuests > contract.maxOccupancy)) throw new Error(`Each room supports at most ${contract.maxOccupancy} occupants.`);
     await lockRoomInventory(p, allocation.roomTypeId, block.arrivalDate, block.departureDate);
     const [availability] = await getHotelAvailability(tx, { roomTypeId: allocation.roomTypeId, checkInDate: block.arrivalDate, checkOutDate: block.departureDate });
@@ -3200,10 +3307,10 @@ async function createHotelGroupRoomingList(_root, { groupBlockId, allocationId, 
       if (existing) throw new Error(`Rooming-list row ${row.rowId} already has a reservation; use its existing record.`);
       const guest = await ensureGuestProfile(tx, { name: row.guestName, email: row.guestEmail, phone: row.guestPhone });
       await assertGuestEligible(p, guest.id);
-      const id = `gbk_${(0, import_node_crypto10.createHash)("sha256").update(rowKey).digest("hex").slice(0, 24)}`, now = /* @__PURE__ */ new Date();
+      const id = `gbk_${(0, import_node_crypto11.createHash)("sha256").update(rowKey).digest("hex").slice(0, 24)}`, now = /* @__PURE__ */ new Date();
       const booking = await p.booking.create({ data: {
         id,
-        confirmationNumber: `GB-${(0, import_node_crypto10.createHash)("sha256").update(rowKey).digest("hex").slice(0, 12).toUpperCase()}`,
+        confirmationNumber: `GB-${(0, import_node_crypto11.createHash)("sha256").update(rowKey).digest("hex").slice(0, 12).toUpperCase()}`,
         guestName: row.guestName,
         guestEmail: row.guestEmail,
         guestPhone: row.guestPhone,
@@ -3247,7 +3354,6 @@ async function createHotelGroupRoomingList(_root, { groupBlockId, allocationId, 
       for (const { reservation: _, ...line } of snapshots) await p.reservationLineItem.create({ data: { ...line, date: new Date(line.date), reservationId: id, snapshotStatus: "active" } });
       await ensureBookingFolio(tx, id);
       await recordHotelLifecycleEvent({ prisma: p, eventKey: rowKey, actorId: context.session.itemId, identity: { request: { groupBlockId, allocationId, row }, aggregateType: "booking", aggregateId: id, action: "group_created" }, afterSnapshot: { bookingId: id, rowId: row.rowId, groupBlockId, allocationId, totalAmountMinor: totalMinor, billingType: block.billingType } });
-      await queueBookingCommunication(p, { bookingId: id, kind: "booking_confirmation", eventKey: `booking:${id}:confirmation:v1` });
       created.push({ rowId: row.rowId, bookingId: id, confirmationNumber: booking.confirmationNumber, totalAmountMinor: totalMinor });
     }
     await p.groupBlockAllocation.update({ where: { id: allocationId }, data: { roomsPickedUp: { increment: rows.length } } });
@@ -3266,20 +3372,6 @@ async function releaseCancelledGroupPickup(prisma, bookingId, cancellationKey) {
   if (!allocation || allocation.groupBlockId !== booking.groupBlockId || allocation.roomsPickedUp < 1) throw new Error("Cancelled group pickup has inconsistent allocation evidence.");
   await prisma.groupBlockAllocation.update({ where: { id: allocation.id }, data: { roomsPickedUp: { decrement: 1 } } });
   await recordHotelLifecycleEvent({ prisma, eventKey, identity: { request: { bookingId, cancellationKey }, aggregateType: "group_block", aggregateId: booking.groupBlockId, action: "pickup_returned" }, afterSnapshot: { bookingId, allocationId: allocation.id, roomsPickedUp: allocation.roomsPickedUp - 1 } });
-}
-async function releaseDueHotelGroupBlocks(context) {
-  const due = await context.prisma.groupBlock.findMany({ where: { status: { in: ["tentative", "definite"] }, releaseDate: { lte: /* @__PURE__ */ new Date() } }, take: 50, orderBy: { releaseDate: "asc" } });
-  let released = 0;
-  for (const item of due) await runSerializableTransaction(context, async (tx) => {
-    const p = tx.prisma;
-    await p.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-group:${item.id}`);
-    const block = await p.groupBlock.findUnique({ where: { id: item.id } });
-    if (!block || !["tentative", "definite"].includes(block.status) || !block.releaseDate || new Date(block.releaseDate) > /* @__PURE__ */ new Date()) return;
-    await p.groupBlock.update({ where: { id: block.id }, data: { status: "released" } });
-    await recordHotelLifecycleEvent({ prisma: p, eventKey: `group-cutoff:${block.id}`, identity: { request: { groupBlockId: block.id, releaseDate: block.releaseDate }, aggregateType: "group_block", aggregateId: block.id, action: "cutoff_released" }, beforeSnapshot: { status: block.status }, afterSnapshot: { status: "released", pickedReservationsPreserved: true } });
-    released++;
-  });
-  return { released };
 }
 async function closeHotelGroupMasterFolio(_root, { groupBlockId, idempotencyKey }, context) {
   if (!permissions.canManagePayments({ session: context.session })) throw new Error("Payment permission is required to close a group master folio.");
@@ -3332,383 +3424,35 @@ async function detachHotelGroupBooking(_root, args, context) {
     const allocation = await p.groupBlockAllocation.findUnique({ where: { id: booking.groupBlockAllocationId } });
     if (!allocation || allocation.groupBlockId !== booking.groupBlockId || allocation.roomsPickedUp < 1) throw new Error("Group pickup allocation is inconsistent.");
     await lockRoomInventory(p, allocation.roomTypeId, booking.groupBlock.arrivalDate, booking.groupBlock.departureDate);
-    const { calculateHotelPrice: calculateHotelPrice2 } = await Promise.resolve().then(() => (init_hotelPricing(), hotelPricing_exports));
+    const { calculateHotelPrice: calculateHotelPrice2 } = await Promise.resolve().then(() => (init_pricing(), pricing_exports));
     const quote = await calculateHotelPrice2(tx, { roomTypeId: args.roomTypeId, ratePlanId: args.ratePlanId, checkInDate: args.checkInDate, checkOutDate: args.checkOutDate, numberOfAdults: booking.numberOfAdults || booking.numberOfGuests, numberOfChildren: booking.numberOfChildren || 0 });
     await p.groupBlockAllocation.update({ where: { id: allocation.id }, data: { roomsPickedUp: { decrement: 1 } } });
     await p.booking.update({ where: { id: booking.id }, data: { groupBlockId: null, groupBlockAllocationId: null, source: "staff" } });
-    const { amendUnpaidBooking: amendUnpaidBooking2 } = await Promise.resolve().then(() => (init_bookingAmendment(), bookingAmendment_exports));
+    const { amendUnpaidBooking: amendUnpaidBooking2 } = await Promise.resolve().then(() => (init_amendment(), amendment_exports));
     const changed = await amendUnpaidBooking2({ context: tx, withinTransaction: true, bookingId: booking.id, checkInDate: quote.checkIn.toISOString(), checkOutDate: quote.checkOut.toISOString(), roomTypeId: args.roomTypeId, guestName: booking.guestName, guestEmail: booking.guestEmail, guestProfileId: booking.guestProfileId, numberOfGuests: quote.numberOfGuests, totalAmountMinor: quote.totalMinor, currencyCode: quote.currencyCode, idempotencyKey: `${eventKey}:reprice`, source: "group-recontract", actorId: context.session.itemId, commercialPricing: { depositPercent: quote.depositPercent, securityDepositMinor: Number(quote.settings.securityDepositMinor ?? 0), arrivalInstant: quote.arrivalInstant, propertyTimeZone: quote.propertyTimeZone, cancellationPolicy: quote.ratePlan.cancellationPolicy, ratePlanId: quote.ratePlan.id, pricingVersion: quote.pricingVersion, roomSubtotalMinor: quote.roomSubtotalMinor, taxMinor: quote.taxMinor, feesMinor: quote.feesMinor, totalMinor: quote.totalMinor, taxRateBasisPoints: quote.taxRateBasisPoints, nightlyRates: quote.nightlyRates } });
     const result = { bookingId: booking.id, formerGroupBlockId: booking.groupBlockId, formerAllocationId: allocation.id, reason, checkInDate: changed.checkInDate, checkOutDate: changed.checkOutDate, totalAmountMinor: changed.totalAmountMinor };
     await recordHotelLifecycleEvent({ prisma: p, eventKey, actorId: context.session.itemId, identity, beforeSnapshot: { groupBlockId: booking.groupBlockId, allocationId: allocation.id, totalAmountMinor: booking.totalAmountMinor }, afterSnapshot: result });
     return JSON.stringify(result);
   });
 }
-var import_node_crypto10;
-var init_hotelGroupLifecycle = __esm({
-  "features/keystone/lib/hotelGroupLifecycle.ts"() {
+var import_node_crypto11;
+var init_commands3 = __esm({
+  "features/keystone/groups/commands.ts"() {
     "use strict";
-    import_node_crypto10 = require("node:crypto");
+    import_node_crypto11 = require("node:crypto");
     init_access();
     init_boundedLaunch();
     init_guestProfiles();
-    init_bookingConfirmation();
+    init_confirmation();
     init_guestBookingAccess();
     init_reservationSnapshots();
     init_bookingFolio();
-    init_folioLedger();
-    init_hotelAvailability();
-    init_inventoryLock();
+    init_ledger();
+    init_roomAvailability();
+    init_roomNightLocks();
     init_hotelBusinessTime();
     init_hotelLifecycle();
     init_serializableTransaction();
-    init_hotelCommunications();
-  }
-});
-
-// features/keystone/lib/hotelReceivables.ts
-function authorize5(context) {
-  if (!permissions.canManagePayments({ session: context.session })) throw new Error("Receivables payment permission is required.");
-  return context.session.itemId;
-}
-function text42(value, label, max = 200) {
-  const result = String(value || "").trim();
-  if (!result || result.length > max) throw new Error(`${label} is required and bounded.`);
-  return result;
-}
-function minor2(value, minimum = 1) {
-  if (!Number.isSafeInteger(value) || Number(value) < minimum) throw new Error("Enter a valid integer minor-unit amount.");
-  return Number(value);
-}
-async function latest(prisma, type) {
-  const rows = await prisma.$queryRaw(import_client2.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent"
-    WHERE "aggregateType"=${type} AND "propertyKey"=${HOTEL_PROPERTY_KEY}
-    ORDER BY "aggregateId", ("afterSnapshot"->>'sequence')::integer DESC`);
-  return rows.map((row) => row.state);
-}
-function receivableAging(invoices, on) {
-  const day2 = new Date(on);
-  day2.setUTCHours(0, 0, 0, 0);
-  return invoices.map((invoice) => {
-    const overdueDays = Math.max(0, Math.floor((day2.getTime() - new Date(invoice.dueOn).getTime()) / 864e5));
-    return { ...invoice, overdueDays, agingBucket: invoice.balanceMinor < 0 ? "credit due to company" : !invoice.balanceMinor ? "settled" : overdueDays === 0 ? "current" : overdueDays <= 30 ? "1\u201330 days" : overdueDays <= 60 ? "31\u201360 days" : "61+ days" };
-  });
-}
-async function hotelReceivableOperations(_root, _args, context) {
-  authorize5(context);
-  const [accounts, invoices, clock] = await Promise.all([latest(context.prisma, "receivable_account"), latest(context.prisma, "receivable_invoice"), context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } })]);
-  if (!clock) throw new Error("Property business date is required.");
-  return { accounts: accounts.map((account) => ({ ...account, outstandingMinor: invoices.filter((i) => i.accountId === account.id).reduce((sum, i) => sum + i.balanceMinor, 0) })), invoices: receivableAging(invoices, clock.currentBusinessDate) };
-}
-async function manageHotelReceivable(_root, { input }, context) {
-  const actorId = authorize5(context);
-  const action = text42(input?.action, "Action");
-  if (!["account", "invoice", "route_charges", "collect", "write_off", "refund_credit"].includes(action)) throw new Error("Unknown receivables action.");
-  const id = text42(input.id, "Record ID");
-  const idempotencyKey = text42(input.idempotencyKey, "Idempotency key");
-  const payerAllocations = action === "route_charges" ? normalizePayerAllocations(input.payerAllocations) : [];
-  const amountMinor = action === "route_charges" ? minor2(payerAllocations.reduce((sum, row) => sum + row.amountMinor, 0)) : minor2(input.amountMinor, action === "account" ? 0 : 1);
-  const createsInvoice = action === "invoice" || action === "route_charges";
-  const reference = text42(input.reference, "Billing or payment reference");
-  const normalized = {
-    action,
-    id,
-    amountMinor,
-    payerAllocations,
-    reference,
-    accountId: String(input.accountId || ""),
-    folioId: String(input.folioId || ""),
-    bookingId: String(input.bookingId || ""),
-    billingEmail: String(input.billingEmail || ""),
-    termsDays: Number(input.termsDays || 0),
-    method: String(input.method || ""),
-    approvalId: String(input.approvalId || ""),
-    actorId
-  };
-  const aggregateType = action === "account" ? "receivable_account" : "receivable_invoice";
-  const eventKey = `receivable:${idempotencyKey}`;
-  const identity = { request: normalized, aggregateType, aggregateId: id, action };
-  return runSerializableTransaction(context, async (tx) => {
-    const parentFolio = createsInvoice ? await tx.prisma.folio.findUnique({ where: { id: text42(input.folioId, "Folio ID") }, select: { bookingId: true } }) : null;
-    const settlementBookingId = parentFolio?.bookingId || (action === "route_charges" ? normalized.bookingId : "");
-    if (settlementBookingId) await tx.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${settlementBookingId}`);
-    if (createsInvoice) await tx.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-folio:${normalized.folioId}`);
-    await lockHotelLifecycle(tx.prisma, "receivables");
-    const folio = createsInvoice ? await tx.prisma.folio.findUnique({ where: { id: input.folioId }, include: { entries: true } }) : null;
-    const replay = await findHotelLifecycleReplay(tx.prisma, eventKey, identity);
-    if (replay) return replay.afterSnapshot;
-    const accounts = await latest(tx.prisma, "receivable_account");
-    const invoices = await latest(tx.prisma, "receivable_invoice");
-    let before = null;
-    let next2;
-    if (action === "account") {
-      if (accounts.some((a) => a.id === id)) throw new Error("This credit account already exists.");
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized.billingEmail) || normalized.billingEmail.length > 320) throw new Error("A valid billing email is required.");
-      if (!Number.isInteger(normalized.termsDays) || normalized.termsDays < 0 || normalized.termsDays > 365) throw new Error("Credit terms must be 0\u2013365 days.");
-      next2 = { id, sequence: 1, name: reference, billingEmail: normalized.billingEmail, creditLimitMinor: amountMinor, termsDays: normalized.termsDays, currencyCode: "USD" };
-    } else if (createsInvoice) {
-      if (!folio || folio.status !== "open" || folio.currencyCode !== "USD") throw new Error("An open USD folio is required for direct billing.");
-      if (action === "route_charges") {
-        const member = await payerWindowMember(tx.prisma, folio, normalized.bookingId);
-        validatePayerAllocations(folio, invoices, payerAllocations, member);
-      }
-      if (invoices.some((i) => i.id === id)) throw new Error("This invoice already exists.");
-      const account = accounts.find((a) => a.id === input.accountId);
-      if (!account) throw new Error("Approved credit account not found.");
-      const balance = settlementBookingId ? (await getBookingCollectibleBalance(tx, settlementBookingId)).balanceDueMinor : calculateFolioBalance(folio.entries).balanceMinor;
-      if (amountMinor > balance) throw new Error("Invoice allocation exceeds the remaining folio balance.");
-      const outstanding = invoices.filter((i) => i.accountId === account.id).reduce((sum, i) => sum + i.balanceMinor, 0);
-      if (outstanding + amountMinor > account.creditLimitMinor) throw new Error("Account credit limit would be exceeded.");
-      const day2 = await currentPostingDate(tx.prisma);
-      const due = new Date(day2);
-      due.setUTCDate(due.getUTCDate() + account.termsDays);
-      next2 = {
-        id,
-        sequence: 1,
-        accountId: account.id,
-        folioId: folio.id,
-        bookingId: settlementBookingId || null,
-        currencyCode: "USD",
-        amountMinor,
-        balanceMinor: amountMinor,
-        issuedOn: day2.toISOString().slice(0, 10),
-        dueOn: due.toISOString().slice(0, 10),
-        status: "open",
-        reference,
-        ...payerAllocations.length ? { payerAllocations } : {}
-      };
-      await tx.prisma.folioEntry.create({ data: {
-        folioId: folio.id,
-        postingKey: `ar-transfer:${id}`,
-        entryType: "transfer",
-        direction: "credit",
-        amountMinor,
-        currencyCode: "USD",
-        description: `Direct bill to ${account.name}: ${reference}`,
-        serviceDate: day2,
-        postedAt: /* @__PURE__ */ new Date(),
-        sourceType: "system",
-        sourceId: id,
-        metadataSnapshot: { receivableInvoiceId: id, accountId: account.id, sourceEntryIds: payerAllocations.length ? payerAllocations.map((row) => row.entryId) : folio.entries.map((entry) => entry.id), payerAllocations, actorId }
-      } });
-    } else {
-      const invoice = invoices.find((i) => i.id === id);
-      if (!invoice || (action === "refund_credit" ? invoice.status !== "credit_due" || amountMinor > -invoice.balanceMinor : invoice.status !== "open" || amountMinor > invoice.balanceMinor)) throw new Error("Collection or payout exceeds the eligible invoice balance.");
-      before = invoice;
-      const remaining = invoice.balanceMinor + (action === "refund_credit" ? amountMinor : -amountMinor);
-      if (action === "write_off") {
-        await requireHotelApproval(tx.prisma, { approvalId: input.approvalId, action: "write_off", aggregateId: id, amountMinor, actorId, operationKey: eventKey });
-      } else if (action === "refund_credit") {
-        await requireHotelApproval(tx.prisma, { approvalId: input.approvalId, action: "refund", aggregateId: id, amountMinor, actorId, operationKey: eventKey });
-      }
-      if (action !== "write_off" && !["cash", "bank_transfer", "check"].includes(normalized.method)) throw new Error("Record a cash, bank transfer or check collection with its receipt reference.");
-      const cashierShiftId = action !== "write_off" && normalized.method === "cash" ? await assertActiveCashierShift(tx.prisma, actorId, "USD") : null;
-      const day2 = await currentPostingDate(tx.prisma);
-      next2 = { ...invoice, sequence: invoice.sequence + 1, writtenOffMinor: (invoice.writtenOffMinor || 0) + (action === "write_off" ? amountMinor : 0), balanceMinor: remaining, status: remaining < 0 ? "credit_due" : remaining > 0 ? "open" : action === "write_off" ? "written_off" : action === "refund_credit" ? "refunded" : "paid" };
-      await recordHotelLifecycleEvent({
-        prisma: tx.prisma,
-        actorId,
-        eventKey: `${eventKey}:collection`,
-        identity: { request: normalized, aggregateType: "receivable_payment", aggregateId: id, action },
-        afterSnapshot: { invoiceId: id, amountMinor: action === "refund_credit" ? -amountMinor : amountMinor, currencyCode: "USD", method: normalized.method, cashierShiftId, reference, serviceDate: day2.toISOString().slice(0, 10), kind: action }
-      });
-    }
-    if (createsInvoice && settlementBookingId) {
-      const obligation = await getBookingCollectibleBalance(tx, settlementBookingId);
-      await tx.prisma.booking.update({ where: { id: settlementBookingId }, data: { balanceDueMinor: obligation.balanceDueMinor, balanceDue: obligation.balanceDueMinor / 100, paymentStatus: obligation.balanceDueMinor ? "partial" : "paid" } });
-    }
-    await recordHotelLifecycleEvent({ prisma: tx.prisma, actorId, eventKey, identity, beforeSnapshot: before, afterSnapshot: next2 });
-    return next2;
-  });
-}
-async function creditDirectBillingForCancellation(tx, bookingId, folioId, cancellationKey) {
-  await lockHotelLifecycle(tx.prisma, "receivables");
-  const invoices = (await latest(tx.prisma, "receivable_invoice")).filter((invoice) => (invoice.bookingId === bookingId || invoice.bookingId === null) && invoice.folioId === folioId);
-  const entries = await tx.prisma.folioEntry.findMany({ where: { folioId }, select: { id: true, reversesId: true, amountMinor: true, direction: true, currencyCode: true } });
-  const reversed = new Set(entries.filter((entry) => entry.reversesId).map((entry) => entry.reversesId));
-  let available = Math.max(0, -calculateFolioBalance(entries).balanceMinor);
-  for (const invoice of invoices.sort((a, b) => a.issuedOn.localeCompare(b.issuedOn) || a.id.localeCompare(b.id))) {
-    const eventKey = `${cancellationKey}:ar-credit:${invoice.id}`;
-    if (await tx.prisma.hotelAuditEvent.findUnique({ where: { eventKey } })) continue;
-    const routedCancelledMinor = invoice.payerAllocations?.reduce((sum, row) => sum + (reversed.has(row.entryId) ? row.amountMinor : 0), 0);
-    const creditMinor = Math.min(available, Math.max(0, invoice.amountMinor - (invoice.creditedMinor || 0)), routedCancelledMinor ?? Infinity);
-    if (!creditMinor) continue;
-    available -= creditMinor;
-    const writtenOffReversed = Math.min(invoice.writtenOffMinor || 0, Math.max(0, creditMinor - Math.max(0, invoice.balanceMinor)));
-    const balanceMinor = invoice.balanceMinor - creditMinor + writtenOffReversed;
-    let allocationCredit = creditMinor;
-    const payerAllocations = invoice.payerAllocations?.map((row) => {
-      const release = reversed.has(row.entryId) ? Math.min(allocationCredit, row.amountMinor) : 0;
-      allocationCredit -= release;
-      return { ...row, amountMinor: row.amountMinor - release };
-    }).filter((row) => row.amountMinor > 0);
-    const next2 = {
-      ...invoice,
-      ...payerAllocations ? { payerAllocations } : {},
-      sequence: invoice.sequence + 1,
-      writtenOffMinor: (invoice.writtenOffMinor || 0) - writtenOffReversed,
-      creditedMinor: (invoice.creditedMinor || 0) + creditMinor,
-      balanceMinor,
-      status: balanceMinor < 0 ? "credit_due" : balanceMinor > 0 ? "open" : "paid"
-    };
-    const day2 = await currentPostingDate(tx.prisma);
-    await tx.prisma.folioEntry.create({ data: {
-      folioId,
-      postingKey: eventKey,
-      entryType: "transfer",
-      direction: "debit",
-      amountMinor: creditMinor,
-      currencyCode: "USD",
-      description: `Cancellation credit memo for company invoice ${invoice.reference}`,
-      serviceDate: day2,
-      postedAt: /* @__PURE__ */ new Date(),
-      sourceType: "system",
-      sourceId: invoice.id,
-      metadataSnapshot: { receivableInvoiceId: invoice.id, cancellationKey, creditMemo: true }
-    } });
-    await recordHotelLifecycleEvent({
-      prisma: tx.prisma,
-      eventKey,
-      identity: { request: { bookingId, invoiceId: invoice.id, creditMinor, cancellationKey }, aggregateType: "receivable_invoice", aggregateId: invoice.id, action: "cancellation_credited" },
-      beforeSnapshot: invoice,
-      afterSnapshot: next2
-    });
-  }
-}
-function normalizePayerAllocations(input) {
-  if (!Array.isArray(input) || !input.length || input.length > 200) throw new Error("Choose 1\u2013200 posted charge allocations.");
-  const rows = input.map((row) => ({ entryId: text42(row?.entryId, "Charge entry ID"), amountMinor: minor2(row?.amountMinor) }));
-  if (new Set(rows.map((row) => row.entryId)).size !== rows.length) throw new Error("A charge may appear only once per routing request.");
-  return rows.sort((a, b) => a.entryId.localeCompare(b.entryId));
-}
-function validatePayerAllocations(folio, invoices, allocations, member) {
-  const sameFolio = invoices.filter((invoice) => invoice.folioId === folio.id);
-  if (sameFolio.some((invoice) => !invoice.payerAllocations && invoice.amountMinor > (invoice.creditedMinor || 0))) throw new Error("Existing amount-only company allocations require reviewed charge attribution before adding charge-level windows.");
-  const reversed = new Set(folio.entries.filter((entry) => entry.reversesId).map((entry) => entry.reversesId));
-  for (const row of allocations) {
-    const charge = folio.entries.find((entry) => entry.id === row.entryId);
-    if (member && (!charge || charge.sourceType !== "reservation_snapshot" || !member.lineItems.some((line) => line.id === charge.sourceId))) throw new Error("A group member window can route only that member\u2019s attributable posted reservation charges.");
-    if (!charge || charge.direction !== "debit" || charge.currencyCode !== folio.currencyCode || !["room_charge", "tax", "fee", "addon"].includes(charge.entryType) || reversed.has(charge.id) || charge.reversedById) throw new Error("Every allocation must reference an unreversed posted charge belonging to this folio.");
-    const assigned = sameFolio.flatMap((invoice) => invoice.payerAllocations || []).filter((item) => item.entryId === row.entryId).reduce((sum, item) => sum + item.amountMinor, 0);
-    if (assigned + row.amountMinor > charge.amountMinor) throw new Error("Company windows cannot allocate a charge more than once or exceed its remaining guest portion.");
-  }
-}
-async function hotelPayerWindows(_root, { folioId, bookingId }, context) {
-  authorize5(context);
-  const folio = await context.prisma.folio.findUnique({ where: { id: text42(folioId, "Folio ID") }, include: { entries: { orderBy: [{ serviceDate: "asc" }, { id: "asc" }] } } });
-  if (!folio) throw new Error("Source folio not found.");
-  const member = await payerWindowMember(context.prisma, folio, String(bookingId || ""));
-  const invoices = (await latest(context.prisma, "receivable_invoice")).filter((invoice) => invoice.folioId === folio.id && (!member || invoice.bookingId === member.id || invoice.bookingId === null));
-  const reversed = new Set(folio.entries.filter((entry) => entry.reversesId).map((entry) => entry.reversesId));
-  const charges = folio.entries.filter((entry) => (!member || entry.sourceType === "reservation_snapshot" && member.lineItems.some((line) => line.id === entry.sourceId)) && entry.direction === "debit" && ["room_charge", "tax", "fee", "addon"].includes(entry.entryType)).map((entry) => {
-    const companyMinor = invoices.flatMap((invoice) => invoice.payerAllocations || []).filter((row) => row.entryId === entry.id).reduce((sum, row) => sum + row.amountMinor, 0);
-    const isReversed = reversed.has(entry.id);
-    return { entryId: entry.id, description: entry.description, amountMinor: entry.amountMinor, companyMinor, guestMinor: isReversed ? 0 : Math.max(0, entry.amountMinor - companyMinor), reversed: isReversed };
-  });
-  return {
-    folioId: folio.id,
-    bookingId: member?.id || folio.bookingId,
-    remainingPayer: member ? "group_master" : "guest",
-    currencyCode: folio.currencyCode,
-    guestLedgerBalanceMinor: calculateFolioBalance(folio.entries).balanceMinor,
-    charges,
-    companyWindows: invoices.map((invoice) => ({ invoiceId: invoice.id, accountId: invoice.accountId, reference: invoice.reference, balanceMinor: invoice.balanceMinor, status: invoice.status, payerAllocations: invoice.payerAllocations || [], unassignedMinor: invoice.payerAllocations ? 0 : Math.max(0, invoice.amountMinor - (invoice.creditedMinor || 0)) }))
-  };
-}
-async function payerWindowMember(prisma, folio, bookingId) {
-  if (folio.bookingId) {
-    if (bookingId && folio.bookingId !== bookingId) throw new Error("Selected booking does not own this folio.");
-    return null;
-  }
-  if (!folio.groupBlockId || !bookingId) throw new Error("Select the group member booking ID for a shared master folio window.");
-  const member = await prisma.booking.findUnique({ where: { id: bookingId }, include: { lineItems: true } });
-  if (!member || member.id !== bookingId || member.billingFolioId !== folio.id || member.groupBlockId !== folio.groupBlockId) throw new Error("Selected group member does not belong to this master folio.");
-  return member;
-}
-var import_client2;
-var init_hotelReceivables = __esm({
-  "features/keystone/lib/hotelReceivables.ts"() {
-    "use strict";
-    import_client2 = require("@prisma/client");
-    init_access();
-    init_bookingFolio();
-    init_folioLedger();
-    init_hotelBusinessTime();
-    init_hotelCashier();
-    init_hotelGuestGovernance();
-    init_hotelLifecycle();
-    init_serializableTransaction();
-  }
-});
-
-// features/keystone/lib/cancellationPolicy.ts
-function safeMinor(value, label) {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${label} must be a non-negative integer amount.`);
-  }
-  return value;
-}
-function normalizeCancellationPolicy(value) {
-  const policy = String(value || "").trim().toLowerCase();
-  if (policy === "flexible" || policy === "moderate" || policy === "strict" || policy === "non_refundable") {
-    return policy;
-  }
-  return "non_refundable";
-}
-function cancellationPolicyDescription(policyValue) {
-  const policy = normalizeCancellationPolicy(policyValue);
-  if (policy === "flexible") {
-    return "Full refund until 48 hours before arrival; after that, the first night is retained.";
-  }
-  if (policy === "moderate") {
-    return "Full refund until 7 days before arrival, 50% refund until 48 hours before arrival, then non-refundable.";
-  }
-  if (policy === "strict") {
-    return "50% refund until 14 days before arrival; after that, the stay is non-refundable.";
-  }
-  return "This rate is non-refundable after booking.";
-}
-function calculateCancellationTerms({
-  policy: policyValue,
-  checkInDate,
-  cancelledAt = /* @__PURE__ */ new Date(),
-  capturedMinor,
-  firstNightMinor,
-  bookingTotalMinor = capturedMinor
-}) {
-  const policy = normalizeCancellationPolicy(policyValue);
-  const captured = safeMinor(capturedMinor, "capturedMinor");
-  const firstNight = safeMinor(firstNightMinor, "firstNightMinor");
-  const bookingTotal = safeMinor(bookingTotalMinor, "bookingTotalMinor");
-  const checkIn = new Date(checkInDate);
-  const cancellation = new Date(cancelledAt);
-  if (Number.isNaN(checkIn.getTime()) || Number.isNaN(cancellation.getTime())) {
-    throw new Error("Cancellation dates are invalid.");
-  }
-  const hoursBeforeArrival = (checkIn.getTime() - cancellation.getTime()) / 36e5;
-  let cancellationFeeMinor = bookingTotal;
-  let fullRefundDeadline = null;
-  if (policy === "flexible") {
-    fullRefundDeadline = new Date(checkIn.getTime() - 48 * 36e5);
-    cancellationFeeMinor = hoursBeforeArrival >= 48 ? 0 : Math.min(bookingTotal, firstNight);
-  } else if (policy === "moderate") {
-    fullRefundDeadline = new Date(checkIn.getTime() - 7 * 24 * 36e5);
-    cancellationFeeMinor = hoursBeforeArrival >= 7 * 24 ? 0 : hoursBeforeArrival >= 48 ? Math.ceil(bookingTotal / 2) : bookingTotal;
-  } else if (policy === "strict") {
-    cancellationFeeMinor = hoursBeforeArrival >= 14 * 24 ? Math.ceil(bookingTotal / 2) : bookingTotal;
-  }
-  const refundableMinor = Math.max(0, captured - cancellationFeeMinor);
-  return {
-    policy,
-    refundableMinor,
-    cancellationFeeMinor,
-    capturedMinor: captured,
-    summary: cancellationPolicyDescription(policy),
-    fullRefundDeadline
-  };
-}
-var init_cancellationPolicy = __esm({
-  "features/keystone/lib/cancellationPolicy.ts"() {
-    "use strict";
   }
 });
 
@@ -3723,269 +3467,34 @@ var init_cancellationSettlement = __esm({
   }
 });
 
-// features/keystone/lib/bookingCancellation.ts
-var bookingCancellation_exports = {};
-__export(bookingCancellation_exports, {
+// features/keystone/lib/safeOperationalError.ts
+function safeOperationalErrorMessage(kind, _error) {
+  return SAFE_OPERATIONAL_MESSAGES[kind];
+}
+var SAFE_OPERATIONAL_MESSAGES;
+var init_safeOperationalError = __esm({
+  "features/keystone/lib/safeOperationalError.ts"() {
+    "use strict";
+    SAFE_OPERATIONAL_MESSAGES = {
+      refund: "Refund processing failed; reconcile the durable intent and provider evidence before replay.",
+      channel: "Channel synchronization failed; inspect the durable sync event before retrying.",
+      worker: "Background processing failed; inspect durable operation evidence before retrying."
+    };
+  }
+});
+
+// features/keystone/refunds/refundIntentWorker.ts
+var refundIntentWorker_exports = {};
+__export(refundIntentWorker_exports, {
   claimRefundIntents: () => claimRefundIntents,
   confirmManualRefundPayout: () => confirmManualRefundPayout,
   dispatchRefundIntentBatch: () => dispatchRefundIntentBatch,
-  requestBookingCancellation: () => requestBookingCancellation,
+  failRefundIntent: () => failRefundIntent,
   settleRefundIntent: () => settleRefundIntent
 });
-function requirePrismaResult3(value) {
+function requirePrismaResult2(value) {
   if (value instanceof Error || value?.extensions?.code === "KS_PRISMA_ERROR") throw value;
   return value;
-}
-function retryableTransactionError(error) {
-  const code = error?.code || error?.extensions?.prisma?.code;
-  return code === "P2002" || code === "P2034";
-}
-function paymentMinor(payment) {
-  if (Number.isSafeInteger(payment.amountMinor)) return Math.abs(payment.amountMinor);
-  const value = Math.round(Math.abs(Number(payment.amount || 0)) * 100);
-  if (!Number.isSafeInteger(value)) throw new Error("Payment amount cannot be represented in minor units.");
-  return value;
-}
-function normalizeCancellationInput(input) {
-  const idempotencyKey = String(input.idempotencyKey || "").trim();
-  if (!idempotencyKey || idempotencyKey.length > 200) throw new Error("A stable idempotency key is required.");
-  const reason = String(input.refundReason || "Cancellation requested").trim();
-  if (!reason || reason.length > 500) throw new Error("Cancellation reason is required.");
-  return { bookingId: input.bookingId, reason, idempotencyKey };
-}
-async function applyCancellationFolioTerms(tx, booking, eventKey, cancellationFeeMinor) {
-  const ensured = await ensureBookingFolio(tx, booking.id, { postSnapshotEntries: true });
-  const activeLineIds = new Set(booking.lineItems.map((line) => line.id));
-  const entries = await tx.prisma.folioEntry.findMany({
-    where: { folioId: ensured.folioId },
-    include: { reversedBy: true },
-    orderBy: [{ postedAt: "asc" }, { id: "asc" }]
-  });
-  const now = /* @__PURE__ */ new Date();
-  const serviceDay = await currentPostingDate(tx.prisma);
-  for (const entry of entries) {
-    if (entry.sourceType !== "reservation_snapshot" || !activeLineIds.has(entry.sourceId) || entry.reversedBy) continue;
-    const reversal = buildFolioReversalPosting(entry, {
-      postingKey: `${eventKey}:reverse:${entry.id}`,
-      reason: "Reservation cancelled under snapshotted rate terms"
-    });
-    await tx.prisma.folioEntry.create({
-      data: {
-        folioId: ensured.folioId,
-        ...reversal,
-        serviceDate: serviceDay,
-        postedAt: now,
-        metadataSnapshot: { ...reversal.metadataSnapshot, cancellationEventKey: eventKey, originalServiceDate: entry.serviceDate }
-      }
-    });
-  }
-  if (cancellationFeeMinor > 0) {
-    await tx.prisma.folioEntry.upsert({
-      where: { postingKey: `${eventKey}:fee` },
-      create: {
-        folioId: ensured.folioId,
-        postingKey: `${eventKey}:fee`,
-        entryType: "adjustment",
-        direction: "debit",
-        amountMinor: cancellationFeeMinor,
-        currencyCode: String(booking.currencyCode || "USD").toUpperCase(),
-        description: "Cancellation fee due under booked rate terms",
-        serviceDate: serviceDay,
-        postedAt: now,
-        sourceType: "system",
-        sourceId: booking.id,
-        metadataSnapshot: { cancellationEventKey: eventKey }
-      },
-      update: {}
-    });
-  }
-  await creditDirectBillingForCancellation(tx, booking.id, ensured.folioId, eventKey);
-  return ensured.folioId;
-}
-async function requestBookingCancellation({
-  context,
-  bookingId,
-  refundReason,
-  idempotencyKey,
-  actorId,
-  source = "guest",
-  withinTransaction = false
-}) {
-  const normalized = normalizeCancellationInput({ bookingId, refundReason, idempotencyKey });
-  const eventKey = `booking:cancel:${normalized.idempotencyKey}`;
-  const identity = {
-    request: { bookingId, refundReason: normalized.reason, source },
-    aggregateType: "booking",
-    aggregateId: bookingId,
-    action: "cancellation_requested"
-  };
-  const execute = async (tx) => {
-    const prisma = tx.prisma;
-    await lockHotelLifecycle(prisma, eventKey);
-    await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
-    if (await findHotelLifecycleReplay(prisma, eventKey, identity)) {
-      const current = await prisma.booking.findUnique({ where: { id: bookingId } });
-      if (!current) throw new Error("Cancellation replay evidence is incomplete.");
-      return current;
-    }
-    const booking = await prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: {
-        ratePlan: true,
-        lineItems: {
-          where: { snapshotStatus: "active" },
-          orderBy: [{ date: "asc" }, { id: "asc" }]
-        },
-        payments: { include: { paymentProvider: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
-        refundIntents: true
-      }
-    });
-    if (!booking) throw new Error("Booking not found.");
-    if (booking.status === "cancelled" || booking.status === "cancellation_pending") {
-      throw new Error(`Booking is already ${booking.status.replaceAll("_", " ")}.`);
-    }
-    if (!CANCELLABLE_BOOKING_STATUSES.has(booking.status)) {
-      throw new Error(`A ${booking.status} booking cannot be cancelled.`);
-    }
-    if (source === "no_show") {
-      if (booking.status !== "confirmed") throw new Error("Only a confirmed reservation can be marked no-show.");
-      const settings = booking.pricingSnapshot?.arrivalInstant ? null : await prisma.hotelSettings.findUnique({ where: { id: 1 } });
-      const arrival = booking.pricingSnapshot?.arrivalInstant ? new Date(booking.pricingSnapshot.arrivalInstant) : new Date(propertyArrivalInstant(booking.checkInDate, settings?.checkInTime || "15:00", settings?.timeZone || "UTC"));
-      if (!Number.isFinite(arrival.getTime()) || arrival > /* @__PURE__ */ new Date()) throw new Error("A reservation cannot be marked no-show before its arrival time.");
-    }
-    const abandoned = source === "hold_expiry" || source === "payment_recovery";
-    if (abandoned && booking.status !== "pending") throw new Error("Only an unconfirmed reservation can use hold recovery.");
-    if (source === "hold_expiry" && (!booking.holdExpiresAt || new Date(booking.holdExpiresAt) > /* @__PURE__ */ new Date())) {
-      throw new Error("The reservation hold has not expired.");
-    }
-    const captures = booking.payments.filter(
-      (payment) => payment.status === "completed" && payment.paymentType !== "refund" && paymentMinor(payment) > 0
-    );
-    const refunds = booking.payments.filter(
-      (payment) => payment.paymentType === "refund" && payment.status === "refunded"
-    );
-    const availableByPayment = /* @__PURE__ */ new Map();
-    let availableCapturedMinor = 0;
-    for (const payment of captures) {
-      const settledRefundMinor = refunds.filter((refund) => refund.providerData?.sourcePaymentId === payment.id).reduce((sum, refund) => sum + paymentMinor(refund), 0);
-      const reservedRefundMinor = booking.refundIntents.filter((intent) => intent.sourcePaymentId === payment.id && ACTIVE_REFUND_INTENT_STATUSES.includes(intent.status)).reduce((sum, intent) => sum + intent.amountMinor, 0);
-      const available = paymentMinor(payment) - settledRefundMinor - reservedRefundMinor;
-      if (available < 0) throw new Error("Recorded refunds exceed the captured payment.");
-      availableByPayment.set(payment.id, available);
-      availableCapturedMinor += available;
-    }
-    const firstRoomNight = booking.lineItems.find((line) => line.type === "room");
-    const policy = firstRoomNight?.cancellationPolicySnapshot || booking.pricingSnapshot?.cancellationPolicy || booking.ratePlan?.cancellationPolicy;
-    const stayNights = Math.max(1, Math.round((booking.checkOutDate.getTime() - booking.checkInDate.getTime()) / 864e5));
-    const bookingTotalMinor = Number(booking.totalAmountMinor || Math.round(Number(booking.totalAmount || 0) * 100));
-    const firstNightMinor = Number(firstRoomNight?.totalPrice || 0) || Math.ceil(bookingTotalMinor / stayNights);
-    const cancellationTerms = abandoned ? { policy: "flexible", refundableMinor: availableCapturedMinor, cancellationFeeMinor: 0, capturedMinor: availableCapturedMinor, summary: "Unconfirmed reservation released without a cancellation fee. Any received payment is being returned.", fullRefundDeadline: null } : calculateCancellationTerms({
-      policy,
-      checkInDate: booking.pricingSnapshot?.arrivalInstant || booking.checkInDate,
-      cancelledAt: /* @__PURE__ */ new Date(),
-      capturedMinor: availableCapturedMinor,
-      firstNightMinor,
-      bookingTotalMinor
-    });
-    const folioId = await applyCancellationFolioTerms(tx, booking, eventKey, cancellationTerms.cancellationFeeMinor);
-    let remainingRefundMinor = cancellationTerms.refundableMinor;
-    const createdIntentIds = [];
-    const manualRefundIds = [];
-    for (const payment of captures) {
-      const available = availableByPayment.get(payment.id) || 0;
-      const refundMinor = Math.min(available, remainingRefundMinor);
-      if (refundMinor <= 0) continue;
-      remainingRefundMinor -= refundMinor;
-      const isManual = payment.paymentProvider?.code === "pp_manual_manual";
-      if (!payment.paymentProvider || !isManual && !isOnlinePaymentProviderCode(payment.paymentProvider.code)) {
-        throw new Error("The captured payment provider does not support a durable refund workflow.");
-      }
-      const providerPaymentId = payment.providerCaptureId || payment.providerPaymentId || payment.stripePaymentIntentId;
-      if (!isManual && !providerPaymentId) throw new Error("A completed payment is missing its provider identifier.");
-      const intentKey = `${eventKey}:${payment.id}`;
-      const refundRequest = { bookingId, sourcePaymentId: payment.id, amountMinor: refundMinor, reason: normalized.reason };
-      const intent = requirePrismaResult3(await prisma.refundIntent.create({
-        data: {
-          intentKey,
-          requestHash: hashLifecycleRequest(refundRequest),
-          cancellationEventKey: eventKey,
-          propertyKey: HOTEL_PROPERTY_KEY,
-          bookingId,
-          sourcePaymentId: payment.id,
-          paymentProviderId: payment.paymentProvider.id,
-          amountMinor: refundMinor,
-          currencyCode: String(payment.currency || "USD").toUpperCase(),
-          reason: normalized.reason,
-          actorId: actorId || null,
-          status: "pending",
-          attempts: 0,
-          maxAttempts: REFUND_MAX_ATTEMPTS,
-          availableAt: /* @__PURE__ */ new Date()
-        },
-        select: { id: true }
-      }));
-      createdIntentIds.push(intent.id);
-    }
-    if (remainingRefundMinor !== 0) throw new Error("Cancellation refund allocation did not match captured payment evidence.");
-    const hasOutstandingRefunds = createdIntentIds.length > 0 || booking.refundIntents.some(
-      (intent) => ["pending", "processing", "failed", "dead_letter"].includes(intent.status)
-    );
-    const retainedMinor = Math.max(0, availableCapturedMinor - cancellationTerms.refundableMinor);
-    const outstandingFeeMinor = Math.max(0, cancellationTerms.cancellationFeeMinor - retainedMinor);
-    const finalPaymentStatus = outstandingFeeMinor > 0 ? retainedMinor > 0 ? "partial" : "unpaid" : availableCapturedMinor > 0 && cancellationTerms.refundableMinor === availableCapturedMinor ? "refunded" : booking.paymentStatus;
-    const now = /* @__PURE__ */ new Date();
-    const updated = requirePrismaResult3(await prisma.booking.update({
-      where: { id: bookingId },
-      data: hasOutstandingRefunds && !abandoned ? { status: "cancellation_pending", balanceDueMinor: outstandingFeeMinor, balanceDue: outstandingFeeMinor / 100 } : {
-        status: source === "no_show" ? "no_show" : "cancelled",
-        paymentStatus: finalPaymentStatus,
-        balanceDueMinor: outstandingFeeMinor,
-        balanceDue: outstandingFeeMinor / 100,
-        cancelledAt: now,
-        holdExpiresAt: null
-      }
-    }));
-    await recomputeBookingPaymentState(prisma, bookingId);
-    if (["cancelled", "no_show"].includes(updated.status)) await releaseCancelledGroupPickup(prisma, bookingId, eventKey);
-    await recordHotelLifecycleEvent({
-      prisma,
-      eventKey,
-      actorId: actorId || null,
-      identity,
-      beforeSnapshot: { status: booking.status, paymentStatus: booking.paymentStatus, balanceDue: booking.balanceDue },
-      afterSnapshot: {
-        status: updated.status,
-        folioId,
-        refundIntentIds: createdIntentIds,
-        manualRefundIds,
-        cancellationTerms
-      },
-      metadata: { confirmationNumber: booking.confirmationNumber, refundReason: normalized.reason, source }
-    });
-    if (!hasOutstandingRefunds) {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: source === "no_show" ? "booking_no_show" : "booking_cancelled",
-        eventKey,
-        cancellation: {
-          summary: cancellationTerms.summary,
-          refundableMinor: cancellationTerms.refundableMinor,
-          cancellationFeeMinor: cancellationTerms.cancellationFeeMinor
-        }
-      });
-    }
-    return updated;
-  };
-  if (withinTransaction) return execute(context);
-  for (let attempt = 1; attempt <= TRANSACTION_RETRY_LIMIT; attempt += 1) {
-    try {
-      return await context.transaction(execute, { maxWait: 5e3, timeout: 3e4, isolationLevel: "ReadCommitted" });
-    } catch (error) {
-      if (!retryableTransactionError(error) || attempt === TRANSACTION_RETRY_LIMIT) throw error;
-      await new Promise((resolve) => setTimeout(resolve, attempt * 10));
-    }
-  }
-  throw new Error("Cancellation transaction retry limit exceeded.");
 }
 async function claimRefundIntents(prisma, options) {
   const workerId = String(options.workerId || "").trim();
@@ -3993,13 +3502,25 @@ async function claimRefundIntents(prisma, options) {
   const now = options.now || /* @__PURE__ */ new Date();
   const limit = Math.min(50, Math.max(1, Number(options.limit || 10)));
   const leaseMs = Math.min(15 * 6e4, Math.max(5e3, Number(options.leaseMs || 6e4)));
-  const leaseToken = `${workerId}:${(0, import_node_crypto11.randomUUID)()}`;
+  const leaseToken = `${workerId}:${(0, import_node_crypto12.randomUUID)()}`;
   const leaseExpiresAt = new Date(now.getTime() + leaseMs);
-  return requirePrismaResult3(await prisma.$queryRaw(import_client3.Prisma.sql`
-    WITH candidates AS (
+  return requirePrismaResult2(await prisma.$queryRaw(import_client3.Prisma.sql`
+    WITH exhausted AS (
+      UPDATE "RefundIntent" AS intent
+      SET "status"='dead_letter', "deadLetteredAt"=COALESCE(intent."deadLetteredAt", ${now}),
+          "lastError"='Refund attempt limit exhausted before settlement; operator reconciliation required.',
+          "leaseToken"='', "leaseExpiresAt"=NULL, "updatedAt"=${now}
+      WHERE intent."propertyKey"=${HOTEL_PROPERTY_KEY}
+        AND intent."paymentProvider" IN (SELECT "id" FROM "PaymentProvider" WHERE "code" IN ('pp_stripe_stripe','pp_paypal_paypal'))
+        AND intent."attempts" >= intent."maxAttempts"
+        AND (intent."status" IN ('pending','failed')
+          OR (intent."status" = 'processing' AND intent."leaseExpiresAt" <= ${now}))
+      RETURNING intent."id"
+    ), candidates AS (
       SELECT "id" FROM "RefundIntent"
       WHERE "propertyKey" = ${HOTEL_PROPERTY_KEY}
         AND "paymentProvider" IN (SELECT "id" FROM "PaymentProvider" WHERE "code" IN ('pp_stripe_stripe','pp_paypal_paypal'))
+        AND "attempts" < "maxAttempts"
         AND (("status" IN ('pending','failed') AND "availableAt" <= ${now})
           OR ("status" = 'processing' AND "leaseExpiresAt" <= ${now}))
       ORDER BY "availableAt", "createdAt", "id"
@@ -4017,11 +3538,31 @@ async function claimRefundIntents(prisma, options) {
       intent."leaseToken", intent."providerRefundId"
   `));
 }
+function assertExistingRefundPaymentMatchesIntent(payment, intent, providerRefundId) {
+  const providerData = payment.providerData && typeof payment.providerData === "object" ? payment.providerData : {};
+  const sourceProviderPaymentId = String(intent.sourcePayment.providerCaptureId || intent.sourcePayment.providerPaymentId || intent.sourcePayment.stripePaymentIntentId || "");
+  if (payment.bookingId !== intent.bookingId || payment.booking?.id !== intent.bookingId || payment.paymentProviderId !== intent.paymentProviderId || payment.amountMinor !== -intent.amountMinor || String(payment.currency || "").trim().toUpperCase() !== String(intent.currencyCode || "").trim().toUpperCase() || payment.paymentType !== "refund" || payment.status !== "refunded" || String(payment.providerPaymentId || "") !== sourceProviderPaymentId || payment.providerRefundId !== providerRefundId || providerData.sourcePaymentId !== intent.sourcePaymentId || providerData.refundIntentKey !== intent.intentKey) throw new Error("Existing refund payment does not match intent.");
+}
 function retryDelay(attempts) {
   return Math.min(60 * 6e4, 5e3 * 2 ** Math.max(0, Math.min(10, attempts - 1)));
 }
+async function deferRefundIntentForConfiguration(prisma, intent, error) {
+  await prisma.refundIntent.updateMany({
+    where: { id: intent.id, status: "processing", leaseToken: intent.leaseToken },
+    data: {
+      status: "pending",
+      attempts: Math.max(0, intent.attempts - 1),
+      lastAttemptAt: null,
+      lastError: safeOperationalErrorMessage("refund", error),
+      availableAt: new Date(Date.now() + 6e4),
+      deadLetteredAt: null,
+      leaseToken: "",
+      leaseExpiresAt: null
+    }
+  });
+}
 async function failRefundIntent(prisma, intent, error) {
-  const message = (error instanceof Error ? error.message : String(error)).slice(0, 2e3);
+  const message = safeOperationalErrorMessage("refund", error);
   const dead = intent.attempts >= intent.maxAttempts;
   await prisma.refundIntent.updateMany({
     where: { id: intent.id, status: "processing", leaseToken: intent.leaseToken },
@@ -4045,40 +3586,55 @@ async function settleRefundIntent(context, intent, providerResult) {
       where: { id: intent.id },
       include: { sourcePayment: true, paymentProvider: true, booking: true }
     });
-    if (current?.status === "succeeded") return { settled: true, failed: false };
+    if (current?.status === "succeeded") {
+      if (!String(current.providerRefundId || "").trim()) throw new Error("Succeeded refund is missing its stored provider identity.");
+      const replayEvidence = validateRefundSettlement(providerResult, current);
+      if (!replayEvidence.settled) throw new Error("Succeeded refund replay must contain settled provider evidence.");
+      return { settled: true, failed: false };
+    }
     if (!current || current.status !== "processing" || current.leaseToken !== intent.leaseToken) {
       throw new Error("Refund intent lease was lost.");
     }
     const evidence2 = validateRefundSettlement(providerResult, current);
     const providerRefundId = evidence2.id;
     if (!evidence2.settled) {
+      const exhausted = current.attempts >= current.maxAttempts;
+      const deadLettered = evidence2.failed || exhausted;
       await prisma.refundIntent.update({
         where: { id: current.id },
         data: {
-          status: evidence2.failed ? "dead_letter" : "pending",
+          status: deadLettered ? "dead_letter" : "pending",
           providerRefundId,
           providerResultSnapshot: providerResult.data || {},
-          lastError: evidence2.failed ? `Provider refund ${evidence2.status}; operator reconciliation required.` : `Provider refund ${evidence2.status}; awaiting settlement.`,
+          lastError: evidence2.failed ? `Provider refund ${evidence2.status}; operator reconciliation required.` : exhausted ? `Provider refund ${evidence2.status}; retry limit reached; operator reconciliation required.` : `Provider refund ${evidence2.status}; awaiting settlement.`,
           availableAt: new Date(Date.now() + retryDelay(current.attempts)),
-          deadLetteredAt: evidence2.failed ? /* @__PURE__ */ new Date() : null,
+          deadLetteredAt: deadLettered ? /* @__PURE__ */ new Date() : null,
           leaseToken: "",
           leaseExpiresAt: null
         }
       });
-      return { settled: false, failed: evidence2.failed };
+      return { settled: false, failed: deadLettered };
     }
     const manual = current.paymentProvider?.code === "pp_manual_manual";
     let cashierShiftId = null;
     if (manual) {
       if (!permissions.canManagePayments({ session: context.session })) throw new Error("Only payment staff may confirm a physical refund payout.");
-      if (current.sourcePayment.paymentMethod === "cash") cashierShiftId = await assertActiveCashierShift(prisma, context.session.itemId, current.currencyCode);
+      const sourceCurrencyCode = String(current.sourcePayment.currency || "USD").trim().toUpperCase();
+      if (String(current.currencyCode || "").trim().toUpperCase() !== sourceCurrencyCode) {
+        throw new Error("Manual refund currency does not match its source payment.");
+      }
+      if (current.sourcePayment.paymentMethod === "cash") cashierShiftId = await assertActiveCashierShift(prisma, context.session.itemId, sourceCurrencyCode);
     }
-    const refundId = `refund_${(0, import_node_crypto11.createHash)("sha256").update(current.intentKey).digest("hex").slice(0, 24)}`;
-    let refund = await prisma.bookingPayment.findUnique({ where: { id: refundId } });
+    const refundHash = (0, import_node_crypto12.createHash)("sha256").update(current.intentKey).digest("hex");
+    const refundId = `refund_${refundHash.slice(0, 24)}`;
+    let refund = await prisma.bookingPayment.findUnique({ where: { id: refundId }, include: { booking: true } });
+    if (refund) assertExistingRefundPaymentMatchesIntent(refund, current, providerRefundId);
     if (!refund) {
       refund = await prisma.bookingPayment.create({
         data: {
           id: refundId,
+          // paymentReference is unique; left empty, every refund after the first collides and never settles.
+          paymentReference: `RFD-${refundHash.slice(0, 16).toUpperCase()}`,
           bookingId: current.bookingId,
           paymentProviderId: current.paymentProviderId,
           amountMinor: -current.amountMinor,
@@ -4106,12 +3662,6 @@ async function settleRefundIntent(context, intent, providerResult) {
     const isCancellation = String(current.cancellationEventKey || "").startsWith("booking:cancel:");
     if (!isCancellation) {
       await recomputeBookingPaymentState(prisma, current.bookingId);
-      await queueBookingCommunication(prisma, {
-        bookingId: current.bookingId,
-        kind: "booking_refund",
-        eventKey: current.intentKey,
-        cancellation: { summary: current.reason, refundableMinor: current.amountMinor, cancellationFeeMinor: 0 }
-      });
       return { settled: true, failed: false };
     }
     const outstanding = await prisma.refundIntent.count({
@@ -4151,7 +3701,8 @@ async function settleRefundIntent(context, intent, providerResult) {
             paymentStatus: outstandingFeeMinor > 0 ? netRetainedMinor > 0 ? "partial" : "unpaid" : netRetainedMinor === 0 ? "refunded" : "paid",
             balanceDueMinor: outstandingFeeMinor,
             balanceDue: outstandingFeeMinor / 100,
-            cancelledAt: /* @__PURE__ */ new Date()
+            // The cancellation happened when it was requested, not when the refund settled.
+            cancelledAt: booking.cancelledAt || cancellationAudit?.occurredAt || /* @__PURE__ */ new Date()
           }
         });
         await recomputeBookingPaymentState(prisma, current.bookingId);
@@ -4165,16 +3716,6 @@ async function settleRefundIntent(context, intent, providerResult) {
           afterSnapshot: { status: updated.status, paymentStatus: updated.paymentStatus, netRetainedMinor, outstandingFeeMinor },
           metadata: { cancellationEventKey: current.cancellationEventKey }
         });
-        await queueBookingCommunication(prisma, {
-          bookingId: current.bookingId,
-          kind: finalStatus === "no_show" ? "booking_no_show" : "booking_cancelled",
-          eventKey,
-          cancellation: {
-            summary: String(terms.summary || "The booked cancellation terms were applied."),
-            refundableMinor: Number(terms.refundableMinor || 0),
-            cancellationFeeMinor: Number(terms.cancellationFeeMinor || 0)
-          }
-        });
       }
     }
     return { settled: true, failed: false };
@@ -4184,6 +3725,11 @@ async function dispatchRefundIntentBatch(context, options) {
   const intents = await claimRefundIntents(context.prisma, options);
   const result = { succeeded: 0, retried: 0, deadLettered: 0 };
   for (const intent of intents) {
+    const renewed = await context.prisma.refundIntent.updateMany({
+      where: { id: intent.id, status: "processing", leaseToken: intent.leaseToken },
+      data: { leaseExpiresAt: new Date(Date.now() + REFUND_ITEM_LEASE_MS), updatedAt: /* @__PURE__ */ new Date() }
+    });
+    if (renewed.count !== 1) continue;
     try {
       const [sourcePayment, provider] = await Promise.all([
         context.prisma.bookingPayment.findUnique({ where: { id: intent.sourcePaymentId } }),
@@ -4200,11 +3746,23 @@ async function dispatchRefundIntentBatch(context, options) {
         idempotencyKey: intent.intentKey,
         metadata: { bookingId: intent.bookingId, sourcePaymentId: intent.sourcePaymentId, refundIntentKey: intent.intentKey }
       });
+      const providerRefundId = String(providerResult?.data?.id || providerResult?.data?.refund_id || "").trim();
+      if (!intent.providerRefundId && providerRefundId) {
+        await context.prisma.refundIntent.updateMany({
+          where: { id: intent.id, status: "processing", leaseToken: intent.leaseToken },
+          data: { providerRefundId }
+        });
+      }
       const outcome = await settleRefundIntent(context, intent, providerResult);
       if (outcome.settled) result.succeeded += 1;
       else if (outcome.failed) result.deadLettered += 1;
       else result.retried += 1;
     } catch (error) {
+      if (error instanceof PaymentProviderConfigurationError) {
+        await deferRefundIntentForConfiguration(context.prisma, intent, error);
+        result.retried += 1;
+        continue;
+      }
       const dead = await failRefundIntent(context.prisma, intent, error);
       if (dead) result.deadLettered += 1;
       else result.retried += 1;
@@ -4233,46 +3791,60 @@ async function confirmManualRefundPayout(context, intentId, approvalId) {
     return { status: "recorded", intentId };
   }, { maxWait: 5e3, timeout: 3e4, isolationLevel: "Serializable" });
 }
-var import_node_crypto11, import_client3, CANCELLABLE_BOOKING_STATUSES, ACTIVE_REFUND_INTENT_STATUSES, REFUND_MAX_ATTEMPTS, TRANSACTION_RETRY_LIMIT;
-var init_bookingCancellation = __esm({
-  "features/keystone/lib/bookingCancellation.ts"() {
+var import_node_crypto12, import_client3, REFUND_ITEM_LEASE_MS;
+var init_refundIntentWorker = __esm({
+  "features/keystone/refunds/refundIntentWorker.ts"() {
     "use strict";
-    import_node_crypto11 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
     import_client3 = require("@prisma/client");
     init_access();
-    init_hotelGuestGovernance();
-    init_hotelCashier();
-    init_hotelLoyalty();
-    init_hotelGroupLifecycle();
-    init_hotelReceivables();
-    init_hotelBusinessTime();
-    init_paymentProviderAdapter();
+    init_commands();
+    init_commands4();
+    init_commands2();
+    init_commands3();
     init_bookingFolio();
     init_bookingRefund();
-    init_cancellationPolicy();
     init_cancellationSettlement();
-    init_folioLedger();
-    init_hotelCommunications();
-    init_paymentSecurity();
     init_hotelLifecycle();
-    CANCELLABLE_BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed"]);
-    ACTIVE_REFUND_INTENT_STATUSES = ["pending", "processing", "failed", "dead_letter"];
-    REFUND_MAX_ATTEMPTS = 8;
-    TRANSACTION_RETRY_LIMIT = 5;
+    init_paymentSecurity();
+    init_paymentProviderAdapter();
+    init_safeOperationalError();
+    REFUND_ITEM_LEASE_MS = 12e4;
   }
 });
 
-// features/keystone/lib/hotelCashier.ts
+// features/keystone/cashier/commands.ts
 function amount2(value) {
-  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error("Cash amount must be non-negative integer minor units.");
+  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error("Cash amount must be zero or more, in whole cents.");
   return Number(value);
 }
-function text43(value, label, max = 200) {
+function text40(value, label, max = 200) {
   const result = String(value || "").trim();
   if (!result || result.length > max) throw new Error(`${label} is required and bounded.`);
   return result;
 }
-function authorize6(context) {
+function isRecord2(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function parseManageHotelCashierInput(value) {
+  if (!isRecord2(value)) throw new Error("Action is required and bounded.");
+  const actionText = text40(value.action, "Action");
+  if (!["open", "drop", "close", "approve", "pay_refund"].includes(actionText)) throw new Error("Unknown cashier action.");
+  const action = actionText;
+  const shiftId = text40(value.shiftId, action === "pay_refund" ? "Refund intent ID" : "Shift ID");
+  if (action === "pay_refund") {
+    const approvalId2 = typeof value.approvalId === "string" ? value.approvalId : void 0;
+    return { action, shiftId, approvalId: approvalId2 };
+  }
+  const idempotencyKey = text40(value.idempotencyKey, "Idempotency key");
+  const reason = String(value.reason || "").trim();
+  if (reason.length > 500) throw new Error("Reason is too long.");
+  const amountMinor = action === "approve" ? 0 : amount2(value.amountMinor);
+  const approvalId = String(value.approvalId || "");
+  if (action === "open") return { action, shiftId, idempotencyKey, amountMinor, drawerId: text40(value.drawerId, "Drawer", 80), reason, approvalId };
+  return { action, shiftId, idempotencyKey, amountMinor, reason, approvalId };
+}
+function authorize5(context) {
   if (!context.session?.itemId || !permissions.canManagePayments({ session: context.session })) throw new Error("Cashier payment permission is required.");
   return context.session.itemId;
 }
@@ -4311,32 +3883,29 @@ function expectedCash(shift, ledger) {
   return result;
 }
 async function hotelCashierOperations(_root, _args, context) {
-  authorize6(context);
+  authorize5(context);
   const states3 = await shifts(context.prisma);
   const result = await Promise.all(states3.filter((s) => s.status !== "closed").map(async (shift) => ({ ...shift, expectedMinor: expectedCash(shift, await cashLedger(context.prisma, shift.id)) })));
   const manualRefunds = await context.prisma.refundIntent.findMany({ where: { paymentProvider: { code: "pp_manual_manual" }, status: { in: ["pending", "failed", "dead_letter"] } }, include: { booking: { select: { confirmationNumber: true } } }, take: 100 });
   return { manualRefunds: manualRefunds.map((intent) => ({ id: intent.id, amountMinor: intent.amountMinor, currencyCode: intent.currencyCode, confirmationNumber: intent.booking?.confirmationNumber, reason: intent.reason })), shifts: [...result, ...states3.filter((s) => s.status === "closed").sort((a, b) => (b.closedAt || "").localeCompare(a.closedAt || "")).slice(0, 100)] };
 }
-async function manageHotelCashier(_root, { input }, context) {
-  const actorId = authorize6(context);
-  const action = text43(input?.action, "Action");
+async function manageHotelCashier(_root, args, context) {
+  const actorId = authorize5(context);
+  const input = parseManageHotelCashierInput(args.input);
+  const action = input.action;
   if (action === "pay_refund") {
-    const { confirmManualRefundPayout: confirmManualRefundPayout2 } = await Promise.resolve().then(() => (init_bookingCancellation(), bookingCancellation_exports));
-    return confirmManualRefundPayout2(context, text43(input.shiftId, "Refund intent ID"), input.approvalId);
+    const { confirmManualRefundPayout: confirmManualRefundPayout2 } = await Promise.resolve().then(() => (init_refundIntentWorker(), refundIntentWorker_exports));
+    return confirmManualRefundPayout2(context, input.shiftId, input.approvalId);
   }
-  if (!["open", "drop", "close", "approve"].includes(action)) throw new Error("Unknown cashier action.");
-  const shiftId = text43(input.shiftId, "Shift ID");
-  const key4 = text43(input.idempotencyKey, "Idempotency key");
-  const reason = String(input.reason || "").trim();
-  if (reason.length > 500) throw new Error("Reason is too long.");
+  const { shiftId, idempotencyKey: key4, amountMinor = 0, reason = "", approvalId = "" } = input;
   const normalized = {
     action,
     shiftId,
     actorId,
-    amountMinor: action === "approve" ? 0 : amount2(input.amountMinor),
-    drawerId: action === "open" ? text43(input.drawerId, "Drawer", 80) : "",
+    amountMinor,
+    drawerId: action === "open" ? input.drawerId : "",
     reason,
-    approvalId: String(input.approvalId || "")
+    approvalId: String(approvalId || "")
   };
   const eventKey = `cashier:${key4}`;
   const identity = { request: normalized, aggregateType: "cashier_shift", aggregateId: shiftId, action };
@@ -4388,23 +3957,38 @@ async function manageHotelCashier(_root, { input }, context) {
   });
 }
 var import_client4;
-var init_hotelCashier = __esm({
-  "features/keystone/lib/hotelCashier.ts"() {
+var init_commands4 = __esm({
+  "features/keystone/cashier/commands.ts"() {
     "use strict";
     import_client4 = require("@prisma/client");
-    init_hotelGuestGovernance();
+    init_commands();
     init_access();
     init_hotelLifecycle();
     init_serializableTransaction();
   }
 });
 
-// features/keystone/lib/bookingRefund.ts
-function paymentMinor2(payment) {
+// features/keystone/refunds/bookingRefund.ts
+function paymentMinor(payment) {
   if (Number.isSafeInteger(payment.amountMinor)) return Math.abs(payment.amountMinor);
   const amount3 = Math.round(Math.abs(Number(payment.amount || 0)) * 100);
-  if (!Number.isSafeInteger(amount3)) throw new Error("Payment amount cannot be represented in minor units.");
+  if (!Number.isSafeInteger(amount3)) throw new Error("Payment amount cannot be represented in cents.");
   return amount3;
+}
+function capturedPaymentMinor(payment) {
+  const amountMinor = payment.amountMinor === null || payment.amountMinor === void 0 ? Math.round(Number(payment.amount || 0) * 100) : payment.amountMinor;
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    throw new Error("Completed capture must have a positive captured amount.");
+  }
+  return amountMinor;
+}
+function sourceCaptureCurrency(payment) {
+  const sourceCurrency = String(payment?.currency || "").trim().toUpperCase();
+  const bookingCurrency = String(payment?.booking?.currencyCode || "").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(sourceCurrency) || !/^[A-Z]{3}$/.test(bookingCurrency) || sourceCurrency !== bookingCurrency) {
+    throw new Error("Source capture currency does not match booking currency.");
+  }
+  return sourceCurrency;
 }
 async function recomputeBookingPaymentState(prisma, bookingId) {
   const [booking, ledger, pendingRefunds] = await Promise.all([
@@ -4444,9 +4028,9 @@ async function refundablePaymentMinor(prisma, payment) {
       select: { amountMinor: true }
     })
   ]);
-  const settled = refunds.filter((refund) => refund.providerData?.sourcePaymentId === payment.id).reduce((sum, refund) => sum + paymentMinor2(refund), 0);
+  const settled = refunds.filter((refund) => refund.providerData?.sourcePaymentId === payment.id).reduce((sum, refund) => sum + paymentMinor(refund), 0);
   const reserved = intents.reduce((sum, intent) => sum + Number(intent.amountMinor || 0), 0);
-  return Math.max(0, paymentMinor2(payment) - settled - reserved);
+  return Math.max(0, capturedPaymentMinor(payment) - settled - reserved);
 }
 async function createManualRefundInTransaction({
   tx,
@@ -4456,7 +4040,7 @@ async function createManualRefundInTransaction({
   eventKey,
   actorId
 }) {
-  const id = `manual_refund_${(0, import_node_crypto12.createHash)("sha256").update(`${sourcePayment.id}:${eventKey}`).digest("hex").slice(0, 24)}`;
+  const id = `manual_refund_${(0, import_node_crypto13.createHash)("sha256").update(`${sourcePayment.id}:${eventKey}`).digest("hex").slice(0, 24)}`;
   const existing = await tx.prisma.bookingPayment.findUnique({ where: { id } });
   if (existing) {
     if (existing.bookingId !== sourcePayment.bookingId || existing.amountMinor !== -amountMinor || existing.providerData?.sourcePaymentId !== sourcePayment.id) {
@@ -4470,7 +4054,7 @@ async function createManualRefundInTransaction({
   const refund = await tx.prisma.bookingPayment.create({
     data: {
       id,
-      paymentReference: `REF-${(0, import_node_crypto12.createHash)("sha256").update(eventKey).digest("hex").slice(0, 14).toUpperCase()}`,
+      paymentReference: `REF-${(0, import_node_crypto13.createHash)("sha256").update(eventKey).digest("hex").slice(0, 14).toUpperCase()}`,
       bookingId: sourcePayment.bookingId,
       paymentProviderId: sourcePayment.paymentProviderId,
       amountMinor: -amountMinor,
@@ -4531,8 +4115,13 @@ async function requestBookingPaymentRefund({
       throw new Error("Only a completed capture can be refunded.");
     }
     await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${payment.bookingId}`);
+    const currentBooking = await prisma.booking.findUnique({ where: { id: payment.bookingId }, select: { status: true } });
+    if (!currentBooking) throw new Error("Booking not found for refund request.");
+    if (currentBooking.status === "cancellation_pending") {
+      throw new Error("A cancellation refund is already in progress; resolve it before requesting another refund.");
+    }
     const availableMinor = await refundablePaymentMinor(prisma, payment);
-    if (amountMinor > availableMinor) throw new Error(`Refund exceeds the available amount of ${availableMinor} minor units.`);
+    if (amountMinor > availableMinor) throw new Error(`Refund exceeds the available amount of ${moneyText(availableMinor)}.`);
     const settings = await prisma.hotelSettings.findUnique({ where: { id: 1 } });
     if (amountMinor >= Number(settings?.refundApprovalThresholdMinor ?? 0)) await requireHotelApproval(prisma, { approvalId, action: "refund", aggregateId: paymentId, amountMinor, actorId, operationKey: eventKey });
     let result;
@@ -4551,6 +4140,7 @@ async function requestBookingPaymentRefund({
       if (!payment.paymentProvider || !isOnlinePaymentProviderCode(payment.paymentProvider.code)) {
         throw new Error("This payment provider does not support the durable refund workflow.");
       }
+      const currencyCode = sourceCaptureCurrency(payment);
       const providerPaymentId = payment.providerCaptureId || payment.providerPaymentId || payment.stripePaymentIntentId;
       if (!providerPaymentId) throw new Error("The captured payment is missing its provider identifier.");
       const intentKey = `${eventKey}:${payment.id}`;
@@ -4564,7 +4154,7 @@ async function requestBookingPaymentRefund({
           sourcePaymentId: payment.id,
           paymentProviderId: payment.paymentProvider.id,
           amountMinor,
-          currencyCode: String(payment.currency || "USD").toUpperCase(),
+          currencyCode,
           reason: normalizedReason,
           actorId,
           status: "pending",
@@ -4585,12 +4175,6 @@ async function requestBookingPaymentRefund({
       metadata: { bookingId: payment.bookingId, providerCode: payment.paymentProvider?.code || null }
     });
     if (result.status === "recorded") {
-      await queueBookingCommunication(prisma, {
-        bookingId: payment.bookingId,
-        kind: "booking_refund",
-        eventKey,
-        cancellation: { summary: normalizedReason, refundableMinor: amountMinor, cancellationFeeMinor: 0 }
-      });
     }
     return result;
   });
@@ -4619,18 +4203,18 @@ async function queueCaptureRecoveryRefund(prisma, payment, amountMinor, reason) 
     update: {}
   });
 }
-var import_node_crypto12, ACTIVE_INTENT_STATUSES;
+var import_node_crypto13, ACTIVE_INTENT_STATUSES;
 var init_bookingRefund = __esm({
-  "features/keystone/lib/bookingRefund.ts"() {
+  "features/keystone/refunds/bookingRefund.ts"() {
     "use strict";
-    import_node_crypto12 = require("node:crypto");
-    init_hotelGuestGovernance();
-    init_hotelCashier();
+    import_node_crypto13 = require("node:crypto");
+    init_commands();
+    init_commands4();
     init_bookingFolio();
     init_hotelLifecycle();
-    init_hotelCommunications();
     init_paymentSecurity();
     init_serializableTransaction();
+    init_moneyText();
     ACTIVE_INTENT_STATUSES = ["pending", "processing", "failed", "dead_letter"];
   }
 });
@@ -4642,13 +4226,24 @@ __export(keystone_exports, {
 });
 module.exports = __toCommonJS(keystone_exports);
 
+// features/keystone/lib/s3-storage.ts
+function s3ForcePathStyle(endpoint2) {
+  let hostname = "";
+  try {
+    hostname = endpoint2 ? new URL(endpoint2).hostname : "";
+  } catch {
+  }
+  return !(hostname === "storageapi.dev" || hostname.endsWith(".storageapi.dev"));
+}
+
 // features/keystone/index.ts
 var import_auth = require("@keystone-6/auth");
-var import_core42 = require("@keystone-6/core");
+var import_core40 = require("@keystone-6/core");
 var import_config = require("dotenv/config");
 
 // features/keystone/models/User.ts
 var import_core = require("@keystone-6/core");
+var import_access = require("@keystone-6/core/access");
 var import_fields2 = require("@keystone-6/core/fields");
 init_access();
 
@@ -4676,7 +4271,91 @@ var trackingFields = {
   })
 };
 
+// features/keystone/lib/abuseControl.ts
+var import_node_crypto2 = require("node:crypto");
+var import_node_net = require("node:net");
+var import_client = require("@prisma/client");
+
+// features/keystone/security/internalIdentity.ts
+var import_node_crypto = require("node:crypto");
+var INTERNAL_IDENTITY_MAX_AGE_MS = 9e4;
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && (0, import_node_crypto.timingSafeEqual)(leftBuffer, rightBuffer);
+}
+function verifiedInternalIdentity(headers, socketAddress, secret, now) {
+  const loopback = /^(?:127\.|::1$|::ffff:127\.)/.test(String(socketAddress || ""));
+  if (!loopback || secret.length < 32) return null;
+  const identity = String(headers["x-openfront-client-identity"] || "");
+  const timestamp31 = String(headers["x-openfront-client-timestamp"] || "");
+  const signature2 = String(headers["x-openfront-client-signature"] || "");
+  if (!/^[a-f0-9]{64}$/.test(identity) || !/^\d{10}$/.test(timestamp31) || !/^[a-f0-9]{64}$/.test(signature2)) return null;
+  const age = Math.abs(now - Number(timestamp31) * 1e3);
+  if (!Number.isFinite(age) || age > INTERNAL_IDENTITY_MAX_AGE_MS) return null;
+  const expected = (0, import_node_crypto.createHmac)("sha256", secret).update(`${timestamp31}:${identity}`).digest("hex");
+  return safeEqual(signature2, expected) ? `forwarded:${identity}` : null;
+}
+
+// features/keystone/lib/abuseControl.ts
+function normalizeIp(value) {
+  const ip = value.trim().replace(/^::ffff:/, "");
+  return /^[a-f0-9:.]{2,64}$/i.test(ip) ? ip : "unknown";
+}
+function trustedProxyIps() {
+  return new Set(String(process.env.TRUSTED_PROXY_IPS || "").split(",").map(normalizeIp).filter((ip) => ip !== "unknown"));
+}
+function railwayEdgeClientIp(req) {
+  if (!process.env.RAILWAY_ENVIRONMENT) return null;
+  const peer = String(req?.socket?.remoteAddress || "").trim().replace(/^::ffff:/, "");
+  if (!peer || /^(?:127\.|::1$)/.test(peer)) return null;
+  const raw = req?.headers?.["x-real-ip"];
+  const value = String(Array.isArray(raw) ? raw[0] ?? "" : raw ?? "").trim().replace(/^::ffff:/, "");
+  if (!value || value.length > 64 || value.includes(",") || (0, import_node_net.isIP)(value) === 0) return null;
+  return value.toLowerCase();
+}
+function requestNetworkIdentity(context) {
+  const req = context?.req;
+  const remote = normalizeIp(String(req?.socket?.remoteAddress || "unknown"));
+  const internal = verifiedInternalIdentity(req?.headers || {}, req?.socket?.remoteAddress, String(process.env.SESSION_SECRET || ""), Date.now());
+  if (internal) return internal;
+  const edge = railwayEdgeClientIp(req);
+  if (edge) return edge;
+  const trusted = trustedProxyIps();
+  if (!trusted.has(remote)) return remote;
+  const chain = String(req?.headers?.["x-forwarded-for"] || "").split(",").map((value) => value.trim()).filter(Boolean);
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const hop = normalizeIp(chain[index]);
+    if (hop !== "unknown" && !trusted.has(hop)) return hop;
+  }
+  return remote;
+}
+async function enforceAbuseLimit(context, options) {
+  if (["guest-search", "storefront-quote", "storefront-stay-calendar"].includes(options.scope)) return;
+  const now = /* @__PURE__ */ new Date();
+  const windowStartedAt = new Date(Math.floor(now.getTime() / options.windowMs) * options.windowMs);
+  const expiresAt = new Date(windowStartedAt.getTime() + options.windowMs * 2);
+  const network = options.includeNetwork === false ? "global" : requestNetworkIdentity(context);
+  const identity = `${network}:${String(options.identity || "").trim().toLowerCase().slice(0, 200)}`;
+  const digest = (0, import_node_crypto2.createHash)("sha256").update(`${options.scope}:${identity}:${windowStartedAt.toISOString()}`).digest("hex");
+  const rows = await context.prisma.$queryRaw(import_client.Prisma.sql`
+    INSERT INTO "HotelAbuseBucket" ("id", "bucketKey", "count", "windowStartedAt", "expiresAt")
+    VALUES (${`abuse_${digest.slice(0, 24)}`}, ${digest}, 1, ${windowStartedAt}, ${expiresAt})
+    ON CONFLICT ("bucketKey") DO UPDATE SET "count" = "HotelAbuseBucket"."count" + 1
+    RETURNING "count"
+  `);
+  const count = Number(rows[0]?.count || 0);
+  if (count > options.limit) {
+    const error = new Error("Too many requests. Please wait and try again.");
+    error.rateLimitEvidence = { scope: options.scope, count, limit: options.limit };
+    throw error;
+  }
+}
+
 // features/keystone/models/User.ts
+var PUBLIC_SIGNUP_FIELDS = /* @__PURE__ */ new Set(["name", "email", "password"]);
+var publicSignUpsAllowed = () => process.env.PUBLIC_SIGNUPS_ALLOWED === "true";
+var canCreateUser = (args) => permissions.canManagePeople(args) || !args.session && publicSignUpsAllowed();
 var canManageUsers = ({ session }) => {
   if (!isSignedIn({ session })) {
     return false;
@@ -4689,7 +4368,7 @@ var canManageUsers = ({ session }) => {
 var User = (0, import_core.list)({
   access: {
     operation: {
-      create: permissions.canManagePeople,
+      create: canCreateUser,
       query: isSignedIn,
       update: isSignedIn,
       delete: permissions.canManagePeople
@@ -4766,11 +4445,40 @@ var User = (0, import_core.list)({
     // Hotel-specific relationships
     bookings: (0, import_fields2.relationship)({
       ref: "Booking.guest",
-      many: true
+      many: true,
+      access: { create: import_access.denyAll, update: import_access.denyAll },
+      ui: { itemView: { fieldMode: "read" } }
     }),
     ...trackingFields
   },
   hooks: {
+    // An account that booked stays, took payments or posted to folios is part of that history
+    // (the links would be cleared); it is deactivated instead. Nobody deletes their own account here.
+    validateDelete: async ({ item, context, addValidationError }) => {
+      const id = String(item.id);
+      if (id === String(context.session?.itemId || "")) {
+        addValidationError("You can't delete your own account.");
+        return;
+      }
+      const prisma = context.prisma;
+      const [bookings, payments, postings, audit, guests] = await Promise.all([
+        prisma.booking.count({ where: { guestId: id } }),
+        prisma.bookingPayment.count({ where: { processedById: id } }),
+        prisma.folioEntry.count({ where: { postedById: id } }),
+        prisma.hotelAuditEvent.count({ where: { actorId: id } }),
+        prisma.guest.count({ where: { userAccountId: id } })
+      ]);
+      if (bookings || payments || postings || audit || guests) addValidationError("This account has reservations, payments, folio postings or audit history. Turn off Active instead of deleting it.");
+    },
+    resolveInput: async ({ operation, inputData, resolvedData, context }) => {
+      const sudo = context.graphql.schema === context.sudo().graphql.schema;
+      if (operation !== "create" || sudo || permissions.canManagePeople({ session: context.session })) return resolvedData;
+      const extra = Object.keys(inputData ?? {}).filter((key4) => !PUBLIC_SIGNUP_FIELDS.has(key4));
+      if (extra.length) throw new Error("Only name, email and password can be set when signing up.");
+      const email = String(resolvedData.email || "").trim().toLowerCase();
+      await enforceAbuseLimit(context, { scope: "dashboard-signup", identity: email, limit: 5, windowMs: 60 * 6e4 });
+      return { ...resolvedData, email };
+    },
     beforeOperation: async ({ operation, item, resolvedData }) => {
       if (operation !== "update" || !item) return;
       const roleChange = resolvedData.role !== void 0;
@@ -4843,19 +4551,27 @@ var permissionFields = {
   }),
   canManageIntegrations: (0, import_fields3.checkbox)({
     defaultValue: false,
-    label: "User can manage integrations, outbox replay, and channel delivery"
+    label: "User can manage integrations, and channel delivery"
   })
 };
 var permissionsList = Object.keys(permissionFields);
 
 // features/keystone/models/Role.ts
+var canReadRoles = ({ session }) => {
+  if (!isSignedIn({ session })) return false;
+  if (permissions.canManageRoles({ session })) return true;
+  return { assignedTo: { some: { id: { equals: session.itemId } } } };
+};
 var Role = (0, import_core2.list)({
   access: {
     operation: {
-      query: permissions.canManageRoles,
+      query: isSignedIn,
       create: permissions.canManageRoles,
       update: permissions.canManageRoles,
       delete: permissions.canManageRoles
+    },
+    filter: {
+      query: canReadRoles
     }
   },
   ui: {
@@ -4868,11 +4584,17 @@ var Role = (0, import_core2.list)({
     ...permissionFields,
     assignedTo: (0, import_fields4.relationship)({
       ref: "User.role",
-      many: true
+      many: true,
+      access: { read: permissions.canManageRoles }
     }),
     ...trackingFields
   },
   hooks: {
+    // Deleting a role someone holds would silently strip every permission they have.
+    validateDelete: async ({ item, context, addValidationError }) => {
+      const people = await context.prisma.user.count({ where: { roleId: String(item.id) } });
+      if (people) addValidationError(`${people} ${people === 1 ? "person still has" : "people still have"} this role. Give them another role before deleting it.`);
+    },
     afterOperation: async ({ operation, item, context }) => {
       if (operation !== "update" || !item?.id) return;
       await context.prisma.user.updateMany({
@@ -5042,11 +4764,13 @@ var RoomType = (0, import_core3.list)({
       ui: {
         displayMode: "cards",
         cardFields: ["image", "imagePath", "altText", "caption", "order", "isPrimary"],
-        inlineCreate: { fields: ["image", "imagePath", "altText", "caption", "order", "isPrimary"] },
+        // Every image belongs to exactly one room type, and the shared inline-create card
+        // cannot link a new child to its parent. Images are created from Room Images with
+        // the room type chosen, then edited here; each card opens its full record.
         inlineEdit: { fields: ["image", "imagePath", "altText", "caption", "order", "isPrimary"] },
         inlineConnect: true,
-        removeMode: "disconnect",
-        linkToItem: false
+        removeMode: "none",
+        linkToItem: true
       },
       label: "Storefront images"
     }),
@@ -5124,18 +4848,25 @@ var requiredRelationshipDb = {
 var storageInfrastructureConfigured = () => Boolean(
   process.env.S3_BUCKET_NAME && process.env.S3_REGION && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY && process.env.S3_ENDPOINT
 );
-var canUseImageStorage = async (args) => {
-  if (!permissions.canManageRooms(args) || !storageInfrastructureConfigured()) return false;
-  const settings = await args.context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { id: true } });
-  return Boolean(settings);
-};
+var uploadAllowed = ({ inputData }) => !inputData?.image || storageInfrastructureConfigured();
 var RoomImage = (0, import_core4.list)({
   access: {
     operation: {
       query: permissions.canManageRooms,
-      create: canUseImageStorage,
-      update: canUseImageStorage,
-      delete: canUseImageStorage
+      create: permissions.canManageRooms,
+      update: permissions.canManageRooms,
+      delete: permissions.canManageRooms
+    },
+    item: {
+      create: uploadAllowed,
+      update: uploadAllowed
+    }
+  },
+  hooks: {
+    validateInput: ({ operation, resolvedData, item, addValidationError }) => {
+      const image2 = resolvedData.image?.id ?? (operation === "update" ? item?.image_id : null);
+      const path = String(resolvedData.imagePath ?? (operation === "update" ? item?.imagePath : "") ?? "").trim();
+      if (!image2 && !path) addValidationError("Add an image path, or upload an image when uploads are available.");
     }
   },
   ui: {
@@ -5144,7 +4875,13 @@ var RoomImage = (0, import_core4.list)({
     }
   },
   fields: {
-    image: (0, import_fields7.image)({ storage: "my_images" }),
+    image: (0, import_fields7.image)({
+      storage: "my_images",
+      ui: {
+        createView: { fieldMode: () => storageInfrastructureConfigured() ? "edit" : "hidden" },
+        itemView: { fieldMode: () => storageInfrastructureConfigured() ? "edit" : "read" }
+      }
+    }),
     imagePath: (0, import_fields7.text)({
       ui: {
         description: "Public path or remote URL used for seeded/storefront imagery when no uploaded image is present."
@@ -5227,10 +4964,14 @@ var Room = (0, import_core5.list)({
       }
     }),
     // Housekeeping
+    // Set only when a cleaning task is completed or the room is marked ready.
     lastCleaned: (0, import_fields8.timestamp)({
       label: "Last Cleaned",
+      access: { create: () => false, update: () => false },
       ui: {
-        description: "When the room was last cleaned"
+        description: "When the room was last cleaned",
+        createView: { fieldMode: "hidden" },
+        itemView: { fieldMode: "read" }
       }
     }),
     // Notes
@@ -5249,7 +4990,9 @@ var Room = (0, import_core5.list)({
       ui: {
         displayMode: "cards",
         cardFields: ["taskType", "status", "assignedTo"],
-        inlineCreate: { fields: ["taskType", "priority", "notes"] }
+        // A task belongs to one room and the shared inline-create card cannot link a new
+        // child to its parent; tasks are created from Housekeeping and opened from here.
+        linkToItem: true
       },
       label: "Housekeeping Tasks"
     }),
@@ -5291,6 +5034,18 @@ var Room = (0, import_core5.list)({
 var import_core6 = require("@keystone-6/core");
 var import_fields9 = require("@keystone-6/core/fields");
 init_access();
+init_roomAvailability();
+async function authoritativeAvailable(item, context) {
+  if (!item?.roomTypeId || !item?.date) return 0;
+  const day2 = new Date(item.date);
+  day2.setUTCHours(0, 0, 0, 0);
+  const [roomType] = await getHotelAvailability(context.sudo(), {
+    roomTypeId: item.roomTypeId,
+    checkInDate: day2,
+    checkOutDate: new Date(day2.getTime() + 864e5)
+  });
+  return Number(roomType?.availabilityByDay?.[0]?.available ?? 0);
+}
 var RoomInventory = (0, import_core6.list)({
   access: {
     operation: {
@@ -5362,35 +5117,24 @@ var RoomInventory = (0, import_core6.list)({
         description: "Number of rooms blocked (out of order, reserved, etc)"
       }
     }),
-    // Virtual field for available rooms
+    // Rooms still sellable on this date, from the same calculation the booking flow uses:
+    // bookings, group holds, blocks, repairs and outages, not just this record's counters.
     availableRooms: (0, import_fields9.virtual)({
       field: import_core6.graphql.field({
         type: import_core6.graphql.Int,
-        resolve(item) {
-          const total = item.totalRooms || 0;
-          const booked = item.bookedRooms || 0;
-          const blocked = item.blockedRooms || 0;
-          return Math.max(0, total - booked - blocked);
-        }
+        resolve: async (item, _args, context) => authoritativeAvailable(item, context)
       }),
       ui: {
-        description: "Calculated available rooms (total - booked - blocked)"
+        description: "Rooms left to sell on this date after bookings, group holds, blocks and outages"
       }
     }),
-    // Virtual field for availability status
     isAvailable: (0, import_fields9.virtual)({
       field: import_core6.graphql.field({
         type: import_core6.graphql.Boolean,
-        resolve(item) {
-          const total = item.totalRooms || 0;
-          const booked = item.bookedRooms || 0;
-          const blocked = item.blockedRooms || 0;
-          const available = total - booked - blocked;
-          return available > 0;
-        }
+        resolve: async (item, _args, context) => await authoritativeAvailable(item, context) > 0
       }),
       ui: {
-        description: "Whether any rooms are available"
+        description: "Whether any room is left to sell on this date"
       }
     }),
     ...trackingFields
@@ -5615,9 +5359,9 @@ var import_core10 = require("@keystone-6/core");
 init_access();
 init_guestBookingAccess();
 function generateConfirmationNumber() {
-  const timestamp33 = Date.now().toString(36).toUpperCase();
+  const timestamp31 = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `BK-${timestamp33}-${random}`;
+  return `BK-${timestamp31}-${random}`;
 }
 var Booking = (0, import_core9.list)({
   db: {
@@ -6017,9 +5761,9 @@ var import_core11 = require("@keystone-6/core");
 var import_fields13 = require("@keystone-6/core/fields");
 init_access();
 function generatePaymentReference() {
-  const timestamp33 = Date.now().toString(36).toUpperCase();
+  const timestamp31 = Date.now().toString(36).toUpperCase();
   const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `PAY-${timestamp33}-${random}`;
+  return `PAY-${timestamp31}-${random}`;
 }
 var BookingPayment = (0, import_core11.list)({
   access: {
@@ -6415,7 +6159,7 @@ var BookingPaymentSession = (0, import_core12.list)({
 
 // features/keystone/models/PaymentProvider.ts
 var import_core13 = require("@keystone-6/core");
-var import_access12 = require("@keystone-6/core/access");
+var import_access14 = require("@keystone-6/core/access");
 var import_fields15 = require("@keystone-6/core/fields");
 init_access();
 init_sensitiveData();
@@ -6424,9 +6168,9 @@ var PaymentProvider = (0, import_core13.list)({
   access: {
     operation: {
       query: canManagePaymentIntegrations,
-      create: canManagePaymentIntegrations,
+      create: import_access14.denyAll,
       update: canManagePaymentIntegrations,
-      delete: canManagePaymentIntegrations
+      delete: import_access14.denyAll
     }
   },
   ui: {
@@ -6442,6 +6186,8 @@ var PaymentProvider = (0, import_core13.list)({
       validation: { isRequired: true }
     }),
     code: (0, import_fields15.text)({
+      access: { update: import_access14.denyAll },
+      ui: { itemView: { fieldMode: "read" } },
       isIndexed: "unique",
       validation: {
         isRequired: true,
@@ -6452,14 +6198,16 @@ var PaymentProvider = (0, import_core13.list)({
       }
     }),
     isInstalled: (0, import_fields15.checkbox)({
-      defaultValue: true
+      access: { update: import_access14.denyAll },
+      defaultValue: true,
+      ui: { itemView: { fieldMode: "read" } }
     }),
     credentials: (0, import_fields15.json)({
       defaultValue: {},
       access: {
-        read: import_access12.denyAll,
-        create: canManagePaymentIntegrations,
-        update: canManagePaymentIntegrations
+        read: import_access14.denyAll,
+        create: import_access14.denyAll,
+        update: import_access14.denyAll
       },
       hooks: {
         resolveInput: ({ resolvedData }) => {
@@ -6478,25 +6226,33 @@ var PaymentProvider = (0, import_core13.list)({
       }
     }),
     metadata: (0, import_fields15.json)({
-      defaultValue: {}
+      access: { update: import_access14.denyAll },
+      defaultValue: {},
+      ui: { itemView: { fieldMode: "read" } }
     }),
-    createPaymentFunction: (0, import_fields15.text)({ validation: { isRequired: true } }),
-    capturePaymentFunction: (0, import_fields15.text)({ validation: { isRequired: true } }),
-    refundPaymentFunction: (0, import_fields15.text)({ validation: { isRequired: true } }),
-    getPaymentStatusFunction: (0, import_fields15.text)({ validation: { isRequired: true } }),
-    generatePaymentLinkFunction: (0, import_fields15.text)({ validation: { isRequired: true } }),
-    handleWebhookFunction: (0, import_fields15.text)({ validation: { isRequired: true } }),
+    createPaymentFunction: (0, import_fields15.text)({ access: { create: import_access14.denyAll, update: import_access14.denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: "read" } } }),
+    capturePaymentFunction: (0, import_fields15.text)({ access: { create: import_access14.denyAll, update: import_access14.denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: "read" } } }),
+    refundPaymentFunction: (0, import_fields15.text)({ access: { create: import_access14.denyAll, update: import_access14.denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: "read" } } }),
+    getPaymentStatusFunction: (0, import_fields15.text)({ access: { create: import_access14.denyAll, update: import_access14.denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: "read" } } }),
+    generatePaymentLinkFunction: (0, import_fields15.text)({ access: { create: import_access14.denyAll, update: import_access14.denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: "read" } } }),
+    handleWebhookFunction: (0, import_fields15.text)({ access: { create: import_access14.denyAll, update: import_access14.denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: "read" } } }),
     bookingPaymentSessions: (0, import_fields15.relationship)({
       ref: "BookingPaymentSession.paymentProvider",
-      many: true
+      many: true,
+      access: { create: import_access14.denyAll, update: import_access14.denyAll },
+      ui: { itemView: { fieldMode: "read" } }
     }),
     bookingPayments: (0, import_fields15.relationship)({
       ref: "BookingPayment.paymentProvider",
-      many: true
+      many: true,
+      access: { create: import_access14.denyAll, update: import_access14.denyAll },
+      ui: { itemView: { fieldMode: "read" } }
     }),
     refundIntents: (0, import_fields15.relationship)({
       ref: "RefundIntent.paymentProvider",
-      many: true
+      many: true,
+      access: { create: import_access14.denyAll, update: import_access14.denyAll },
+      ui: { itemView: { fieldMode: "read" } }
     }),
     ...trackingFields
   }
@@ -6667,10 +6423,10 @@ var ReservationLineItem = (0, import_core14.list)({
 
 // features/keystone/models/Guest.ts
 var import_core15 = require("@keystone-6/core");
-var import_access16 = require("@keystone-6/core/access");
+var import_access18 = require("@keystone-6/core/access");
 var import_fields17 = require("@keystone-6/core/fields");
 init_access();
-init_hotelGuestGovernance();
+init_commands();
 var Guest = (0, import_core15.list)({
   access: {
     operation: {
@@ -6718,7 +6474,6 @@ var Guest = (0, import_core15.list)({
       label: "Guest Preferences",
       ui: {
         description: "JSON object storing guest preferences (pillow type, floor preference, etc.)",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -6772,7 +6527,6 @@ var Guest = (0, import_core15.list)({
       label: "Communication Preferences",
       ui: {
         description: "How the guest prefers to be contacted",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -6800,7 +6554,7 @@ var Guest = (0, import_core15.list)({
     }),
     idNumber: (0, import_fields17.text)({
       label: "ID Number",
-      access: { read: import_access16.denyAll, create: permissions.canManageGuests, update: permissions.canManageGuests },
+      access: { read: import_access18.denyAll, create: permissions.canManageGuests, update: permissions.canManageGuests },
       hooks: { resolveInput: ({ resolvedData }) => resolveGuestIdentityInput(resolvedData) },
       ui: {
         description: "Encrypted identification document number; never returned by generic GraphQL."
@@ -6943,7 +6697,7 @@ var Guest = (0, import_core15.list)({
 
 // features/keystone/models/GuestDocument.ts
 var import_core16 = require("@keystone-6/core");
-var import_access18 = require("@keystone-6/core/access");
+var import_access20 = require("@keystone-6/core/access");
 var import_fields18 = require("@keystone-6/core/fields");
 init_access();
 var GuestDocument = (0, import_core16.list)({
@@ -6994,7 +6748,7 @@ var GuestDocument = (0, import_core16.list)({
     }),
     // Document details
     documentNumber: (0, import_fields18.text)({
-      access: { read: import_access18.denyAll },
+      access: { read: import_access20.denyAll },
       validation: { isRequired: true },
       label: "Document Number",
       ui: {
@@ -7015,14 +6769,14 @@ var GuestDocument = (0, import_core16.list)({
     }),
     // Document images (S3 URLs)
     frontImage: (0, import_fields18.text)({
-      access: { read: import_access18.denyAll },
+      access: { read: import_access20.denyAll },
       label: "Front Image URL",
       ui: {
         description: "S3 URL to front image of document"
       }
     }),
     backImage: (0, import_fields18.text)({
-      access: { read: import_access18.denyAll },
+      access: { read: import_access20.denyAll },
       label: "Back Image URL",
       ui: {
         description: "S3 URL to back image of document"
@@ -7218,7 +6972,6 @@ var RatePlan = (0, import_core18.list)({
       label: "Seasonal Adjustments",
       ui: {
         description: 'JSON object with seasonal rate adjustments (e.g., { "summer": 1.2, "winter": 0.9 })',
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -7310,7 +7063,6 @@ var RatePlan = (0, import_core18.list)({
       label: "Applicable Days",
       ui: {
         description: "Days of week when this rate applies",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -7373,6 +7125,12 @@ var RatePlan = (0, import_core18.list)({
     ...trackingFields
   },
   hooks: {
+    // Reservations keep the rate they were sold on (amendments, modification requests and group
+    // pickups read booking.ratePlanId); a rate with bookings is retired, not deleted.
+    validateDelete: async ({ item, context, addValidationError }) => {
+      const bookings = await context.prisma.booking.count({ where: { ratePlanId: String(item.id) } });
+      if (bookings) addValidationError(`${bookings} ${bookings === 1 ? "reservation was" : "reservations were"} booked on this rate. Set it to Inactive instead of deleting it.`);
+    },
     resolveInput: ({ resolvedData }) => ({
       ...resolvedData,
       ...Number.isSafeInteger(resolvedData.baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 } : {}
@@ -7501,6 +7259,33 @@ var SeasonalRate = (0, import_core19.list)({
       }
     }),
     ...trackingFields
+  },
+  hooks: {
+    // Pricing applies a season to every night from startDate through endDate inclusive.
+    validateInput: ({ resolvedData, item, addValidationError }) => {
+      const start = resolvedData.startDate ?? item?.startDate;
+      const end = resolvedData.endDate ?? item?.endDate;
+      if (start && end && new Date(end) < new Date(start)) addValidationError("A season's end date can't be before its start date.");
+    },
+    // An active season changes the price of live rates. When the property requires approval
+    // to publish rates, such a change is made while the room type's public rates are paused;
+    // publishing them again needs an approval that covers the new seasons.
+    beforeOperation: async ({ operation, item, resolvedData, context }) => {
+      if (context.graphql.schema === context.sudo().graphql.schema) return;
+      const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { ratePublicationRequiresApproval: true } });
+      if (settings?.ratePublicationRequiresApproval === false) return;
+      const before = item || null;
+      const after = operation === "delete" ? null : { ...before || {}, ...resolvedData || {} };
+      const wasLive = Boolean(before?.isActive);
+      const willBeLive = Boolean(after?.isActive);
+      if (!wasLive && !willBeLive) return;
+      const nextRoomTypeId = resolvedData?.roomType?.connect?.id ?? before?.roomTypeId;
+      const roomTypeIds = [before?.roomTypeId, after ? nextRoomTypeId : null].filter(Boolean);
+      const live = roomTypeIds.length ? await context.prisma.ratePlan.findFirst({ where: { roomTypeId: { in: roomTypeIds }, status: "active", isPublic: true }, select: { name: true } }) : null;
+      if (live) {
+        throw new Error(`An active season changes the price of the live rate "${live.name}". Pause that room type's public rates first; publishing them again needs approval.`);
+      }
+    }
   }
 });
 
@@ -7629,7 +7414,6 @@ var MaintenanceRequest = (0, import_core20.list)({
       label: "Images",
       ui: {
         description: "Array of S3 image URLs showing the issue",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -7679,7 +7463,7 @@ var MaintenanceRequest = (0, import_core20.list)({
 // features/keystone/models/Channel.ts
 init_channelCredentials();
 var import_core21 = require("@keystone-6/core");
-var import_access24 = require("@keystone-6/core/access");
+var import_access26 = require("@keystone-6/core/access");
 var import_fields23 = require("@keystone-6/core/fields");
 init_access();
 var canReadChannels = ({ session }) => permissions.canManageBookings({ session }) || permissions.canManageIntegrations({ session });
@@ -7740,14 +7524,13 @@ var Channel = (0, import_core21.list)({
     credentials: (0, import_fields23.json)({
       hooks: { resolveInput: ({ resolvedData }) => resolvedData.credentials === void 0 ? void 0 : encryptChannelCredentials(resolvedData.credentials) },
       access: {
-        read: import_access24.denyAll,
+        read: import_access26.denyAll,
         create: canManageChannels,
         update: canManageChannels
       },
       label: "Credentials",
       ui: {
         description: "Encrypted bridge configuration; raw API reads are denied.",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "hidden" }
       },
@@ -7803,10 +7586,10 @@ var Channel = (0, import_core21.list)({
     }),
     // Sync errors
     syncErrors: (0, import_fields23.json)({
+      access: { read: permissions.canManageIntegrations },
       label: "Sync Errors",
       ui: {
         description: "Array of recent sync errors",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "hidden" },
         itemView: { fieldMode: "read" }
       },
@@ -7817,7 +7600,6 @@ var Channel = (0, import_core21.list)({
       label: "Mapping Rules",
       ui: {
         description: "JSON mapping of room types to channel-specific types",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -7975,7 +7757,6 @@ var ChannelReservation = (0, import_core22.list)({
       label: "Raw Data",
       ui: {
         description: "Full booking payload from channel API",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "hidden" },
         itemView: { fieldMode: "read" }
       },
@@ -7993,7 +7774,6 @@ var ChannelReservation = (0, import_core22.list)({
       label: "Sync Errors",
       ui: {
         description: "Any errors during sync",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "hidden" },
         itemView: { fieldMode: "read" }
       },
@@ -8064,22 +7844,24 @@ var ChannelSyncEvent = (0, import_core23.list)({
       ui: { itemView: { fieldMode: "read" } }
     }),
     message: (0, import_fields25.text)({
+      access: { read: permissions.canManageIntegrations },
       label: "Message",
       ui: {
         displayMode: "textarea"
       }
     }),
     payload: (0, import_fields25.json)({
+      access: { read: permissions.canManageIntegrations },
       label: "Payload",
       ui: {
         description: "Payload captured during sync for troubleshooting",
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "hidden" },
         itemView: { fieldMode: "read" }
       },
       defaultValue: {}
     }),
     errorMessage: (0, import_fields25.text)({
+      access: { read: permissions.canManageIntegrations },
       label: "Error Message",
       ui: {
         displayMode: "textarea"
@@ -8215,7 +7997,6 @@ var DailyMetrics = (0, import_core24.list)({
       label: "Channel Revenue",
       ui: {
         description: 'Revenue breakdown by channel (e.g., { "booking_com": 50000, "direct": 30000 })',
-        views: "./features/keystone/models/fields",
         createView: { fieldMode: "edit" },
         itemView: { fieldMode: "edit" }
       },
@@ -8301,6 +8082,371 @@ var DailyMetrics = (0, import_core24.list)({
 var import_core25 = require("@keystone-6/core");
 var import_fields27 = require("@keystone-6/core/fields");
 init_access();
+
+// features/platform/property/lib/icon-registry.ts
+var LOGO_ICONS = [
+  {
+    id: "3portals",
+    name: "3Portals",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill-rule="evenodd"><path d="m34.5868 8.40061-9.6868-2.59556c-.6687-.17919-1.2108.23679-1.2108.92911v10.02854c0 .6923.5421 1.3988 1.2108 1.578l9.6868 2.5955c.6687.1792 1.2109-.2368 1.2109-.9291v-10.02848c0-.69232-.5422-1.39882-1.2109-1.57801zm-9.6868-6.35625c-2.6749-.71674-4.8434.94718-4.8434 3.71647v10.02847c0 2.7693 2.1685 5.5953 4.8434 6.312l9.6868 2.5956c2.6749.7168 4.8434-.9472 4.8434-3.7165v-10.0284c0-2.76934-2.1685-5.59533-4.8434-6.31207z" fill="#8098f9"/><path d="m26.9812 16.5707-12.1085-3.2444c-.6687-.1792-1.2109.2368-1.2109.9291v12.5356c0 .6923.5422 1.3988 1.2109 1.578l12.1085 3.2445c.6687.1792 1.2108-.2368 1.2108-.9291v-12.5356c0-.6924-.5421-1.3989-1.2108-1.5781zm-12.1085-7.0051c-2.6749-.71674-4.8434.9472-4.8434 3.7165v12.5356c0 2.7693 2.1685 5.5953 4.8434 6.312l12.1085 3.2445c2.6749.7167 4.8433-.9472 4.8433-3.7165v-12.5356c0-2.7693-2.1684-5.5953-4.8433-6.312z" fill="#6172f3"/><path d="m19.3736 24.7409-14.53021-3.8934c-.66873-.1792-1.21085.2368-1.21085.9291v15.0428c0 .6923.54212 1.3988 1.21085 1.578l14.53021 3.8933c.6687.1792 1.2108-.2368 1.2108-.9291v-15.0427c0-.6923-.5421-1.3988-1.2108-1.578zm-14.53021-7.6541c-2.67493-.7167-4.84339.9472-4.84339 3.7165v15.0427c0 2.7693 2.16846 5.5953 4.84339 6.3121l14.53021 3.8933c2.6749.7168 4.8433-.9472 4.8433-3.7164v-15.0428c0-2.7693-2.1684-5.5953-4.8433-6.312z" fill="#444ce7"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill="#fff" fill-rule="evenodd"><path d="m34.5868 8.40061-9.6868-2.59556c-.6687-.17919-1.2108.23679-1.2108.92911v10.02854c0 .6923.5421 1.3988 1.2108 1.578l9.6868 2.5955c.6687.1792 1.2109-.2368 1.2109-.9291v-10.02848c0-.69232-.5422-1.39882-1.2109-1.57801zm-9.6868-6.35625c-2.6749-.71674-4.8434.94718-4.8434 3.71647v10.02847c0 2.7693 2.1685 5.5953 4.8434 6.312l9.6868 2.5956c2.6749.7168 4.8434-.9472 4.8434-3.7165v-10.0284c0-2.76934-2.1685-5.59533-4.8434-6.31207z" opacity=".5"/><path d="m26.9812 16.5707-12.1085-3.2444c-.6687-.1792-1.2109.2368-1.2109.9291v12.5356c0 .6923.5422 1.3988 1.2109 1.578l12.1085 3.2445c.6687.1792 1.2108-.2368 1.2108-.9291v-12.5356c0-.6924-.5421-1.3989-1.2108-1.5781zm-12.1085-7.0051c-2.6749-.71674-4.8434.9472-4.8434 3.7165v12.5356c0 2.7693 2.1685 5.5953 4.8434 6.312l12.1085 3.2445c2.6749.7167 4.8433-.9472 4.8433-3.7165v-12.5356c0-2.7693-2.1684-5.5953-4.8433-6.312z" opacity=".7"/><path d="m19.3736 24.7409-14.53021-3.8934c-.66873-.1792-1.21085.2368-1.21085.9291v15.0428c0 .6923.54212 1.3988 1.21085 1.578l14.53021 3.8933c.6687.1792 1.2108-.2368 1.2108-.9291v-15.0427c0-.6923-.5421-1.3988-1.2108-1.578zm-14.53021-7.6541c-2.67493-.7167-4.84339.9472-4.84339 3.7165v15.0427c0 2.7693 2.16846 5.5953 4.84339 6.3121l14.53021 3.8933c2.6749.7168 4.8433-.9472 4.8433-3.7164v-15.0428c0-2.7693-2.1684-5.5953-4.8433-6.312z"/></g></svg>`
+  },
+  {
+    id: "45-degrees",
+    name: "45 Degrees",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 24 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 15.8981h17.3455l-17.061314 17.0613 2.756374 2.7564 17.06134-17.0613v17.3455h.1104l3.7877-3.7877v-15.9638l-4.2485-4.2485h-15.96596l-3.78553995 3.7855z" fill="#155eef"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 24 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 15.8981h17.3455l-17.061314 17.0613 2.756374 2.7564 17.06134-17.0613v17.3455h.1104l3.7877-3.7877v-15.9638l-4.2485-4.2485h-15.96596l-3.78553995 3.7855z" fill="#155eef"/></svg>`
+  },
+  {
+    id: "acme-corp",
+    name: "Acme Corp",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 48 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m0 24c15.2548 0 24-8.7452 24-24 0 15.2548 8.7452 24 24 24-15.2548 0-24 8.7452-24 24 0-15.2548-8.7452-24-24-24z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 48 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m0 24c15.2548 0 24-8.7452 24-24 0 15.2548 8.7452 24 24 24-15.2548 0-24 8.7452-24 24 0-15.2548-8.7452-24-24-24z" fill="#155eef" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "alphawave",
+    name: "AlphaWave",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 47 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m24.9706 7.03309c-3.1242-3.1242-8.1896-3.1242-11.3137 0l-11.31375 11.31371c-3.124199 3.1242-3.124199 8.1895 0 11.3137l11.31375 11.3137c3.1241 3.1242 8.1895 3.1242 11.3137 0l5.3982-5.3983c-4.4939-1.7337-7.682-6.0944-7.682-11.1997 0-5.3087 3.4472-9.8123 8.2254-11.3943-.0935-.0982-.1884-.1955-.2848-.292z" fill="#155eef"/><path d="m30.3691 35.5798c1.3398.5168 2.7955.8001 4.3174.8001 6.6274 0 12-5.3726 12-12s-5.3726-12-12-12c-1.3185 0-2.5873.2126-3.774.6055 5.9623 6.2681 5.8675 16.1836-.2846 22.3356z" fill="#155eef" opacity=".7"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 47 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m24.9706 7.03309c-3.1242-3.1242-8.1896-3.1242-11.3137 0l-11.31375 11.31371c-3.124199 3.1242-3.124199 8.1895 0 11.3137l11.31375 11.3137c3.1241 3.1242 8.1895 3.1242 11.3137 0l5.3982-5.3983c-4.4939-1.7337-7.682-6.0944-7.682-11.1997 0-5.3087 3.4472-9.8123 8.2254-11.3943-.0935-.0982-.1884-.1955-.2848-.292z" fill="#155eef"/><path d="m30.3691 35.5798c1.3398.5168 2.7955.8001 4.3174.8001 6.6274 0 12-5.3726 12-12s-5.3726-12-12-12c-1.3185 0-2.5873.2126-3.774.6055 5.9623 6.2681 5.8675 16.1836-.2846 22.3356z" fill="#155eef" opacity=".7"/></svg>`
+  },
+  {
+    id: "alt-shift",
+    name: "Alt+Shift",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m23.4538 34.7189c-3.1818-1.1818-6.4544-1.3636-9.4544-.5455-2.0909.5455-4.09082 1.6364-5.90897 3l-1.27273 1.0909-.36362.3636.81816.7273c.09091 0 .09092.0909.18183.1818.18181.1818.36364.2727.63636.4545l.54542.3636.54545-.4545c.09091-.0909.27273-.2727.45454-.3636 1.63636-1.3636 3.45446-2.2727 5.36356-2.7272 2.4545-.6364 5.0908-.5455 7.7271.4545 2.1818.8182 6.6363 1.8181 11.9998-.4545l.1818-.091.2728-.2727c0-.0909.0909-.0909.1818-.1818.4545-.5454.9091-1.0909 1.2727-1.7272l1.8181-2.8182-2.909 1.6363c-4.2727 2.3636-8.1817 2.8182-12.0907 1.3637z"/><path d="m10.9998 24.9011c2.4545-.6363 5.0908-.5454 7.7272.4546 2.909 1.0909 10.3634 2.6363 18.7269-4.909l1.8182-1.8182-.1819-.4545c-.0909-.3636-.2727-.8182-.4545-1.2727l-.4545-1.2727-.9091.909c-.0909.1819-.2727.2728-.4546.4546-3.9999 4.0908-10.1816 8.2726-17.2724 5.7272-3.1817-1.1818-6.4544-1.3637-9.4544-.5455-2.909.8182-5.45442 2.3636-7.81801 4.5454v-.0909l-1.363614 1.4545c0 .0909-.090891.0909-.181798.1818l-.27274.2727.090913.3637c.090908.4545.272717.909.363625 1.3636l.545454 1.4545.90907-1.1818c.09091-.1818.27272-.2727.36363-.4545 1.90905-1.7273 4.54538-4.1818 8.27257-5.1818z"/><path d="m2.1818 23.2646c2.09088-2.1818 4.45445-3.5454 6.99987-4.2727 2.45453-.6363 5.09083-.5454 7.72713.4546 8.1817 2.9999 15.2725-1.9091 18.3633-4.5454l1.1818-1.1818.4546-.3636-.3637-.5455c-.2727-.2727-.4545-.6363-.7272-1l-.5455-.7272-.6363.6363c-.0909.0909-.2727.2727-.3637.3637-3.8181 3.6363-9.7271 7.3635-16.4542 4.8181-3.1818-1.1818-6.4544-1.3637-9.4544-.5455-1.90906.5455-3.72721 1.4545-5.54536 2.6363l-1.909065 1.5455c-.181815.1818-.272722.2727-.454537.4545l-.181799.1818v.2727c-.090907.6364-.090918 1.2727-.1818259 1.8182l-.0909131 2.2727 1.54544-1.6364c.18181-.1818.36364-.4545.63636-.6363z"/><path d="m26.0908 40.9007c-.2727-.0909-.4545-.1819-.7272-.2728-3.1818-1.1818-6.4545-1.3636-9.4545-.5454-.6363.1818-1.2726.3636-1.909.6364l-2.1818.9999-.5454.2728 1.8181.6363c.5455.1818 1.0909.3637 1.6364.5455l.2727.0909.2727-.0909c.2727-.0909.5455-.2728.8182-.2728.1818 0 .3636-.0909.5454-.1818 2.1818-.5454 4.5454-.5454 7.0908.2727.2727.091.4546.1819.7273.2728l.4545.1818.2727-.0909c.6364-.1818 1.3636-.3636 1.9091-.6364l2.5454-.909-2.6363-.6364c-.2727-.0909-.6364-.1818-.9091-.2727z"/><path d="m40 22.0829-1.3636 1.3636c-.1818.1818-.3636.3636-.5454.5454-3.7272 3.5454-9.7271 7.3635-16.4543 4.8181-3.1818-1.1818-6.4544-1.3636-9.4544-.5454-2.81811.8182-5.36354 2.2727-7.63623 4.4545l-1.18179 1.2727-.36362.4545.36362.5454c.27273.3637.45455.6364.63637 1l.54542.8182.63636-.8182c.09091-.0909.27272-.2727.36363-.3636 2.18178-2.3636 4.54534-3.8181 7.27264-4.5454 2.4545-.6364 5.0908-.5454 7.7271.4545 2.2727.8182 4.6363 1.0909 6.9999.8182 4.1817-.4545 8.3635-2.8181 11.4543-5.4544.1819-.1818.3636-.2727.5455-.4546l.2727-.2727v-.2727c0-.5455.0909-1.1818.0909-1.7273z"/><path d="m5.45373 13.7196c.54545-.2728 1.18182-.4546 1.72726-.6364 2.45451-.6364 5.09081-.5455 7.72711.4545 1.7273.6364 3.4545.9091 5.3636.9091 3.8181 0 7.6362-1.3636 11.1816-3.9999l1.8181-1.45455-.8181-.63636c-.2727-.27273-.6364-.54544-1-.72725l-.5455-.36363-.4545.36363c-.1818.09091-.2727.27272-.4545.36362-4.8181 3.63634-9.6362 4.63634-14.1816 2.90904-3.2727-1.18178-6.54535-1.45451-9.81802-.4545-.27272.0909-.54544.1818-.90907.2727l-.1818.0909-.27274.2727c0 .0909-.09089.0909-.1818.1818-.36363.5455-.81818 1-1.18181 1.5455l-1.72724 2.6363 2.81814-1.4545c.45453 0 .81815-.1818 1.09087-.2727z"/><path d="m12.9089 7.53769.2727.09091c1.1818.45454 3 .90907 5.2726.90907 2.3636 0 4.6363-.54545 6.909-1.45452l2.8181-1.36361-1.909-.63634c-.5454-.18182-1.0909-.36363-1.7273-.45454h-.2727l-.2727.09089c-.2727.0909-.5455.27274-.8182.36365-2.7272.99998-5.4544 1.1818-8.0907.45454-.2728-.09091-.5455-.18183-.8182-.27274l-.2727-.09091-.2728.09091c-.5454.18181-1.0908.36364-1.6363.63636l-2.09087.90908 2.18177.63633c.1818-.0909.4546.00001.7273.09092z"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m23.4538 34.7189c-3.1818-1.1818-6.4544-1.3636-9.4544-.5455-2.0909.5455-4.09082 1.6364-5.90897 3l-1.27273 1.0909-.36362.3636.81816.7273c.09091 0 .09092.0909.18183.1818.18181.1818.36364.2727.63636.4545l.54542.3636.54545-.4545c.09091-.0909.27273-.2727.45454-.3636 1.63636-1.3636 3.45446-2.2727 5.36356-2.7272 2.4545-.6364 5.0908-.5455 7.7271.4545 2.1818.8182 6.6363 1.8181 11.9998-.4545l.1818-.091.2728-.2727c0-.0909.0909-.0909.1818-.1818.4545-.5454.9091-1.0909 1.2727-1.7272l1.8181-2.8182-2.909 1.6363c-4.2727 2.3636-8.1817 2.8182-12.0907 1.3637z"/><path d="m10.9998 24.9011c2.4545-.6363 5.0908-.5454 7.7272.4546 2.909 1.0909 10.3634 2.6363 18.7269-4.909l1.8182-1.8182-.1819-.4545c-.0909-.3636-.2727-.8182-.4545-1.2727l-.4545-1.2727-.9091.909c-.0909.1819-.2727.2728-.4546.4546-3.9999 4.0908-10.1816 8.2726-17.2724 5.7272-3.1817-1.1818-6.4544-1.3637-9.4544-.5455-2.909.8182-5.45442 2.3636-7.81801 4.5454v-.0909l-1.363614 1.4545c0 .0909-.090891.0909-.181798.1818l-.27274.2727.090913.3637c.090908.4545.272717.909.363625 1.3636l.545454 1.4545.90907-1.1818c.09091-.1818.27272-.2727.36363-.4545 1.90905-1.7273 4.54538-4.1818 8.27257-5.1818z"/><path d="m2.1818 23.2646c2.09088-2.1818 4.45445-3.5454 6.99987-4.2727 2.45453-.6363 5.09083-.5454 7.72713.4546 8.1817 2.9999 15.2725-1.9091 18.3633-4.5454l1.1818-1.1818.4546-.3636-.3637-.5455c-.2727-.2727-.4545-.6363-.7272-1l-.5455-.7272-.6363.6363c-.0909.0909-.2727.2727-.3637.3637-3.8181 3.6363-9.7271 7.3635-16.4542 4.8181-3.1818-1.1818-6.4544-1.3637-9.4544-.5455-1.90906.5455-3.72721 1.4545-5.54536 2.6363l-1.909065 1.5455c-.181815.1818-.272722.2727-.454537.4545l-.181799.1818v.2727c-.090907.6364-.090918 1.2727-.1818259 1.8182l-.0909131 2.2727 1.54544-1.6364c.18181-.1818.36364-.4545.63636-.6363z"/><path d="m26.0908 40.9007c-.2727-.0909-.4545-.1819-.7272-.2728-3.1818-1.1818-6.4545-1.3636-9.4545-.5454-.6363.1818-1.2726.3636-1.909.6364l-2.1818.9999-.5454.2728 1.8181.6363c.5455.1818 1.0909.3637 1.6364.5455l.2727.0909.2727-.0909c.2727-.0909.5455-.2728.8182-.2728.1818 0 .3636-.0909.5454-.1818 2.1818-.5454 4.5454-.5454 7.0908.2727.2727.091.4546.1819.7273.2728l.4545.1818.2727-.0909c.6364-.1818 1.3636-.3636 1.9091-.6364l2.5454-.909-2.6363-.6364c-.2727-.0909-.6364-.1818-.9091-.2727z"/><path d="m40 22.0829-1.3636 1.3636c-.1818.1818-.3636.3636-.5454.5454-3.7272 3.5454-9.7271 7.3635-16.4543 4.8181-3.1818-1.1818-6.4544-1.3636-9.4544-.5454-2.81811.8182-5.36354 2.2727-7.63623 4.4545l-1.18179 1.2727-.36362.4545.36362.5454c.27273.3637.45455.6364.63637 1l.54542.8182.63636-.8182c.09091-.0909.27272-.2727.36363-.3636 2.18178-2.3636 4.54534-3.8181 7.27264-4.5454 2.4545-.6364 5.0908-.5454 7.7271.4545 2.2727.8182 4.6363 1.0909 6.9999.8182 4.1817-.4545 8.3635-2.8181 11.4543-5.4544.1819-.1818.3636-.2727.5455-.4546l.2727-.2727v-.2727c0-.5455.0909-1.1818.0909-1.7273z"/><path d="m5.45373 13.7196c.54545-.2728 1.18182-.4546 1.72726-.6364 2.45451-.6364 5.09081-.5455 7.72711.4545 1.7273.6364 3.4545.9091 5.3636.9091 3.8181 0 7.6362-1.3636 11.1816-3.9999l1.8181-1.45455-.8181-.63636c-.2728-.27273-.6364-.54544-1-.72725l-.5455-.36363-.4545.36363c-.1818.09091-.2727.27272-.4545.36362-4.8181 3.63634-9.6362 4.63634-14.1816 2.90904-3.2727-1.18178-6.54535-1.45451-9.81802-.4545-.27272.0909-.54544.1818-.90907.2727l-.1818.0909-.27274.2727c0 .0909-.09089.0909-.1818.1818-.36363.5455-.81818 1-1.18181 1.5455l-1.72724 2.6363 2.81814-1.4545c.45453 0 .81815-.1818 1.09087-.2727z"/><path d="m12.9089 7.53769.2727.09091c1.1818.45454 3 .90907 5.2726.90907 2.3636 0 4.6363-.54545 6.909-1.45452l2.8181-1.36361-1.909-.63634c-.5454-.18182-1.0909-.36363-1.7273-.45454h-.2727l-.2727.09089c-.2727.0909-.5455.27274-.8182.36365-2.7272.99998-5.4544 1.1818-8.0907.45454-.2728-.09091-.5455-.18183-.8182-.27274l-.2727-.09091-.2728.09091c-.5454.18181-1.0908.36364-1.6363.63636l-2.09087.90908 2.18177.63633c.1818-.0909.4546.00001.7273.09092z"/></g></svg>`
+  },
+  {
+    id: "biosynthesis",
+    name: "Biosynthesis",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill-rule="evenodd"><path d="m4.29111 28.6025c.90712.9019.9071 2.3641-.00003 3.266l-.04646.0462c-.90713.9019-2.37788.9018-3.284994-.0001-.9071177-.9019-.9071038-2.3641.000031-3.266l.046453-.0462c.90714-.9019 2.37788-.9018 3.285.0001z" fill="#a4bcfd"/><path d="m15.2112 29.298c.9055.9035.9028 2.3658-.006 3.266l-6.43424 6.3741c-.90876.9002-2.3795.8976-3.28499-.0059-.90548-.9035-.90282-2.3658.00594-3.266l6.43429-6.3741c.9088-.9002 2.3795-.8976 3.285.0059z" fill="#6172f3"/><path d="m23.9431 40.2706c.7116-1.0613 2.1538-1.348 3.2212-.6405l.1394.0923c1.0674.7075 1.3558 2.1414.6442 3.2026-.7116 1.0613-2.1538 1.3481-3.2212.6406l-.1394-.0924c-1.0674-.7075-1.3558-2.1414-.6442-3.2026z" fill="#a4bcfd"/><path d="m39.2728 28.4638c.9072.9019.9072 2.3641 0 3.266l-3.159 3.1408c-.9072.9019-2.3779.9019-3.285 0s-.9071-2.3641 0-3.266l3.1591-3.1408c.9071-.9019 2.3778-.9019 3.2849 0z" fill="#6172f3"/><g fill="#444ce7"><path d="m39.3197 16.8473c.9071.9019.9071 2.3642 0 3.266l-23.3446 23.2098c-.9071.9019-2.3779.9019-3.285 0s-.9071-2.3641 0-3.266l23.3446-23.2098c.9071-.9019 2.3778-.9019 3.285 0z"/><path d="m34.905 9.71133c.9072.90187.9072 2.36417 0 3.26607l-13.426 13.3485c-.9071.9019-2.3779.9019-3.285 0s-.9071-2.3642 0-3.2661l13.4261-13.34847c.9071-.90189 2.3778-.90189 3.2849 0z"/><path d="m27.8187 5.18362c.9077.90128.9087 2.36353.0022 3.26603l-17.2588 17.18215c-.90647.9025-2.37721.9035-3.28495.0022-.90773-.9013-.90872-2.3635-.00221-3.266l17.25876-17.18218c.9065-.9025 2.3772-.90348 3.285-.0022z"/></g><path d="m10.7276 10.6841c.9056.9035.9031 2.3657-.0056 3.266l-6.75949 6.6974c-.90869.9003-2.37943.8978-3.28499-.0056-.905563-.9035-.903032-2.3657.005654-3.2661l6.759476-6.6973c.90868-.90034 2.37942-.89783 3.28495.0056z" fill="#6172f3"/><path d="m14.8678 4.00024c1.2828 0 2.3228 1.03397 2.3228 2.30944v.23094c0 1.27546-1.04 2.30943-2.3228 2.30943-1.2829 0-2.3229-1.03397-2.3229-2.30943v-.23094c0-1.27547 1.04-2.30944 2.3229-2.30944z" fill="#a4bcfd"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill="#fff" fill-rule="evenodd"><path d="m4.29111 28.6025c.90712.9019.9071 2.3641-.00003 3.266l-.04646.0462c-.90713.9019-2.37788.9018-3.284994-.0001-.9071177-.9019-.9071038-2.3641.000031-3.266l.046453-.0462c.90714-.9019 2.37788-.9018 3.285.0001z" opacity=".5"/><path d="m15.2112 29.298c.9055.9035.9028 2.3658-.006 3.266l-6.43424 6.3741c-.90876.9002-2.3795.8976-3.28499-.0059-.90548-.9035-.90282-2.3658.00594-3.266l6.43429-6.3741c.9088-.9002 2.3795-.8976 3.285.0059z" opacity=".7"/><path d="m23.9431 40.2706c.7116-1.0613 2.1538-1.348 3.2212-.6405l.1394.0923c1.0674.7075 1.3558 2.1414.6442 3.2026-.7116 1.0613-2.1538 1.3481-3.2212.6406l-.1394-.0924c-1.0674-.7075-1.3558-2.1414-.6442-3.2026z" opacity=".5"/><path d="m39.2728 28.4638c.9072.9019.9072 2.3641 0 3.266l-3.159 3.1408c-.9072.9019-2.3779.9019-3.285 0s-.9071-2.3641 0-3.266l3.1591-3.1408c.9071-.9019 2.3778-.9019 3.2849 0z" opacity=".7"/><path d="m39.3197 16.8473c.9071.9019.9071 2.3642 0 3.266l-23.3446 23.2098c-.9071.9019-2.3779.9019-3.285 0s-.9071-2.3641 0-3.266l23.3446-23.2098c.9071-.9019 2.3778-.9019 3.285 0z"/><path d="m34.905 9.71133c.9072.90187.9072 2.36417 0 3.26607l-13.426 13.3485c-.9071.9019-2.3779.9019-3.285 0s-.9071-2.3642 0-3.2661l13.4261-13.34847c.9071-.90189 2.3778-.90189 3.2849 0z"/><path d="m27.8187 5.18362c.9077.90128.9087 2.36353.0022 3.26603l-17.2588 17.18215c-.90647.9025-2.37721.9035-3.28495.0022-.90773-.9013-.90872-2.3635-.00221-3.266l17.25876-17.18218c.9065-.9025 2.3772-.90348 3.285-.0022z"/><path d="m10.7276 10.6841c.9056.9035.9031 2.3657-.0056 3.266l-6.75949 6.6974c-.90869.9003-2.37943.8978-3.28499-.0056-.905563-.9035-.903032-2.3657.005654-3.2661l6.759476-6.6973c.90868-.90034 2.37942-.89783 3.28495.0056z" opacity=".7"/><path d="m14.8678 4.00024c1.2828 0 2.3228 1.03397 2.3228 2.30944v.23094c0 1.27546-1.04 2.30943-2.3228 2.30943-1.2829 0-2.3229-1.03397-2.3229-2.30943v-.23094c0-1.27547 1.04-2.30944 2.3229-2.30944z" opacity=".5"/></g></svg>`
+  },
+  {
+    id: "boltshift",
+    name: "Boltshift",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m20 44c11.0457 0 20-8.9543 20-20s-8.9543-20-20-20c-11.04572 0-20 8.9543-20 20s8.95428 20 20 20zm6.2393-30.6832c.3037-1.0787-.7432-1.7167-1.6993-1.0355l-13.3469 9.5083c-1.0369.7387-.8738 2.2104.245 2.2104h3.5146v-.0272h6.8498l-5.5813 1.9693-2.4605 8.7411c-.3037 1.0788.7431 1.7167 1.6993 1.0355l13.3469-9.5082c1.0369-.7387.8737-2.2105-.245-2.2105h-5.3298z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m20 44c11.0457 0 20-8.9543 20-20s-8.9543-20-20-20c-11.04572 0-20 8.9543-20 20s8.95428 20 20 20zm6.2393-30.6832c.3037-1.0787-.7432-1.7167-1.6993-1.0355l-13.3469 9.5083c-1.0369.7387-.8738 2.2104.245 2.2104h3.5146v-.0272h6.8498l-5.5813 1.9693-2.4605 8.7411c-.3037 1.0788.7431 1.7167 1.6993 1.0355l13.3469-9.5082c1.0369-.7387.8737-2.2105-.245-2.2105h-5.3298z" fill="#fff" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "buildingblocks",
+    name: "BuildingBlocks",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 37 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m12.8841 4.30945-6.8842 3.97574 6.8891 3.97661 6.8862-3.97575zm8.8919 7.44025-6.887 3.9762-.0007 7.9532 6.8877-3.9771zm2 11.4164-6.8879 3.9772 6.8889 3.9765 6.8871-3.9763zm8.8879 7.4416-6.8868 3.9761v7.9522l6.8868-3.9761zm-10.8868 11.9287v-7.9525l-6.8891-3.9766v7.9525zm-10.8888-18.8569-6.8883-3.9775v-7.9526l6.889 3.9765zm-.0003 4.6187-9.38814-5.4209c-.928127-.5359-1.49986-1.5262-1.49986-2.598v-11.99368c0-.71444.381106-1.37463.999789-1.73193l10.383811-5.996798c.9281-.5359626 2.0716-.5361538 2.9998-.000505l10.3922 5.996973c.619.3572 1.0004 1.01758 1.0004 1.73226v11.41638l9.888 5.7096c.6188.3573.9999 1.0175.9999 1.732v11.9937c0 1.0718-.5718 2.0621-1.5 2.598l-10.3868 5.9969c-.6187.3572-1.381.3572-1.9998.0001l-10.3891-5.9969c-.9283-.5358-1.5002-1.5263-1.5002-2.5982z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 37 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m12.8841 4.30945-6.8842 3.97574 6.8891 3.97661 6.8862-3.97575zm8.8919 7.44025-6.887 3.9762-.0007 7.9532 6.8877-3.9771zm2 11.4164-6.8879 3.9772 6.8889 3.9765 6.8871-3.9763zm8.8879 7.4416-6.8868 3.9761v7.9522l6.8868-3.9761zm-10.8868 11.9287v-7.9525l-6.8891-3.9766v7.9525zm-10.8888-18.8569-6.8883-3.9775v-7.9526l6.889 3.9765zm-.0003 4.6187-9.38814-5.4209c-.928127-.5359-1.49986-1.5262-1.49986-2.598v-11.99368c0-.71444.381106-1.37463.999789-1.73193l10.383811-5.996798c.9281-.5359626 2.0716-.5361538 2.9998-.000505l10.3922 5.996973c.619.3572 1.0004 1.01758 1.0004 1.73226v11.41638l9.888 5.7096c.6188.3573.9999 1.0175.9999 1.732v11.9937c0 1.0718-.5718 2.0621-1.5 2.598l-10.3868 5.9969c-.6187.3572-1.381.3572-1.9998.0001l-10.3891-5.9969c-.9283-.5358-1.5002-1.5263-1.5002-2.5982z" fill="#155eef" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "calescence",
+    name: "Calescence",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 36 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill="#1570ef" fill-rule="evenodd"><path d="m35.3721 14v8.0492h-9.9698v-2.2927z"/><path d="m35.3699 14.0001-9.9698 5.7565-7.3513-4.2436v-11.513z" opacity=".9"/><path d="m18.0512 4v11.513l-7.349 4.2436-9.969778-5.7565z" opacity=".8"/><path d="m10.7002 19.7565v8.4868l-9.969731 5.756v-19.9993z" opacity=".7"/><path d="m18.0492 32.4871v11.5129l-17.318731-10.0006 9.969731-5.756z" opacity=".6"/><path d="m35.3699 33.9994-17.3211 10.0006v-11.5129l7.3513-4.2437z" opacity=".5"/><path d="m35.3721 25.9507v8.0487l-9.9698-5.756v-2.2927z" opacity=".4"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 36 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill="#fff" fill-rule="evenodd"><path d="m35.3721 14v8.0492h-9.9698v-2.2927z"/><path d="m35.3699 14.0001-9.9698 5.7565-7.3513-4.2436v-11.513z" opacity=".9"/><path d="m18.0512 4v11.513l-7.349 4.2436-9.969778-5.7565z" opacity=".8"/><path d="m10.7002 19.7565v8.4868l-9.969731 5.756v-19.9993z" opacity=".7"/><path d="m18.0492 32.4871v11.5129l-17.318731-10.0006 9.969731-5.756z" opacity=".6"/><path d="m35.3699 33.9994-17.3211 10.0006v-11.5129l7.3513-4.2437z" opacity=".5"/><path d="m35.3721 25.9507v8.0487l-9.9698-5.756v-2.2927z" opacity=".4"/></g></svg>`
+  },
+  {
+    id: "capsule",
+    name: "Capsule",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="18" fill="#1570ef" r="14"/><circle cx="26" cy="30" fill="#53b1fd" r="14"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><circle cx="14" cy="18" opacity=".7" r="14"/><circle cx="26" cy="30" opacity=".7" r="14"/></g></svg>`
+  },
+  {
+    id: "constellation",
+    name: "Constellation",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m16 8 5.0912 10.9088 10.9088 5.0912-10.9088 5.0912-5.0912 10.9088-5.0912-10.9088-10.9088-5.0912 10.9088-5.0912z"/><path d="m20.0469 31.3286 6.3539-1.0932 3.6 9.7646 3.6-9.7646 10.2565 1.7646-6.6564-8 6.6564-8-10.2565 1.7646-3.6-9.7646-3.6 9.7646-6.3539-1.0932 1.0442 2.2374 10.9088 5.0912-10.9088 5.0912z" opacity=".5"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m16 8 5.0912 10.9088 10.9088 5.0912-10.9088 5.0912-5.0912 10.9088-5.0912-10.9088-10.9088-5.0912 10.9088-5.0912z"/><path d="m20.0469 31.3286 6.3539-1.0932 3.6 9.7646 3.6-9.7646 10.2565 1.7646-6.6564-8 6.6564-8-10.2565 1.7646-3.6-9.7646-3.6 9.7646-6.3539-1.0932 1.0442 2.2374 10.9088 5.0912-10.9088 5.0912z" opacity=".5"/></g></svg>`
+  },
+  {
+    id: "codecraft",
+    name: "Codecraft",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 9c0-2.76142 2.23858-5 5-5h10c2.7614 0 5 2.23858 5 5v9.8192c.0002.06.0003.1203.0003.1808 0 2.7575 2.2322 4.9936 4.9881 5h.0116 10c2.7614 0 5 2.2386 5 5v10c0 2.7614-2.2386 5-5 5h-10c-2.7614 0-5-2.2386-5-5v-10c0-.0139.0001-.0277.0002-.0416-.0224-2.7422-2.2523-4.9584-4.9999-4.9584-.0129 0-.0258 0-.0387 0h-9.9616c-2.76142 0-5-2.2386-5-5z" fill="#155eef"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 9c0-2.76142 2.23858-5 5-5h10c2.7614 0 5 2.23858 5 5v9.8192c.0002.06.0003.1203.0003.1808 0 2.7575 2.2322 4.9936 4.9881 5h.0116 10c2.7614 0 5 2.2386 5 5v10c0 2.7614-2.2386 5-5 5h-10c-2.7614 0-5-2.2386-5-5v-10c0-.0139.0001-.0277.0002-.0416-.0224-2.7422-2.2523-4.9584-4.9999-4.9584-.0129 0-.0258 0-.0387 0h-9.9616c-2.76142 0-5-2.2386-5-5z" fill="#155eef"/></svg>`
+  },
+  {
+    id: "command-r",
+    name: "Command+R",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 32 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m18.6667 30.6667c7.3638 0 13.3333-5.9696 13.3333-13.3334 0-7.36376-5.9695-13.3333-13.3333-13.3333h-18.6667v26.6667z" fill="#155eef"/><path d="m0 4 32 40h-21.3333l-10.6667-13.3333z" fill="#2e90fa"/><path d="m21.1488 30.436c-.8042.1515-1.6339.2307-2.4821.2307h-18.6667v-26.6667z" fill="#53b1fd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 32 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m18.6667 30.6667c7.3638 0 13.3333-5.9696 13.3333-13.3334 0-7.36376-5.9695-13.3333-13.3333-13.3333h-18.6667v26.6667z" opacity=".7"/><path d="m0 4 32 40h-21.3333l-10.6667-13.3333z" opacity=".7"/><path d="m21.1488 30.436c-.8042.1515-1.6339.2307-2.4821.2307h-18.6667v-26.6667z" opacity=".7"/></g></svg>`
+  },
+  {
+    id: "contrast-ai",
+    name: "ContrastAI",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m20 4c11.0457 0 20 8.9543 20 20s-8.9543 20-20 20-20-8.9543-20-20 8.9543-20 20-20zm15 20c0 8.2843-6.7157 15-15 15v-30c8.2843 0 15 6.7157 15 15z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m20 4c11.0457 0 20 8.9543 20 20s-8.9543 20-20 20-20-8.9543-20-20 8.9543-20 20-20zm15 20c0 8.2843-6.7157 15-15 15v-30c8.2843 0 15 6.7157 15 15z" fill="#fff" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "convergence",
+    name: "Convergence",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 42 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m22.1017 20.8596 9.8995-9.8994-2.1213-2.12137-7.3389 7.33887v-13.1777h-3v13.1777l-7.3388-7.33887-2.1213 2.12137 9.8995 9.8994 1.0606 1.0607zm2.1207 2.1214 9.8995-9.8995 2.1213 2.1213-7.3388 7.3388h13.0956v3h-13.0956l7.3388 7.3389-2.1213 2.1213-9.8995-9.8995-1.0607-1.0607zm-16.26224 12.0208 9.89944-9.8995 1.0607-1.0607-1.0607-1.0606-9.89944-9.8995-2.12133 2.1213 7.33887 7.3388h-13.17574688v3h13.17574688l-7.33887 7.3389zm12.02024-7.7782-9.8995 9.8995 2.1213 2.1213 7.3388-7.3388v13.0944h3v-13.0944l7.3389 7.3388 2.1213-2.1213-9.8995-9.8995-1.0607-1.0607z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 42 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m22.1017 20.8596 9.8995-9.8994-2.1213-2.12137-7.3389 7.33887v-13.1777h-3v13.1777l-7.3388-7.33887-2.1213 2.12137 9.8995 9.8994 1.0606 1.0607zm2.1207 2.1214 9.8995-9.8995 2.1213 2.1213-7.3388 7.3388h13.0956v3h-13.0956l7.3388 7.3389-2.1213 2.1213-9.8995-9.8995-1.0607-1.0607zm-16.26224 12.0208 9.89944-9.8995 1.0607-1.0607-1.0607-1.0606-9.89944-9.8995-2.12133 2.1213 7.33887 7.3388h-13.17574688v3h13.17574688l-7.33887 7.3389zm12.02024-7.7782-9.8995 9.8995 2.1213 2.1213 7.3388-7.3388v13.0944h3v-13.0944l7.3389 7.3388 2.1213-2.1213-9.8995-9.8995-1.0607-1.0607z" fill="#155eef" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "core-os",
+    name: "CoreOS",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 42 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m15.2286 4.99951c-3.2154 0-6.18655 1.71539-7.79425 4.5l-5.7735 9.99999c-1.6076941 2.7846-1.607697 6.2154 0 9l5.7735 10c1.6077 2.7846 4.57885 4.5 7.79425 4.5h11.547c3.2154 0 6.1865-1.7154 7.7942-4.5l5.7735-10c1.6077-2.7846 1.6077-6.2154 0-9l-5.7735-9.99999c-1.6077-2.78461-4.5788-4.5-7.7942-4.5zm11.547 5.99999h-7.2169c-1.1547 0-1.8762 1.2499-1.298 2.2494 1.784 3.0838 3.5722 6.1653 5.3536 9.2506.5359.9282.5359 2.0718 0 3-1.7814 3.0854-3.5696 6.1668-5.3536 9.2506-.5782.9995.1433 2.2494 1.298 2.2494h7.2169c1.0718 0 2.0622-.5718 2.5981-1.5l5.7735-10c.5359-.9282.5359-2.0718 0-3l-5.7735-10c-.5359-.9282-1.5263-1.5-2.5981-1.5z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 42 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m15.2286 4.99951c-3.2154 0-6.18655 1.71539-7.79425 4.5l-5.7735 9.99999c-1.6076941 2.7846-1.607697 6.2154 0 9l5.7735 10c1.6077 2.7846 4.57885 4.5 7.79425 4.5h11.547c3.2154 0 6.1865-1.7154 7.7942-4.5l5.7735-10c1.6077-2.7846 1.6077-6.2154 0-9l-5.7735-9.99999c-1.6077-2.78461-4.5788-4.5-7.7942-4.5zm11.547 5.99999h-7.2169c-1.1547 0-1.8762 1.2499-1.298 2.2494 1.784 3.0838 3.5722 6.1653 5.3536 9.2506.5359.9282.5359 2.0718 0 3-1.7814 3.0854-3.5696 6.1668-5.3536 9.2506-.5782.9995.1433 2.2494 1.298 2.2494h7.2169c1.0718 0 2.0622-.5718 2.5981-1.5l5.7735-10c.5359-.9282.5359-2.0718 0-3l-5.7735-10c-.5359-.9282-1.5263-1.5-2.5981-1.5z" fill="#155eef" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "cubekit",
+    name: "Cubekit",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 14.5264v18.9473l17.8947-12.2437v-18.94741z" fill="#155eef" opacity=".5"/><path d="m0 33.4737v-18.9474l17.8947 12.2438v18.9474z" fill="#1570ef" opacity=".5"/><path d="m40 14.5263v18.9474l-17.8947-12.2438v-18.94737z" fill="#155eef" opacity=".5"/><path d="m40 33.4737v-18.9474l-17.8947 12.2438v18.9474z" fill="#1570ef" opacity=".5"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m0 14.5264v18.9473l17.8947-12.2437v-18.94741z" opacity=".5"/><path d="m0 33.4737v-18.9474l17.8947 12.2438v18.9474z" opacity=".5"/><path d="m40 14.5263v18.9474l-17.8947-12.2438v-18.94737z" opacity=".5"/><path d="m40 33.4737v-18.9474l-17.8947 12.2438v18.9474z" opacity=".5"/></g></svg>`
+  },
+  {
+    id: "europa",
+    name: "Europa",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m28.6446 39.168c-.6032 1.3404-1.353 2.6531-2.2519 3.7888 7.4581-2.5137 12.9483-9.3054 13.5527-17.4568h-2.6549c-3.2399 0-5.8424 2.5861-6.369 5.7829-.4855 2.9468-1.2621 5.6301-2.2769 7.8851z"/><path d="m22.7724 25.5c3.3921 0 6.167 2.8299 5.5439 6.1643-1.3533 7.2424-4.5667 12.3357-8.3155 12.3357-4.7435 0-8.6299-8.1549-8.975-18.5z"/><path d="m30.9904 17.1502c.4961 3.2267 3.1106 5.8498 6.3752 5.8498h2.6107c-.4123-8.3729-5.9735-15.39183-13.5836-17.95683.8989 1.13575 1.6487 2.44843 2.2519 3.78878 1.0643 2.36505 1.8666 5.20115 2.3458 8.31825z"/><path d="m28.4165 16.8957c.5674 3.3176-2.1954 6.1043-5.5612 6.1043h-11.8434c.2344-10.5811 4.1693-19 8.9889-19 3.8447 0 7.1263 5.35721 8.4157 12.8957z"/><path d="m8.51131 23c.11359-5.4083 1.14536-10.3894 2.84579-14.16805.6031-1.34035 1.3529-2.65303 2.2519-3.78878-7.61011 2.565-13.171316 9.58393-13.5836094 17.95683z"/><path d="m.0562286 25.5c.6043994 8.1514 6.0946514 14.9431 13.5527714 17.4568-.899-1.1357-1.6488-2.4484-2.2519-3.7888-1.6479-3.6619-2.66781-8.4531-2.83264-13.668z"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m28.6446 39.168c-.6032 1.3404-1.353 2.6531-2.2519 3.7888 7.4581-2.5137 12.9483-9.3054 13.5527-17.4568h-2.6549c-3.2399 0-5.8424 2.5861-6.369 5.7829-.4855 2.9468-1.2621 5.6301-2.2769 7.8851z"/><path d="m22.7724 25.5c3.3921 0 6.167 2.8299 5.5439 6.1643-1.3533 7.2424-4.5667 12.3357-8.3155 12.3357-4.7435 0-8.6299-8.1549-8.975-18.5z"/><path d="m30.9904 17.1502c.4961 3.2267 3.1106 5.8498 6.3752 5.8498h2.6107c-.4123-8.3729-5.9735-15.39183-13.5836-17.95683.8989 1.13575 1.6487 2.44843 2.2519 3.78878 1.0643 2.36505 1.8666 5.20115 2.3458 8.31825z"/><path d="m28.4165 16.8957c.5674 3.3176-2.1954 6.1043-5.5612 6.1043h-11.8434c.2344-10.5811 4.1693-19 8.9889-19 3.8447 0 7.1263 5.35721 8.4157 12.8957z"/><path d="m8.51131 23c.11359-5.4083 1.14536-10.3894 2.84579-14.16805.6031-1.34035 1.3529-2.65303 2.2519-3.78878-7.61011 2.565-13.171316 9.58393-13.5836094 17.95683z"/><path d="m.0562286 25.5c.6043994 8.1514 6.0946514 14.9431 13.5527714 17.4568-.899-1.1357-1.6488-2.4484-2.2519-3.7888-1.6479-3.6619-2.66781-8.4531-2.83264-13.668z"/></g></svg>`
+  },
+  {
+    id: "feather-dev",
+    name: "FeatherDev",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m36.3068 11.4224c-.4322-.4323-.8644-.8645-1.2967-1.2967-1.2966-1.38311-2.6797-2.76621-4.4086-3.63065-1.9882-1.03733-4.1493-.778-6.3104-.778-3.2849 0-11.4971 0-16.33798 0l3.28488 4.40865h19.6228c1.8153 0 3.3713.3458 4.8409 1.2967.2593.0864.5186.0864.6051 0z" fill="#53b1fd"/><path d="m39.9368 18.511c-.4322-.4322-.8645-.8645-1.2967-1.2967-1.2967-1.3831-2.6797-2.7662-4.4086-3.6306-1.9882-1.0374-4.1494-.778-6.3105-.778-2.8526 0-9.6817 0-14.5226 0l3.2849 4.4086h17.8939c1.8154 0 3.3714.3458 4.8409 1.2967.1729.0864.3458.0864.5187 0z" fill="#2e90fa"/><path d="m44 25.4263c-.4322-.4323-.8645-.8645-1.2967-1.2967-1.2966-1.3831-2.6797-2.7662-4.4086-3.6307-1.9882-1.0373-4.1493-.7779-6.3104-.7779-2.6798 0-8.558 0-13.3124 0l3.2848 4.4086h16.5973c1.8153 0 3.3713.3458 4.8409 1.2967.2593.0864.4322.1729.6051 0z" fill="#1570ef"/><path d="m7.60742 37.0961c.43222.4322.86444.8644 1.29666 1.2966 1.29662 1.3831 2.67972 2.7662 4.40862 3.6307 1.9882 1.0373 4.1493.778 6.3104.778h16.338l-3.2849-4.4087c-5.9646 0-15.3006 0-19.6228 0-1.8153 0-3.37132-.3457-4.84087-1.2966-.25933-.0865-.43222-.0865-.60511 0z" fill="#53b1fd"/><path d="m3.97656 30.0079c.43222.4323.86444.8645 1.29666 1.2967 1.29667 1.3831 2.67976 2.7662 4.40864 3.6307 1.98824 1.0373 4.14934.778 6.31044.778h14.5226l-3.2849-4.4087c-5.8782 0-13.9175 0-17.89391 0-1.81532 0-3.37132-.3458-4.84087-1.2967-.17289-.0864-.34577-.0864-.51866 0z" fill="#2e90fa"/><path d="m0 23.0058c.43222.4322.864441.8644 1.29666 1.2966 1.29666 1.3831 2.67977 2.7662 4.40866 3.6307 1.98821 1.0373 4.1493.778 6.31038.778h13.3124l-3.2849-4.4087c-5.7053 0-12.96657 0-16.59722 0-1.81533 0-3.37132-.3458-4.840874-1.2966-.259332-.0865-.432218-.0865-.605106 0z" fill="#1570ef"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m36.3068 11.4224c-.4322-.4323-.8644-.8645-1.2967-1.2967-1.2966-1.38311-2.6797-2.76621-4.4086-3.63065-1.9882-1.03733-4.1493-.778-6.3104-.778-3.2849 0-11.4971 0-16.33798 0l3.28488 4.40865h19.6228c1.8153 0 3.3713.3458 4.8409 1.2967.2593.0864.5186.0864.6051 0z" opacity=".5"/><path d="m39.9368 18.511c-.4322-.4322-.8645-.8645-1.2967-1.2967-1.2967-1.3831-2.6797-2.7662-4.4086-3.6306-1.9882-1.0374-4.1494-.778-6.3105-.778-2.8526 0-9.6817 0-14.5226 0l3.2849 4.4086h17.8939c1.8154 0 3.3714.3458 4.8409 1.2967.1729.0864.3458.0864.5187 0z" opacity=".7"/><path d="m44 25.4263c-.4322-.4323-.8645-.8645-1.2967-1.2967-1.2966-1.3831-2.6797-2.7662-4.4086-3.6307-1.9882-1.0373-4.1493-.7779-6.3104-.7779-2.6798 0-8.558 0-13.3124 0l3.2848 4.4086h16.5973c1.8153 0 3.3713.3458 4.8409 1.2967.2593.0864.4322.1729.6051 0z"/><path d="m7.60742 37.0961c.43222.4322.86444.8644 1.29666 1.2966 1.29662 1.3832 2.67972 2.7662 4.40862 3.6307 1.9882 1.0373 4.1493.778 6.3104.778h16.338l-3.2849-4.4087c-5.9646 0-15.3006 0-19.6228 0-1.8153 0-3.37132-.3457-4.84087-1.2966-.25933-.0865-.43222-.0865-.60511 0z" opacity=".5"/><path d="m3.97656 30.0079c.43222.4323.86444.8645 1.29666 1.2967 1.29667 1.3831 2.67976 2.7662 4.40864 3.6307 1.98824 1.0373 4.14934.778 6.31044.778h14.5226l-3.2849-4.4087c-5.8782 0-13.9175 0-17.89391 0-1.81532 0-3.37132-.3458-4.84087-1.2967-.17289-.0864-.34577-.0864-.51866 0z" opacity=".7"/><path d="m0 23.0058c.43222.4322.864441.8644 1.29666 1.2966 1.29666 1.3831 2.67977 2.7662 4.40866 3.6307 1.98821 1.0373 4.1493.778 6.31038.778h13.3124l-3.2849-4.4087c-5.7053 0-12.96657 0-16.59722 0-1.81533 0-3.37132-.3458-4.840874-1.2966-.259332-.0865-.432218-.0865-.605106 0z"/></g></svg>`
+  },
+  {
+    id: "flora-fauna",
+    name: "Flora&Fauna",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m13.7146 4c-2.2564 0-4.4203.89634-6.01579 2.49183l-7.69881 7.69877v3.524c0 2.4897 1.06944 4.7296 2.77401 6.2854-1.70457 1.5558-2.77401 3.7957-2.77401 6.2854v3.524l7.69881 7.6988c1.59549 1.5955 3.75939 2.4918 6.01579 2.4918 2.4897 0 4.7296-1.0694 6.2854-2.774 1.5558 1.7046 3.7957 2.774 6.2854 2.774 2.2564 0 4.4203-.8963 6.0158-2.4918l7.6988-7.6988v-3.524c0-2.4897-1.0694-4.7296-2.774-6.2854 1.7046-1.5558 2.774-3.7957 2.774-6.2854v-3.524l-7.6988-7.69877c-1.5955-1.59549-3.7594-2.49183-6.0158-2.49183-2.4897 0-4.7296 1.06944-6.2854 2.77401-1.5558-1.70457-3.7957-2.77401-6.2854-2.77401zm12.0442 20c-.0959-.0875-.19-.1774-.2822-.2696l-5.4766-5.4766-5.4766 5.4766c-.0922.0922-.1863.1821-.2822.2696.0959.0875.19.1774.2822.2696l5.4766 5.4766 5.4766-5.4766c.0922-.0922.1863-.1821.2822-.2696zm-3.5366 9.8094v1.683c0 2.244 1.8192 4.0632 4.0632 4.0632 1.0776 0 2.1111-.4281 2.8731-1.1901l6.3971-6.3971v-1.683c0-2.244-1.8192-4.0632-4.0632-4.0632-1.0776 0-2.1111.4281-2.8731 1.1901zm-4.4444 0-6.3971-6.3971c-.762-.762-1.79546-1.1901-2.87308-1.1901-2.24403 0-4.06318 1.8192-4.06318 4.0632v1.683l6.39706 6.3971c.762.762 1.7955 1.1901 2.8731 1.1901 2.244 0 4.0632-1.8192 4.0632-4.0632zm0-21.3018v1.683l-6.3971 6.3971c-.762.762-1.79546 1.1901-2.87308 1.1901-2.24403 0-4.06318-1.8192-4.06318-4.0632v-1.683l6.39706-6.39708c.762-.76199 1.7955-1.19007 2.8731-1.19007 2.244 0 4.0632 1.81915 4.0632 4.06315zm10.8415 8.0801-6.3971-6.3971v-1.683c0-2.244 1.8192-4.06315 4.0632-4.06315 1.0776 0 2.1111.42808 2.8731 1.19007l6.3971 6.39708v1.683c0 2.244-1.8192 4.0632-4.0632 4.0632-1.0776 0-2.1111-.4281-2.8731-1.1901z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m13.7146 4c-2.2564 0-4.4203.89634-6.01579 2.49183l-7.69881 7.69877v3.524c0 2.4897 1.06944 4.7296 2.77401 6.2854-1.70457 1.5558-2.77401 3.7957-2.77401 6.2854v3.524l7.69881 7.6988c1.59549 1.5955 3.75939 2.4918 6.01579 2.4918 2.4897 0 4.7296-1.0694 6.2854-2.774 1.5558 1.7046 3.7957 2.774 6.2854 2.774 2.2564 0 4.4203-.8963 6.0158-2.4918l7.6988-7.6988v-3.524c0-2.4897-1.0694-4.7296-2.774-6.2854 1.7046-1.5558 2.774-3.7957 2.774-6.2854v-3.524l-7.6988-7.69877c-1.5955-1.59549-3.7594-2.49183-6.0158-2.49183-2.4897 0-4.7296 1.06944-6.2854 2.77401-1.5558-1.70457-3.7957-2.77401-6.2854-2.77401zm12.0442 20c-.0959-.0875-.19-.1774-.2822-.2696l-5.4766-5.4766-5.4766 5.4766c-.0922.0922-.1863.1821-.2822.2696.0959.0875.19.1774.2822.2696l5.4766 5.4766 5.4766-5.4766c.0922-.0922.1863-.1821.2822-.2696zm-3.5366 9.8094v1.683c0 2.244 1.8192 4.0632 4.0632 4.0632 1.0776 0 2.1111-.4281 2.8731-1.1901l6.3971-6.3971v-1.683c0-2.244-1.8192-4.0632-4.0632-4.0632-1.0776 0-2.1111.4281-2.8731 1.1901zm-4.4444 0-6.3971-6.3971c-.762-.762-1.79546-1.1901-2.87308-1.1901-2.24403 0-4.06318 1.8192-4.06318 4.0632v1.683l6.39706 6.3971c.762.762 1.7955 1.1901 2.8731 1.1901 2.244 0 4.0632-1.8192 4.0632-4.0632zm0-21.3018v1.683l-6.3971 6.3971c-.762.762-1.79546 1.1901-2.87308 1.1901-2.24403 0-4.06318-1.8192-4.06318-4.0632v-1.683l6.39706-6.39708c.762-.76199 1.7955-1.19007 2.8731-1.19007 2.244 0 4.0632 1.81915 4.0632 4.06315zm10.8415 8.0801-6.3971-6.3971v-1.683c0-2.244 1.8192-4.06315 4.0632-4.06315 1.0776 0 2.1111.42808 2.8731 1.19007l6.3971 6.39708v1.683c0 2.244-1.8192 4.0632-4.0632 4.0632-1.0776 0-2.1111-.4281-2.8731-1.1901z" fill="#fff" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "focal-point",
+    name: "FocalPoint",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m10.7788 6.1817 4.6901 17.5036v-19.24382c.3719-.08679.7478-.16322 1.1273-.22897v19.47459l5.2752-19.6871c.3801.03442.7572.07945 1.1309.13479l-5.3176 19.84571 10.5701-18.30794c.3443.15492.6835.31927 1.0172.49274l-10.6095 18.3763 15.1464-15.1465c.2731.25824.5389.52407.7971.7972l-15.1486 15.1487 18.3784-10.6108c.1734.3337.3377.6729.4926 1.0173l-18.3034 10.5675 19.8403-5.3162c.0553.3737.1003.7508.1347 1.1309l-19.6869 5.2751h19.4741c-.0658.3796-.1422.7554-.229 1.1273h-19.2481l17.507 4.691c-.1798.3443-.3693.6827-.5681 1.0149l-17.2257-4.6156 14.3874 8.3066c-.2723.2801-.5528.5522-.8411.8161l-14.1087-8.1457 10.6759 10.6758c-.3377.1973-.6817.385-1.0316.5628l-10.4426-10.4426 6.8421 11.8508c-.3746.1059-.7537.2012-1.1368.2855l-6.6825-11.5744 3.2219 12.0243c-.2872.0122-.5759.0184-.8661.0184-.0991 0-.198-.0007-.2967-.0022l-3.1483-11.7497v11.4569c-.3795-.0657-.7554-.1421-1.1273-.2289v-11.2261l-2.7759 10.36c-.3541-.1396-.7033-.289-1.0471-.4478l2.7337-10.2024-5.13175 8.8884c-.3177-.2034-.62928-.4156-.9344-.6361l5.09135-8.8186-7.1301 7.1302c-.2731-.2583-.53893-.5241-.79717-.7971l7.12787-7.1279-8.81599 5.0899c-.22059-.3051-.4328-.6167-.6363-.9344l8.89259-5.1341-10.20737 2.735c-.15888-.3438-.3083-.693-.44793-1.047l10.3599-2.776h-11.226124c-.086806-.3719-.163256-.7477-.22903-1.1273h11.452154l-11.74511583-3.1471c-.00145443-.0995-.00218417-.1991-.00218417-.2989 0-.2894.00613487-.5774.0182816-.8639l12.0258184 3.2224-11.57621-6.6836c.084291-.3832.179549-.7623.285427-1.1369l11.855683 6.8449-10.44698-10.447c.17774-.3499.36544-.6939.56273-1.0315l10.68025 10.6802-8.14896-14.1144c.26387-.2882.53605-.56863.81617-.84096l8.30809 14.38996-4.61634-17.22828c.33214-.1988.67064-.38826 1.01484-.56802z" fill="#155eef"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m10.7788 6.1817 4.6901 17.5036v-19.24382c.3719-.08679.7478-.16322 1.1273-.22897v19.47459l5.2752-19.6871c.3801.03442.7572.07945 1.1309.13479l-5.3176 19.84571 10.5701-18.30794c.3443.15492.6835.31927 1.0172.49274l-10.6095 18.3763 15.1464-15.1465c.2731.25824.5389.52407.7971.7972l-15.1486 15.1487 18.3784-10.6108c.1734.3337.3377.6729.4926 1.0173l-18.3034 10.5675 19.8403-5.3162c.0553.3737.1003.7508.1347 1.1309l-19.6869 5.2751h19.4741c-.0658.3796-.1422.7554-.229 1.1273h-19.2481l17.507 4.691c-.1798.3443-.3693.6827-.5681 1.0149l-17.2257-4.6156 14.3874 8.3066c-.2723.2801-.5528.5522-.8411.8161l-14.1087-8.1457 10.6759 10.6758c-.3377.1973-.6817.385-1.0316.5628l-10.4426-10.4426 6.8421 11.8508c-.3746.1059-.7537.2012-1.1368.2855l-6.6825-11.5744 3.2219 12.0243c-.2872.0122-.5759.0184-.8661.0184-.0991 0-.198-.0007-.2967-.0022l-3.1483-11.7497v11.4569c-.3795-.0657-.7554-.1421-1.1273-.2289v-11.2261l-2.7759 10.36c-.3541-.1396-.7033-.289-1.0471-.4478l2.7337-10.2024-5.13174 8.8884c-.31771-.2034-.62929-.4156-.93441-.6361l5.09135-8.8186-7.1301 7.1302c-.2731-.2583-.53893-.5241-.79717-.7971l7.12787-7.1279-8.81599 5.0899c-.22059-.3051-.4328-.6167-.6363-.9344l8.89259-5.1341-10.20737 2.735c-.15888-.3438-.3083-.693-.44793-1.047l10.3599-2.776h-11.226124c-.086806-.3719-.163256-.7477-.22903-1.1273h11.452154l-11.74511583-3.1471c-.00145443-.0995-.00218417-.1991-.00218417-.2989 0-.2894.00613486-.5774.0182816-.8639l12.0258184 3.2224-11.57621-6.6836c.084291-.3832.179549-.7623.285427-1.1369l11.855683 6.8449-10.44698-10.447c.17774-.3499.36544-.6939.56273-1.0315l10.68025 10.6802-8.14896-14.1144c.26387-.2882.53605-.56863.81617-.84096l8.30809 14.38996-4.61634-17.22828c.33214-.1988.67064-.38826 1.01484-.56802z" fill="#fff"/></svg>`
+  },
+  {
+    id: "foresight",
+    name: "Foresight",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 31 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#444ce7"><path d="m-.00195312 17.8433 30.90545312-17.8433-.8189 12.6994-26.32058 15.1961z"/><path d="m3.76367 27.8951 21.73573-12.5492-.8189 12.6994-17.15086 9.902z" opacity=".5"/><path d="m7.52734 37.9477 12.56596-7.255-.8189 12.6994-7.9811 4.6079z" opacity=".25"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 31 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m-.00195312 17.8433 30.90545312-17.8433-.8189 12.6994-26.32058 15.1961z"/><path d="m3.76367 27.8951 21.73573-12.5492-.8189 12.6994-17.15086 9.902z" opacity=".5"/><path d="m7.52734 37.9477 12.56596-7.255-.8189 12.6994-7.9811 4.6079z" opacity=".25"/></g></svg>`
+  },
+  {
+    id: "galileo",
+    name: "Galileo",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m29.5411 6.41772c2.6913 5.27688 4.209 11.25228 4.209 17.58218s-1.5177 12.3054-4.2091 17.5823c6.2304-3.3881 10.4593-9.9914 10.4593-17.5823s-4.2289-14.19404-10.4592-17.58218z" fill="#6172f3"/><path d="m20.5481 5.99826c-.9047-1.28153-2.4457-1.9717-3.9913-1.70349-9.40496 1.63214-16.5568 9.83343-16.5568 19.70503 0 9.8717 7.1518 18.0729 16.5567 19.7051 1.5456.2682 3.0867-.4219 3.9913-1.7035 3.5923-5.0889 5.7025-11.2988 5.7025-18.0016 0-6.7027-2.1101-12.9126-5.7024-18.00154z" fill="#444ce7"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m29.5411 6.41772c2.6913 5.27688 4.209 11.25228 4.209 17.58218s-1.5177 12.3054-4.2091 17.5823c6.2304-3.3881 10.4593-9.9914 10.4593-17.5823s-4.2289-14.19404-10.4592-17.58218z" opacity=".7"/><path d="m20.5481 5.99826c-.9047-1.28153-2.4457-1.9717-3.9913-1.70349-9.40496 1.63214-16.5568 9.83343-16.5568 19.70503 0 9.8717 7.1518 18.0729 16.5567 19.7051 1.5456.2682 3.0867-.4219 3.9913-1.7035 3.5923-5.0889 5.7025-11.2988 5.7025-18.0016 0-6.7027-2.1101-12.9126-5.7024-18.00154z"/></g></svg>`
+  },
+  {
+    id: "global-bank",
+    name: "GlobalBank",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m27.6627 4h-15.3253l-12.3374 12.3373v15.3253l12.3374 12.3374h15.3253l12.3373-12.3374v-15.3253zm-13.2049 27.8554-7.90357-7.9036 7.90357-7.9036c2.988-2.988 7.9037-2.988 10.8916 0l7.9036 7.9036-7.9036 7.9036c-2.9879 2.988-7.8072 2.988-10.8916 0z" fill="#444ce7"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m27.6627 4h-15.3253l-12.3374 12.3373v15.3253l12.3374 12.3374h15.3253l12.3373-12.3374v-15.3253zm-13.2049 27.8554-7.90357-7.9036 7.90357-7.9036c2.988-2.988 7.9037-2.988 10.8916 0l7.9036 7.9036-7.9036 7.9036c-2.9879 2.988-7.8072 2.988-10.8916 0z" fill="#fff"/></svg>`
+  },
+  {
+    id: "hexsmith",
+    name: "Hexsmith",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m9.72461 41.7983h18.49589c1.2717 0 2.4469-.6785 3.0827-1.7798l4.1102-7.1191h-20.5481z" opacity=".7"/><path d="m25.1445 15.1015h-20.55661l4.11021-7.11909c.63585-1.10133 1.811-1.77977 3.0827-1.77977h18.4959z" opacity=".4"/><path d="m39.5272 25.7801c.6358-1.1014.6358-2.4582 0-3.5596l-4.1102-7.1191-5.1378 8.8989h-20.55068l5.13718 8.8989h20.5481l.0016-.0027.0016.0027z" opacity=".4"/><path d="m14.8634 32.8992-5.13775-8.8988-5.13776 8.8988 5.13776 8.8989z"/><path d="m25.1445 15.1014h-20.55593l-4.108166 7.1192c-.635516 1.1013-.635318 2.458.000521 3.5591l4.111125 7.1195 5.13775-8.8989h20.55l.0013-.0021z" opacity=".7"/><path d="m35.4181 15.1015-5.1378-8.89886-5.1377 8.89886 5.1377 8.8989z"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m9.72461 41.7983h18.49589c1.2717 0 2.4469-.6785 3.0827-1.7798l4.1102-7.1191h-20.5481z" opacity=".7"/><path d="m25.1445 15.1015h-20.55661l4.11021-7.11909c.63585-1.10133 1.811-1.77977 3.0827-1.77977h18.4959z" opacity=".4"/><path d="m39.5272 25.7801c.6358-1.1013.6358-2.4582 0-3.5596l-4.1102-7.1191-5.1378 8.8989h-20.55068l5.13718 8.8989h20.5481l.0016-.0027.0016.0027z" opacity=".4"/><path d="m14.8634 32.8992-5.13775-8.8988-5.13776 8.8988 5.13776 8.8989z"/><path d="m25.1445 15.1014h-20.55593l-4.108166 7.1192c-.635516 1.1013-.635318 2.458.000521 3.5591l4.111125 7.1195 5.13775-8.8989h20.55l.0013-.0022z" opacity=".7"/><path d="m35.4181 15.1015-5.1378-8.89886-5.1377 8.89886 5.1377 8.8989z"/></g></svg>`
+  },
+  {
+    id: "hourglass",
+    name: "Hourglass",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 30 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 41.2222c0 1.5341 1.24365 2.7778 2.77778 2.7778h24.44442c1.5341 0 2.7778-1.2437 2.7778-2.7778v-7.2222c0-8.2843-6.7157-15-15-15-8.28427 0-15 6.7157-15 15z" fill="#1570ef"/><path d="m0 6.77778c0-1.53413 1.24365-2.77778 2.77778-2.77778h24.44442c1.5341 0 2.7778 1.24365 2.7778 2.77778v7.22222c0 8.2843-6.7157 15-15 15-8.28427 0-15-6.7157-15-15z" fill="#53b1fd" opacity=".5"/></svg>`,
+    darkSvg: `<svg width="100%" height="100%" viewBox="0 0 30 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.7" d="M0 41.2222C0 42.7563 1.24365 44 2.77778 44H27.2222C28.7563 44 30 42.7563 30 41.2222V34C30 25.7157 23.2843 19 15 19C6.71573 19 0 25.7157 0 34V41.2222Z" fill="white"/><path opacity="0.7" d="M0 6.77778C0 5.24365 1.24365 4 2.77778 4H27.2222C28.7563 4 30 5.24365 30 6.77778V14C30 22.2843 23.2843 29 15 29C6.71573 29 0 22.2843 0 14V6.77778Z" fill="white"/></svg>`
+  },
+  {
+    id: "kintsugi",
+    name: "Kintsugi",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m20 4 4.2861 9.6525 9.856-3.79464-3.7946 9.85604 9.6525 4.2861-9.6525 4.2861 3.7946 9.856-9.856-3.7946-4.2861 9.6525-4.2861-9.6525-9.85604 3.7946 3.79469-9.856-9.65255-4.2861 9.65255-4.2861-3.79469-9.85604 9.85604 3.79464z" fill="#155eef"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m20 4 4.2861 9.6525 9.856-3.79464-3.7946 9.85604 9.6525 4.2861-9.6525 4.2861 3.7946 9.856-9.856-3.7946-4.2861 9.6525-4.2861-9.6525-9.85604 3.7946 3.79469-9.856-9.65255-4.2861 9.65255-4.2861-3.79469-9.85604 9.85604 3.79464z" fill="#155eef"/></svg>`
+  },
+  {
+    id: "layers",
+    name: "Layers",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m5.03741 15.4637c.7506-2.8008 3.62961-5.67985 6.43049-6.43044l17.4617-4.67957c2.8009-.7506 4.4629.91146 3.7123 3.71231l-4.6795 17.4617c-.7506 2.8009-3.6297 5.6799-6.4305 6.4305l-17.46175 4.6796c-2.80085.7505-4.462904-.9115-3.712306-3.7124z" opacity=".7"/><path d="m12.0355 22.4642c.7506-2.8008 3.6296-5.6799 6.4304-6.4305l17.4617-4.6795c2.8009-.7506 4.4629.9114 3.7123 3.7123l-4.6795 17.4617c-.7506 2.8009-3.6296 5.6799-6.4305 6.4305l-17.4617 4.6795c-2.80085.7506-4.46291-.9114-3.71231-3.7123z" opacity=".7"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m5.03741 15.4637c.7506-2.8008 3.62961-5.67985 6.43049-6.43044l17.4617-4.67957c2.8009-.7506 4.4629.91146 3.7123 3.71231l-4.6795 17.4617c-.7506 2.8009-3.6297 5.6799-6.4305 6.4305l-17.46175 4.6795c-2.80085.7506-4.462904-.9114-3.712306-3.7123z" opacity=".7"/><path d="m12.0355 22.4642c.7506-2.8008 3.6296-5.6799 6.4304-6.4305l17.4617-4.6795c2.8009-.7506 4.4629.9114 3.7123 3.7123l-4.6795 17.4617c-.7506 2.8009-3.6296 5.6799-6.4305 6.4305l-17.4617 4.6795c-2.80085.7506-4.46291-.9114-3.71231-3.7123z" opacity=".7"/></g></svg>`
+  },
+  {
+    id: "lightspeed",
+    name: "Lightspeed",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 48 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 24c0 6.6274 5.37258 12 12 12v-12c0 6.6274 5.3726 12 12 12v-12c0 6.6274 5.3726 12 12 12s12-5.3726 12-12-5.3726-12-12-12-12 5.3726-12 12v-12c-6.6274 0-12 5.3726-12 12v-12c-6.62742 0-12 5.3726-12 12z" fill="#155eef"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 48 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m0 24c0 6.6274 5.37258 12 12 12v-12c0 6.6274 5.3726 12 12 12v-12c0 6.6274 5.3726 12 12 12s12-5.3726 12-12-5.3726-12-12-12-12 5.3726-12 12v-12c-6.6274 0-12 5.3726-12 12v-12c-6.62742 0-12 5.3726-12 12z" fill="#155eef"/></svg>`
+  },
+  {
+    id: "luminescence",
+    name: "Luminescence",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m32.3008 36h-.1015c-.0261.0402-.0523.0804-.0787.1204-2.7604 1.8201-6.0668 2.8794-9.6206 2.8794-9.665 0-17.5-7.835-17.5-17.5 0-3.5538 1.05931-6.8602 2.87939-9.6206.04009-.0264.08029-.0527.12061-.0788v-.1017c-.04056.0599-.08077.1201-.12061.1805-4.7469 3.1299-7.87939 8.5094-7.87939 14.6206 0 9.665 7.83502 17.5 17.5 17.5 6.1112 0 11.4907-3.1325 14.6206-7.8794.0603-.0398.1204-.0799.1802-.1204z"/><g opacity=".5"><path d="m40.0003 21.5c0 6.1112-3.1325 11.4907-7.8794 14.6206 1.8201-2.7604 2.8794-6.0668 2.8794-9.6206 0-9.665-7.835-17.5-17.5-17.5-3.5538 0-6.8602 1.0593-9.6206 2.8794 3.1299-4.74691 8.5094-7.8794 14.6206-7.8794 9.665 0 17.5 7.835 17.5 17.5z"/><path d="m32.0003 36.1994c.0403-.0261.0805-.0524.1206-.0788-.0398.0604-.08.1206-.1206.1805z"/><path d="m7.80088 12c.02611-.0403.05238-.0805.07882-.1206-.06043.0398-.12059.08-.18048.1206z"/></g></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m32.3008 36h-.1015c-.0261.0402-.0523.0804-.0787.1204-2.7604 1.8201-6.0668 2.8794-9.6206 2.8794-9.665 0-17.5-7.835-17.5-17.5 0-3.5538 1.05931-6.8602 2.87939-9.6206.04009-.0264.08029-.0527.12061-.0788v-.1017c-.04056.0599-.08077.1201-.12061.1805-4.7469 3.1299-7.87939 8.5094-7.87939 14.6206 0 9.665 7.83502 17.5 17.5 17.5 6.1112 0 11.4907-3.1325 14.6206-7.8794.0603-.0398.1204-.0799.1802-.1204z"/><g opacity=".5"><path d="m40.0003 21.5c0 6.1112-3.1325 11.4907-7.8794 14.6206 1.8201-2.7604 2.8794-6.0668 2.8794-9.6206 0-9.665-7.835-17.5-17.5-17.5-3.5538 0-6.8602 1.0593-9.6206 2.8794 3.1299-4.74691 8.5094-7.8794 14.6206-7.8794 9.665 0 17.5 7.835 17.5 17.5z"/><path d="m32.0003 36.1994c.0403-.0261.0805-.0524.1206-.0788-.0398.0604-.08.1206-.1206.1805z"/><path d="m7.80088 12c.02611-.0403.05238-.0805.07882-.1206-.06043.0398-.12059.08-.18048.1206z"/></g></g></svg>`
+  },
+  {
+    id: "luminous",
+    name: "Luminous",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 42 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m14.1061 19.6565c5.499-2.6299 9.8025-7.0929 12.2731-12.67168-1.5939-1.67362-3.666-2.86907-5.8975-3.58634l-1.1954-.39848c-.0797.15939-.1594.39849-.1594.55788-1.9127 5.41936-5.8178 9.80262-11.07766 12.27322-3.66599 1.7533-6.37564 4.9412-7.650763 8.7666l-.398477 1.1955c.159391.0797.39848.1593.557871.1593 1.514209.5579 3.028419 1.2752 4.462939 2.1519 1.99238-3.5864 5.18019-6.6148 9.08529-8.4479z"/><path d="m37.2173 19.9753c-2.9487 4.463-7.0132 8.0494-12.034 10.4403-4.0645 1.9127-7.1726 5.499-8.6071 9.8026l-.3985 1.3549c1.5142 1.3548 3.3472 2.3909 5.3396 3.0284l1.1955.3985c.0796-.1594.1593-.3985.1593-.5579 1.9127-5.4193 5.8178-9.8026 11.0777-12.2732 3.666-1.7533 6.4553-4.9412 7.6507-8.7666l.3985-1.1954c-1.6736-.4782-3.2675-1.2752-4.7817-2.2316z" opacity=".6"/><path d="m12.9903 37.4284c1.9924-4.7818 5.6584-8.6869 10.3604-10.9184 4.3035-2.0721 7.8898-5.26 10.3604-9.1651-1.833-1.7533-3.3472-3.7458-4.463-6.1366-2.9487 5.4193-7.571 9.8026-13.2294 12.5123-3.2675 1.5142-5.8974 4.1442-7.49136 7.3321 1.75326 1.6736 3.18786 3.7457 4.30356 6.0569 0 0 .0797.1594.1594.3188z" opacity=".8"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 42 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m14.1061 19.6565c5.499-2.6299 9.8025-7.0929 12.2731-12.67168-1.5939-1.67362-3.666-2.86907-5.8975-3.58634l-1.1954-.39848c-.0797.15939-.1594.39849-.1594.55788-1.9127 5.41936-5.8178 9.80262-11.07766 12.27322-3.66599 1.7533-6.37564 4.9412-7.650763 8.7666l-.398477 1.1955c.159391.0797.39848.1593.557871.1593 1.514209.5579 3.028419 1.2752 4.462939 2.1519 1.99238-3.5864 5.18019-6.6148 9.08529-8.4479z"/><path d="m37.2173 19.9753c-2.9487 4.463-7.0132 8.0494-12.034 10.4403-4.0645 1.9127-7.1726 5.499-8.6071 9.8026l-.3985 1.3549c1.5142 1.3548 3.3472 2.3909 5.3396 3.0284l1.1955.3985c.0796-.1594.1593-.3985.1593-.5579 1.9127-5.4193 5.8178-9.8026 11.0777-12.2732 3.666-1.7533 6.4553-4.9412 7.6507-8.7666l.3985-1.1954c-1.6736-.4782-3.2675-1.2752-4.7817-2.2316z" opacity=".5"/><path d="m12.9903 37.4284c1.9924-4.7818 5.6584-8.6869 10.3604-10.9184 4.3035-2.0721 7.8898-5.26 10.3604-9.1651-1.833-1.7533-3.3472-3.7458-4.463-6.1366-2.9487 5.4193-7.571 9.8026-13.2294 12.5123-3.2675 1.5142-5.8974 4.1442-7.49136 7.3321 1.75326 1.6736 3.18786 3.7457 4.30356 6.0569 0 0 .0797.1594.1594.3188z" opacity=".7"/></g></svg>`
+  },
+  {
+    id: "pollinate",
+    name: "Pollinate",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 38 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m25.0008 24c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6 2.6863-6 6-6 6 2.6863 6 6z"/><path d="m25.0008 10c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6c0-3.31371 2.6863-6 6-6s6 2.68629 6 6z"/><path d="m37.125 31c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6 2.6863-6 6-6 6 2.6863 6 6z"/><path d="m37.127 17.0002c0 3.3137-2.6863 6-6 6-3.3138 0-6-2.6863-6-6s2.6862-6 6-6c3.3137 0 6 2.6863 6 6z"/><path d="m25.0008 38c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6 2.6863-6 6-6 6 2.6863 6 6z"/><path d="m12.877 17c0 3.3137-2.6863 6-6.00005 6-3.31371 0-5.999997-2.6863-5.999997-6s2.686287-6 5.999997-6c3.31375 0 6.00005 2.6863 6.00005 6z"/><path d="m12.875 30.9997c0 3.3137-2.6863 6-6 6-3.31371 0-6-2.6863-6-6s2.68629-6 6-6c3.3137 0 6 2.6863 6 6z"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 38 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m25.0008 24c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6 2.6863-6 6-6 6 2.6863 6 6z"/><path d="m25.0008 10c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6c0-3.31371 2.6863-6 6-6s6 2.68629 6 6z"/><path d="m37.125 31c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6 2.6863-6 6-6 6 2.6863 6 6z"/><path d="m37.127 17.0002c0 3.3137-2.6863 6-6 6-3.3138 0-6-2.6863-6-6s2.6862-6 6-6c3.3137 0 6 2.6863 6 6z"/><path d="m25.0008 38c0 3.3137-2.6863 6-6 6s-6-2.6863-6-6 2.6863-6 6-6 6 2.6863 6 6z"/><path d="m12.877 17c0 3.3137-2.6863 6-6.00005 6-3.31371 0-5.999997-2.6863-5.999997-6s2.686287-6 5.999997-6c3.31375 0 6.00005 2.6863 6.00005 6z"/><path d="m12.875 30.9997c0 3.3137-2.6863 6-6 6-3.31371 0-6-2.6863-6-6s2.68629-6 6-6c3.3137 0 6 2.6863 6 6z"/></g></svg>`
+  },
+  {
+    id: "polymath",
+    name: "Polymath",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 38 48" width="100%" xmlns="http://www.w3.org/2000/svg"><circle cx="19" cy="24" r="16" stroke="#155eef" stroke-width="6"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 38 48" width="100%" xmlns="http://www.w3.org/2000/svg"><circle cx="19" cy="24" r="16" stroke="#fff" stroke-width="6"/></svg>`
+  },
+  {
+    id: "prometheus",
+    name: "Prometheus",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m10.4993 16.5h-7.29875c-1.76731 0-3.20055 1.4327-3.20055 3.2v2.8h11c2.7614 0 5-2.2386 5-5s2.2386-5 5-5h19c2.2091 0 4-1.7909 4-4v-3h-22.5c-3.0376 0-5.5 2.46243-5.5 5.5 0 3.0376-2.4631 5.5-5.5007 5.5z"/><path d="m10.4993 26.5h-7.29875c-1.76731 0-3.20055 1.4327-3.20055 3.2v2.8h11c2.7614 0 5-2.2386 5-5s2.2386-5 5-5h13c2.2091 0 4-1.7909 4-4v-3h-16.5c-3.0376 0-5.5 2.4624-5.5 5.5s-2.4631 5.5-5.5007 5.5z" opacity=".7"/><path d="m10.4993 36.5h-7.29875c-1.76731 0-3.20055 1.4327-3.20055 3.2v2.8h11c2.7614 0 5-2.2386 5-5s2.2386-5 5-5h7.8c1.7673 0 3.2-1.4327 3.2-3.2v-3.8h-10.5c-3.0376 0-5.5 2.4624-5.5 5.5s-2.4631 5.5-5.5007 5.5z" opacity=".5"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m10.4993 16.5h-7.29875c-1.76731 0-3.20055 1.4327-3.20055 3.2v2.8h11c2.7614 0 5-2.2386 5-5s2.2386-5 5-5h19c2.2091 0 4-1.7909 4-4v-3h-22.5c-3.0376 0-5.5 2.46243-5.5 5.5 0 3.0376-2.4631 5.5-5.5007 5.5z"/><path d="m10.4993 26.5h-7.29875c-1.76731 0-3.20055 1.4327-3.20055 3.2v2.8h11c2.7614 0 5-2.2386 5-5s2.2386-5 5-5h13c2.2091 0 4-1.7909 4-4v-3h-16.5c-3.0376 0-5.5 2.4624-5.5 5.5s-2.4631 5.5-5.5007 5.5z" opacity=".75"/><path d="m10.4993 36.5h-7.29875c-1.76731 0-3.20055 1.4327-3.20055 3.2v2.8h11c2.7614 0 5-2.2386 5-5s2.2386-5 5-5h7.8c1.7673 0 3.2-1.4327 3.2-3.2v-3.8h-10.5c-3.0376 0-5.5 2.4624-5.5 5.5s-2.4631 5.5-5.5007 5.5z" opacity=".5"/></g></svg>`
+  },
+  {
+    id: "quantum",
+    name: "Quantum",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 39 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m9 23c0-5.5228 4.4772-10 10-10 5.5229 0 10 4.4772 10 10h9c0-10.4934-8.5066-19-19-19-10.49341 0-18.99999908 8.5066-19 19s8.50659 19 19 19v-9c-5.5228 0-10-4.4771-10-10z"/><path d="m29 23c0 5.5228 4.4772 10 10 10v9c-10.4934 0-19-8.5066-19-19z" opacity=".5"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 39 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m9 23c0-5.5228 4.4772-10 10-10 5.5229 0 10 4.4772 10 10h9c0-10.4934-8.5066-19-19-19-10.49341 0-18.99999908 8.5066-19 19s8.50659 19 19 19v-9c-5.5228 0-10-4.4771-10-10z"/><path d="m29 23c0 5.5228 4.4772 10 10 10v9c-10.4934 0-19-8.5066-19-19z" opacity=".5"/></g></svg>`
+  },
+  {
+    id: "quartz-ai",
+    name: "QuartzAI",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m17.6264 6.5h14.8017l11.4661 18.6661-15.7786 15.9489-22.68835-4.0459-5.157719-19.2098zm.5273 4.9692-6.816 15.105 6.4504 5.3411 8.8246-3.7975zm12.3276 15.3 9.2139-2.7073-7.1983-11.7184zm-.6163-17.2692h-9.3468l7.3309 14.4284zm6.9795 18.5263-6.779 1.9919-.5448 5.4109zm-10.5005 9.008.5824-5.7856-6.0573 2.6067zm-6.8394-.5022-10.91261-1.9459 1.64741-5.0264 6.438 5.3308zm-11.69782-9.1824-2.7037-3.0571 1.66868 6.215zm-3.53432-8.5248 4.81433 5.4437 5.50351-12.1963z" fill="#155eef" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 44 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m17.6264 6.5h14.8017l11.4661 18.6661-15.7786 15.9489-22.68835-4.0459-5.157719-19.2098zm.5273 4.9692-6.816 15.105 6.4504 5.3411 8.8246-3.7975zm12.3276 15.3 9.2139-2.7073-7.1983-11.7184zm-.6163-17.2692h-9.3468l7.3309 14.4284zm6.9795 18.5263-6.779 1.9919-.5448 5.4109zm-10.5005 9.008.5824-5.7856-6.0573 2.6067zm-6.8394-.5022-10.91261-1.9459 1.64741-5.0264 6.438 5.3308zm-11.69782-9.1824-2.7037-3.0571 1.66868 6.215zm-3.53432-8.5248 4.81433 5.4437 5.50351-12.1963z" fill="#fff" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "radius",
+    name: "Radius",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill="#155eef" fill-rule="evenodd"><path d="m18.5 19v-15h3v15z"/><path d="m18.5 44v-15h3v15z"/><path d="m22.4754 19.404 10.6066-10.60664 2.1214 2.12134-8.4853 8.4853z"/><path d="m4.79776 37.0816 10.60664-10.6066 2.1213 2.1214-10.60662 10.6066z"/><path d="m26.7178 28.5963 8.4853 8.4852-2.1213 2.1214-10.6066-10.6066z"/><path d="m6.91885 8.79727 10.60665 10.60663-2.1214 2.1213-10.60657-10.6066z"/><path d="m18.5 22.5h21.5v3h-21.5z"/><path d="m.00000026 22.5h14.99999974v3h-15z"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g clip-rule="evenodd" fill="#155eef" fill-rule="evenodd"><path d="m18.5 19v-15h3v15z"/><path d="m18.5 44v-15h3v15z"/><path d="m22.4754 19.404 10.6066-10.60664 2.1214 2.12134-8.4853 8.4853z"/><path d="m4.79776 37.0816 10.60664-10.6066 2.1213 2.1214-10.60662 10.6066z"/><path d="m26.7178 28.5963 8.4853 8.4852-2.1213 2.1214-10.6066-10.6066z"/><path d="m6.91885 8.79727 10.60665 10.60663-2.1214 2.1213-10.60657-10.6066z"/><path d="m18.5 22.5h21.5v3h-21.5z"/><path d="m.00000026 22.5h14.99999974v3h-15z"/></g></svg>`
+  },
+  {
+    id: "railspeed",
+    name: "Railspeed",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 36 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m0 7.5h28.8c2.5202 0 3.7804 0 4.743.49047.8467.43143 1.5351 1.11984 1.9665 1.96657.4905.96256.4905 2.22276.4905 4.74296v1.8h-28.8c-2.52024 0-3.78035 0-4.74296-.4905-.84673-.4314-1.535139-1.1198-1.966569-1.9665-.490471-.9626-.490471-2.2228-.490471-4.743z"/><path d="m0 28.5h28.8c2.5202 0 3.7804 0 4.743-.4905.8467-.4314 1.5351-1.1198 1.9665-1.9665.4905-.9626.4905-2.2228.4905-4.743v-1.8h-28.8c-2.52024 0-3.78035 0-4.74296.4905-.84673.4314-1.535139 1.1198-1.966569 1.9665-.490471.9626-.490471 2.2228-.490471 4.743z"/><path d="m14 31.5h14.8c2.5202 0 3.7804 0 4.743.4905.8467.4314 1.5351 1.1198 1.9665 1.9665.4905.9626.4905 2.2228.4905 4.743v1.8h-14.8c-2.5202 0-3.7804 0-4.743-.4905-.8467-.4314-1.5351-1.1198-1.9665-1.9665-.4905-.9626-.4905-2.2228-.4905-4.743z"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 36 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m0 7.5h28.8c2.5202 0 3.7804 0 4.743.49047.8467.43143 1.5351 1.11984 1.9665 1.96657.4905.96256.4905 2.22276.4905 4.74296v1.8h-28.8c-2.52024 0-3.78035 0-4.74296-.4905-.84673-.4314-1.535139-1.1198-1.966569-1.9665-.490471-.9626-.490471-2.2228-.490471-4.743z"/><path d="m0 28.5h28.8c2.5202 0 3.7804 0 4.743-.4905.8467-.4314 1.5351-1.1198 1.9665-1.9665.4905-.9626.4905-2.2228.4905-4.743v-1.8h-28.8c-2.52024 0-3.78035 0-4.74296.4905-.84673.4314-1.535139 1.1198-1.966569 1.9665-.490471.9626-.490471 2.2228-.490471 4.743z"/><path d="m14 31.5h14.8c2.5202 0 3.7804 0 4.743.4905.8467.4314 1.5351 1.1198 1.9665 1.9665.4905.9626.4905 2.2228.4905 4.743v1.8h-14.8c-2.5202 0-3.7804 0-4.743-.4905-.8467-.4314-1.5351-1.1198-1.9665-1.9665-.4905-.9626-.4905-2.2228-.4905-4.743z"/></g></svg>`
+  },
+  {
+    id: "refractional",
+    name: "Refractional",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 48 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m48 11h-17.0775c-1.2151 0-2.3644.5524-3.1235 1.5012l-1.598 1.9976c-.7591.9488-1.9084 1.5012-3.1235 1.5012h-15.0775l-4 5h17.0775c1.2151 0 2.3644-.5524 3.1235-1.5012l1.598-1.9976c.7591-.9488 1.9084-1.5012 3.1235-1.5012h15.0775z" fill="#444ce7"/><path d="m46 19h-17.0775c-1.2151 0-2.3644.5524-3.1235 1.5012l-1.598 1.9976c-.7591.9488-1.9084 1.5012-3.1235 1.5012h-15.0775l-4 5h17.0775c1.2151 0 2.3644-.5524 3.1235-1.5012l1.598-1.9976c.7591-.9488 1.9084-1.5012 3.1235-1.5012h15.0775z" fill="#155eef"/><path d="m44 27h-17.0775c-1.2151 0-2.3644.5524-3.1235 1.5012l-1.598 1.9976c-.7591.9488-1.9084 1.5012-3.1235 1.5012h-15.0775l-4 5h17.0775c1.2151 0 2.3644-.5524 3.1235-1.5012l1.598-1.9976c.7591-.9488 1.9084-1.5012 3.1235-1.5012h15.0775z" fill="#8098f9"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 48 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#fff"><path d="m48 11h-17.0775c-1.2151 0-2.3644.5524-3.1235 1.5012l-1.598 1.9976c-.7591.9488-1.9084 1.5012-3.1235 1.5012h-15.0775l-4 5h17.0775c1.2151 0 2.3644-.5524 3.1235-1.5012l1.598-1.9976c.7591-.9488 1.9084-1.5012 3.1235-1.5012h15.0775z"/><path d="m46 19h-17.0775c-1.2151 0-2.3644.5524-3.1235 1.5012l-1.598 1.9976c-.7591.9488-1.9084 1.5012-3.1235 1.5012h-15.0775l-4 5h17.0775c1.2151 0 2.3644-.5524 3.1235-1.5012l1.598-1.9976c.7591-.9488 1.9084-1.5012 3.1235-1.5012h15.0775z"/><path d="m44 27h-17.0775c-1.2151 0-2.3644.5524-3.1235 1.5012l-1.598 1.9976c-.7591.9488-1.9084 1.5012-3.1235 1.5012h-15.0775l-4 5h17.0775c1.2151 0 2.3644-.5524 3.1235-1.5012l1.598-1.9976c.7591-.9488 1.9084-1.5012 3.1235-1.5012h15.0775z"/></g></svg>`
+  },
+  {
+    id: "renaissance",
+    name: "Renaissance",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 35 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m12.7018 5c1.841 0 3.4172 1.31967 3.7408 3.13199l.4648 2.60271c.3236 1.8123 1.8998 3.132 3.7408 3.132h3.1518c4.8969 0 8.8667 3.9697 8.8667 8.8666 0 2.9333-1.4244 5.5339-3.6191 7.1479.92.3126 1.6466.809 2.1799 1.461.549.7191.9411 1.7411 1.1764 3.028.0392.3406.0883.6718.1373 1.003s.098.6624.1372 1.003c.0408.3538.0709.6566.096.9083.0232.233.042.4223.0609.5679.0784 1.0598.1961 1.9303.3529 2.5738.1655.9048.4994 1.7867.9727 2.5738h-6.6982c-.3137-.6056-.5098-1.3248-.6666-2.1196-.1349-.6836-.2408-1.5352-.3676-2.5548-.0207-.1659-.0418-.3362-.0638-.5111l-.2353-1.7411c-.1961-1.3247-.4314-2.271-.6667-2.8766-.2745-.5677-.7058-.9841-1.2941-1.2112-.6274-.2271-1.5686-.3856-2.9019-.3856h-.3018c-1.841 0-3.4172-1.3197-3.7408-3.132l-.4648-2.6027c-.3236-1.8123-1.8998-3.132-3.7408-3.132h-5.68517v10.1334h-6.33333v-27.8667zm13.6315 17.7333c0 1.3992-1.1342 2.5334-2.5333 2.5334h-3.1518c-1.841 0-3.4172-1.3197-3.7408-3.132l-.4648-2.6027c-.3236-1.8123-1.8998-3.132-3.7408-3.132h-5.36847v-5.0667h5.68517c1.841 0 3.4172 1.3197 3.7408 3.132l.4647 2.6027c.3237 1.8123 1.8999 3.132 3.7409 3.132h2.8351c1.3991 0 2.5333 1.1342 2.5333 2.5333z" fill="#1849a9" fill-rule="evenodd"/></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 35 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path clip-rule="evenodd" d="m12.7018 5c1.841 0 3.4172 1.31967 3.7408 3.13199l.4648 2.60271c.3236 1.8123 1.8998 3.132 3.7408 3.132h3.1518c4.8969 0 8.8667 3.9697 8.8667 8.8666 0 2.9333-1.4244 5.5339-3.6191 7.1479.92.3126 1.6466.809 2.1799 1.461.549.7191.9411 1.7411 1.1764 3.028.0392.3406.0883.6718.1373 1.003s.098.6624.1372 1.003c.0408.3538.0709.6566.096.9083.0232.233.042.4223.0609.5679.0784 1.0598.1961 1.9303.3529 2.5738.1655.9048.4994 1.7867.9727 2.5738h-6.6982c-.3137-.6056-.5098-1.3247-.6666-2.1196-.1349-.6836-.2408-1.5352-.3676-2.5548-.0207-.1659-.0418-.3362-.0638-.5111l-.2353-1.7411c-.1961-1.3247-.4314-2.271-.6667-2.8766-.2745-.5677-.7058-.9841-1.2941-1.2112-.6274-.2271-1.5686-.3856-2.9019-.3856h-.3018c-1.841 0-3.4172-1.3197-3.7408-3.132l-.4648-2.6027c-.3236-1.8123-1.8998-3.132-3.7408-3.132h-5.68517v10.1334h-6.33333v-27.8667zm13.6315 17.7333c0 1.3992-1.1342 2.5334-2.5333 2.5334h-3.1518c-1.841 0-3.4172-1.3197-3.7408-3.132l-.4648-2.6027c-.3236-1.8123-1.8998-3.132-3.7408-3.132h-5.36847v-5.0667h5.68517c1.841 0 3.4172 1.3197 3.7408 3.132l.4647 2.6027c.3237 1.8123 1.8999 3.132 3.7409 3.132h2.8351c1.3991 0 2.5333 1.1342 2.5333 2.5333z" fill="#fff" fill-rule="evenodd"/></svg>`
+  },
+  {
+    id: "sisyphus",
+    name: "Sisyphus",
+    lightSvg: `<svg fill="none" height="100%" viewBox="0 0 32 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m.599609 19.2002h9.59998v9.59999h-9.59998z"/><path d="m31.4004 28.7998h9.6v9.59999h-9.6z" transform="matrix(-1 0 -0 -1 62.8008 57.5996)"/><path d="m10.1992 19.2001 11.6-9.6v9.6l-11.6 9.6z" opacity=".2"/><path d="m21.7988 28.7999-11.6 9.6v-9.6l11.6-9.6z" opacity=".5"/><path d="m.599609 19.2 21.199991-19.2v9.59999l-11.6 9.60001z" opacity=".6"/><path d="m31.4004 28.8-21.2 19.2v-9.6l11.6-9.6z" opacity=".7"/></g></svg>`,
+    darkSvg: `<svg fill="none" height="100%" viewBox="0 0 32 48" width="100%" xmlns="http://www.w3.org/2000/svg"><g fill="#155eef"><path d="m.599609 19.2002h9.59998v9.59999h-9.59998z"/><path d="m31.4004 28.7998h9.6v9.59999h-9.6z" transform="matrix(-1 0 -0 -1 62.8008 57.5996)"/><path d="m10.1992 19.2001 11.6-9.6v9.6l-11.6 9.6z" opacity=".2"/><path d="m21.7988 28.7999-11.6 9.6v-9.6l11.6-9.6z" opacity=".5"/><path d="m.599609 19.2 21.199991-19.2v9.59999l-11.6 9.60001z" opacity=".6"/><path d="m31.4004 28.8-21.2 19.2v-9.6l11.6-9.6z" opacity=".7"/></g></svg>`
+  },
+  {
+    id: "solaris-energy",
+    name: "Solaris Energy",
+    lightSvg: `<svg width="100%" height="100%" viewBox="0 0 40 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 4V16.3604C20 19.087 16.6569 20.3998 14.8016 18.4017L7 10M40 24H27.6396C24.913 24 23.6002 20.6569 25.5983 18.8016L34 11M20 44V31.6396C20 28.913 23.3431 27.6002 25.1984 29.5983L33 38M0 24L12.3604 24C15.087 24 16.3998 27.3431 14.4017 29.1984L6 37" stroke="#175CD3" stroke-width="4"/></svg>`,
+    darkSvg: `<svg width="100%" height="100%" viewBox="0 0 40 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 4V16.3604C20 19.087 16.6569 20.3998 14.8016 18.4017L7 10M40 24H27.6396C24.913 24 23.6002 20.6569 25.5983 18.8016L34 11M20 44V31.6396C20 28.913 23.3431 27.6002 25.1984 29.5983L33 38M0 24L12.3604 24C15.087 24 16.3998 27.3431 14.4017 29.1984L6 37" stroke="white" stroke-width="4"/></svg>`
+  }
+];
+
+// features/platform/property/lib/store-logo.ts
+var DEFAULT_STORE_LOGO_ICON = LOGO_ICONS.find((icon) => icon.id === "galileo").lightSvg;
+var DEFAULT_STORE_LOGO_GOLD_ICON = DEFAULT_STORE_LOGO_ICON.replace("#6172f3", "#d4af37").replace("#444ce7", "#c9a24a");
+var DEFAULT_LIBRARY_LOGO_COLOR = "159";
+var DEFAULT_STORE_LOGO_COLOR = "0";
+function normalizeStoreLogoColor(value) {
+  const numeric = Number.parseFloat(String(value ?? DEFAULT_STORE_LOGO_COLOR));
+  if (!Number.isFinite(numeric)) return DEFAULT_STORE_LOGO_COLOR;
+  return String((numeric % 360 + 360) % 360);
+}
+
+// features/keystone/utils/storeLogo.ts
+var ALLOWED_ELEMENTS = /* @__PURE__ */ new Set([
+  "svg",
+  "g",
+  "path",
+  "defs",
+  "lineargradient",
+  "radialgradient",
+  "stop",
+  "clippath",
+  "rect",
+  "circle",
+  "ellipse",
+  "line",
+  "polyline",
+  "polygon",
+  "title",
+  "desc"
+]);
+var ALLOWED_ATTRIBUTES = /* @__PURE__ */ new Set([
+  "xmlns",
+  "fill",
+  "fill-rule",
+  "clip-rule",
+  "height",
+  "width",
+  "viewbox",
+  "d",
+  "clip-path",
+  "id",
+  "x1",
+  "x2",
+  "y1",
+  "y2",
+  "gradientunits",
+  "gradienttransform",
+  "offset",
+  "stop-color",
+  "stop-opacity",
+  "opacity",
+  "cx",
+  "cy",
+  "r",
+  "rx",
+  "ry",
+  "x",
+  "y",
+  "transform",
+  "stroke",
+  "stroke-width",
+  "stroke-linecap",
+  "stroke-linejoin",
+  "points",
+  "role",
+  "aria-hidden",
+  "aria-label",
+  "preserveaspectratio"
+]);
+var ATTRIBUTE_PATTERN = /\s+([A-Za-z_:][\w:.-]*)\s*=\s*("[^"]*"|'[^']*')/g;
+var TAG_PATTERN = /<\/?\s*([A-Za-z][\w:-]*)([^<>]*)>/g;
+function sanitizeStoreLogoSvg(svg) {
+  const source = svg.trim();
+  if (!source.startsWith("<svg") || !source.endsWith("</svg>") || source.length > 1e5) {
+    return "";
+  }
+  if (/<!|<\?|\b(?:javascript|data|vbscript):|\bon[a-z]+\s*=|\b(?:href|src|style)\s*=/i.test(source)) {
+    return "";
+  }
+  let tagCount = 0;
+  let match;
+  TAG_PATTERN.lastIndex = 0;
+  while (match = TAG_PATTERN.exec(source)) {
+    tagCount += 1;
+    const element = match[1].toLowerCase();
+    if (!ALLOWED_ELEMENTS.has(element)) return "";
+    if (match[0].startsWith("</")) continue;
+    const attributes = match[2];
+    let consumed = "";
+    ATTRIBUTE_PATTERN.lastIndex = 0;
+    let attributeMatch;
+    while (attributeMatch = ATTRIBUTE_PATTERN.exec(attributes)) {
+      consumed += attributeMatch[0];
+      const attribute = attributeMatch[1].toLowerCase();
+      const value = attributeMatch[2].slice(1, -1);
+      if (!ALLOWED_ATTRIBUTES.has(attribute)) return "";
+      if (attribute === "id" && !/^[A-Za-z_][\w:.-]*$/.test(value)) return "";
+      if (/url\(/i.test(value) && !/^url\(#[A-Za-z_][\w:.-]*\)$/.test(value)) return "";
+    }
+    const remainder = attributes.replace(consumed, "").replace(/\//g, "").trim();
+    if (remainder) return "";
+  }
+  TAG_PATTERN.lastIndex = 0;
+  if (tagCount === 0 || source.replace(TAG_PATTERN, "").trim()) return "";
+  return source;
+}
+
+// features/keystone/models/HotelSettings.ts
 var HotelSettings = (0, import_core25.list)({
   isSingleton: true,
   graphql: {
@@ -8335,8 +8481,6 @@ var HotelSettings = (0, import_core25.list)({
     refundApprovalThresholdMinor: (0, import_fields27.integer)({ defaultValue: 0, validation: { isRequired: true, min: 0 } }),
     writeOffApprovalThresholdMinor: (0, import_fields27.integer)({ defaultValue: 0, validation: { isRequired: true, min: 0 } }),
     cashVarianceApprovalThresholdMinor: (0, import_fields27.integer)({ defaultValue: 0, validation: { isRequired: true, min: 0 } }),
-    prearrivalEmailEnabled: (0, import_fields27.checkbox)({ defaultValue: false }),
-    prearrivalDays: (0, import_fields27.integer)({ defaultValue: 1, validation: { isRequired: true, min: 1, max: 14 } }),
     loyaltyEnabled: (0, import_fields27.checkbox)({ defaultValue: false }),
     loyaltyEarnMinorPerPoint: (0, import_fields27.integer)({ defaultValue: 100, validation: { isRequired: true, min: 1, max: 1e6 } }),
     loyaltyRedeemMinorPerPoint: (0, import_fields27.integer)({ defaultValue: 1, validation: { isRequired: true, min: 1, max: 1e6 } }),
@@ -8360,22 +8504,50 @@ var HotelSettings = (0, import_core25.list)({
     locationImagePath: (0, import_fields27.text)(),
     locationImageAltText: (0, import_fields27.text)(),
     locationImageCaption: (0, import_fields27.text)(),
+    // Openfront store-logo contract. Empty keeps the existing accent mark, so the
+    // migration does not replace Alder's live branding with a donor default logo.
+    logoIcon: (0, import_fields27.text)({
+      ui: { description: "Sanitized SVG used by the storefront header, menu and footer" },
+      hooks: {
+        resolveInput: ({ resolvedData, fieldKey }) => {
+          const value = resolvedData[fieldKey];
+          if (value === void 0 || value === null || value === "") return value;
+          return typeof value === "string" ? sanitizeStoreLogoSvg(value) : "";
+        },
+        validate: ({ inputData, resolvedData, fieldKey, addValidationError }) => {
+          const submitted = inputData?.[fieldKey];
+          if (typeof submitted === "string" && submitted.trim() && !resolvedData?.[fieldKey]) {
+            addValidationError("Logo must be a valid, safe SVG document");
+          }
+        }
+      }
+    }),
+    logoColor: (0, import_fields27.text)({
+      defaultValue: DEFAULT_STORE_LOGO_COLOR,
+      ui: { description: "CSS hue rotation in degrees applied to the logo only" },
+      hooks: {
+        resolveInput: ({ resolvedData, fieldKey }) => {
+          const value = resolvedData[fieldKey];
+          return value === void 0 ? value : normalizeStoreLogoColor(value);
+        }
+      }
+    }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/PaymentEvent.ts
 var import_core26 = require("@keystone-6/core");
-var import_access30 = require("@keystone-6/core/access");
+var import_access32 = require("@keystone-6/core/access");
 var import_fields28 = require("@keystone-6/core/fields");
 init_access();
 var PaymentEvent = (0, import_core26.list)({
   access: {
     operation: {
       query: permissions.canManagePayments,
-      create: import_access30.denyAll,
-      update: import_access30.denyAll,
-      delete: import_access30.denyAll
+      create: import_access32.denyAll,
+      update: import_access32.denyAll,
+      delete: import_access32.denyAll
     }
   },
   ui: {
@@ -8620,206 +8792,68 @@ var HotelAuditEvent = (0, import_core29.list)({
   }
 });
 
-// features/keystone/models/HotelOutboxEvent.ts
+// features/keystone/models/HotelContactMessage.ts
 var import_core30 = require("@keystone-6/core");
+var import_access37 = require("@keystone-6/core/access");
 var import_fields32 = require("@keystone-6/core/fields");
 init_access();
-var HotelOutboxEvent = (0, import_core30.list)({
-  db: {
-    extendPrismaSchema: (model) => model.replace(
-      "\n}",
-      [
-        '\n  @@index([status, availableAt], map: "HotelOutboxEvent_dispatch_idx")',
-        '  @@index([aggregateType, aggregateId], map: "HotelOutboxEvent_aggregate_idx")',
-        '  @@index([propertyKey, status, availableAt], map: "HotelOutboxEvent_tenant_dispatch_idx")',
-        '  @@index([propertyKey, status, leaseExpiresAt], map: "HotelOutboxEvent_lease_idx")',
-        "}"
-      ].join("\n")
-    )
-  },
+var HotelContactMessage = (0, import_core30.list)({
   access: {
     operation: {
-      query: permissions.canManageAudit,
-      create: () => false,
-      update: () => false,
-      delete: () => false
+      query: permissions.canManageGuests,
+      create: import_access37.denyAll,
+      update: import_access37.denyAll,
+      delete: import_access37.denyAll
     }
   },
-  ui: {
-    hideCreate: true,
-    hideDelete: true,
-    listView: {
-      initialColumns: ["createdAt", "topic", "aggregateId", "status", "attempts", "availableAt"],
-      initialSort: { field: "createdAt", direction: "DESC" }
-    },
-    itemView: { defaultFieldMode: "read" }
-  },
+  ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: "read" }, listView: { initialColumns: ["receivedAt", "guestName", "subject"], initialSort: { field: "receivedAt", direction: "DESC" } } },
   fields: {
-    eventKey: (0, import_fields32.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    requestHash: (0, import_fields32.text)({ validation: { isRequired: true } }),
-    propertyKey: (0, import_fields32.text)({ validation: { isRequired: true } }),
-    topic: (0, import_fields32.text)({ validation: { isRequired: true } }),
-    aggregateType: (0, import_fields32.text)({ validation: { isRequired: true } }),
-    aggregateId: (0, import_fields32.text)({ validation: { isRequired: true } }),
-    payloadSnapshot: (0, import_fields32.json)({ defaultValue: {} }),
-    status: (0, import_fields32.select)({
-      type: "string",
-      validation: { isRequired: true },
-      defaultValue: "pending",
-      options: [
-        { label: "Pending", value: "pending" },
-        { label: "Processing", value: "processing" },
-        { label: "Delivered", value: "delivered" },
-        { label: "Failed", value: "failed" },
-        { label: "Dead letter", value: "dead_letter" }
-      ]
-    }),
-    attempts: (0, import_fields32.integer)({ validation: { isRequired: true, min: 0 }, defaultValue: 0 }),
-    availableAt: (0, import_fields32.timestamp)({ validation: { isRequired: true }, defaultValue: { kind: "now" } }),
-    deliveredAt: (0, import_fields32.timestamp)(),
-    lastError: (0, import_fields32.text)(),
-    leaseToken: (0, import_fields32.text)({ ui: { itemView: { fieldMode: "read" } } }),
-    leaseExpiresAt: (0, import_fields32.timestamp)({ ui: { itemView: { fieldMode: "read" } } }),
-    lastAttemptAt: (0, import_fields32.timestamp)({ ui: { itemView: { fieldMode: "read" } } }),
-    deadLetteredAt: (0, import_fields32.timestamp)({ ui: { itemView: { fieldMode: "read" } } }),
-    replayedFromEventKey: (0, import_fields32.text)({ ui: { itemView: { fieldMode: "read" } } }),
-    dispatchResultSnapshot: (0, import_fields32.json)({ defaultValue: {} }),
-    maxAttempts: (0, import_fields32.integer)({ validation: { isRequired: true, min: 1 }, defaultValue: 5 }),
-    attemptsEvidence: (0, import_fields32.relationship)({ ref: "HotelOutboxAttempt.outbox", many: true }),
-    ...trackingFields
-  }
-});
-
-// features/keystone/models/HotelOutboxAttempt.ts
-var import_core31 = require("@keystone-6/core");
-var import_access36 = require("@keystone-6/core/access");
-var import_fields33 = require("@keystone-6/core/fields");
-init_access();
-var HotelOutboxAttempt = (0, import_core31.list)({
-  db: {
-    extendPrismaSchema: (model) => model.replace(
-      "\n}",
-      [
-        '\n  @@unique([outboxId, attemptNumber], map: "HotelOutboxAttempt_outbox_attempt_key")',
-        '  @@index([propertyKey, startedAt], map: "HotelOutboxAttempt_tenant_idx")',
-        "}"
-      ].join("\n")
-    )
-  },
-  access: {
-    operation: {
-      query: permissions.canManageAudit,
-      create: import_access36.denyAll,
-      update: import_access36.denyAll,
-      delete: import_access36.denyAll
-    }
-  },
-  ui: {
-    hideCreate: true,
-    hideDelete: true,
-    itemView: { defaultFieldMode: "read" },
-    listView: { initialColumns: ["startedAt", "outbox", "attemptNumber", "status", "workerId"] }
-  },
-  fields: {
-    outbox: (0, import_fields33.relationship)({ ref: "HotelOutboxEvent.attemptsEvidence", db: requiredRelationshipDb }),
-    propertyKey: (0, import_fields33.text)({ validation: { isRequired: true } }),
-    attemptNumber: (0, import_fields33.integer)({ validation: { isRequired: true, min: 1 } }),
-    workerId: (0, import_fields33.text)({ validation: { isRequired: true } }),
-    status: (0, import_fields33.select)({
-      type: "string",
-      validation: { isRequired: true },
-      options: [
-        { label: "Succeeded", value: "succeeded" },
-        { label: "Failed", value: "failed" }
-      ]
-    }),
-    errorMessage: (0, import_fields33.text)(),
-    responseSnapshot: (0, import_fields33.json)({ defaultValue: {} }),
-    startedAt: (0, import_fields33.timestamp)({ validation: { isRequired: true } }),
-    finishedAt: (0, import_fields33.timestamp)(),
-    ...trackingFields
-  }
-});
-
-// features/keystone/models/HotelOutboxReceipt.ts
-var import_core32 = require("@keystone-6/core");
-var import_access38 = require("@keystone-6/core/access");
-var import_fields34 = require("@keystone-6/core/fields");
-init_access();
-var HotelOutboxReceipt = (0, import_core32.list)({
-  db: {
-    extendPrismaSchema: (model) => model.replace(
-      "\n}",
-      [
-        '\n  @@index([propertyKey, receivedAt], map: "HotelOutboxReceipt_tenant_idx")',
-        '  @@index([topic, receivedAt], map: "HotelOutboxReceipt_topic_idx")',
-        "}"
-      ].join("\n")
-    )
-  },
-  access: {
-    operation: {
-      query: permissions.canManageAudit,
-      create: import_access38.denyAll,
-      update: import_access38.denyAll,
-      delete: import_access38.denyAll
-    }
-  },
-  ui: {
-    hideCreate: true,
-    hideDelete: true,
-    itemView: { defaultFieldMode: "read" },
-    listView: { initialColumns: ["receivedAt", "eventKey", "topic", "credentialKeyId"] }
-  },
-  fields: {
-    eventKey: (0, import_fields34.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    propertyKey: (0, import_fields34.text)({ validation: { isRequired: true } }),
-    topic: (0, import_fields34.text)({ validation: { isRequired: true } }),
-    aggregateType: (0, import_fields34.text)({ validation: { isRequired: true } }),
-    aggregateId: (0, import_fields34.text)({ validation: { isRequired: true } }),
-    credentialKeyId: (0, import_fields34.text)({ validation: { isRequired: true } }),
-    bodyHash: (0, import_fields34.text)({ validation: { isRequired: true } }),
-    payloadSnapshot: (0, import_fields34.json)({ defaultValue: {} }),
-    receivedAt: (0, import_fields34.timestamp)({ validation: { isRequired: true } }),
+    reference: (0, import_fields32.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    guestName: (0, import_fields32.text)({ validation: { isRequired: true } }),
+    replyTo: (0, import_fields32.text)({ validation: { isRequired: true } }),
+    phone: (0, import_fields32.text)({ defaultValue: "" }),
+    subject: (0, import_fields32.text)({ validation: { isRequired: true } }),
+    message: (0, import_fields32.text)({ validation: { isRequired: true }, ui: { displayMode: "textarea" } }),
+    receivedAt: (0, import_fields32.timestamp)({ validation: { isRequired: true }, defaultValue: { kind: "now" } }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/HotelBusinessDate.ts
-var import_core33 = require("@keystone-6/core");
-var import_access40 = require("@keystone-6/core/access");
-var import_fields35 = require("@keystone-6/core/fields");
+var import_core31 = require("@keystone-6/core");
+var import_access39 = require("@keystone-6/core/access");
+var import_fields33 = require("@keystone-6/core/fields");
 init_access();
-var HotelBusinessDate = (0, import_core33.list)({
+var HotelBusinessDate = (0, import_core31.list)({
   isSingleton: true,
   access: {
     operation: {
       query: permissions.canManagePayments,
-      create: import_access40.denyAll,
-      update: import_access40.denyAll,
-      delete: import_access40.denyAll
+      create: import_access39.denyAll,
+      update: import_access39.denyAll,
+      delete: import_access39.denyAll
     }
   },
   ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: "read" } },
   fields: {
-    propertyKey: (0, import_fields35.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    currentBusinessDate: (0, import_fields35.timestamp)({ validation: { isRequired: true } }),
+    propertyKey: (0, import_fields33.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    currentBusinessDate: (0, import_fields33.timestamp)({ validation: { isRequired: true } }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/NightAuditRun.ts
-var import_core34 = require("@keystone-6/core");
-var import_access42 = require("@keystone-6/core/access");
-var import_fields36 = require("@keystone-6/core/fields");
+var import_core32 = require("@keystone-6/core");
+var import_access41 = require("@keystone-6/core/access");
+var import_fields34 = require("@keystone-6/core/fields");
 init_access();
-var NightAuditRun = (0, import_core34.list)({
+var NightAuditRun = (0, import_core32.list)({
   access: {
     operation: {
       query: permissions.canManagePayments,
-      create: import_access42.denyAll,
-      update: import_access42.denyAll,
-      delete: import_access42.denyAll
+      create: import_access41.denyAll,
+      update: import_access41.denyAll,
+      delete: import_access41.denyAll
     }
   },
   ui: {
@@ -8829,11 +8863,11 @@ var NightAuditRun = (0, import_core34.list)({
     listView: { initialColumns: ["businessDate", "status", "dueBookingCount", "postedEntryCount", "completedAt"] }
   },
   fields: {
-    eventKey: (0, import_fields36.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    requestHash: (0, import_fields36.text)({ validation: { isRequired: true } }),
-    propertyKey: (0, import_fields36.text)({ validation: { isRequired: true } }),
-    businessDate: (0, import_fields36.timestamp)({ isIndexed: "unique", validation: { isRequired: true } }),
-    status: (0, import_fields36.select)({
+    eventKey: (0, import_fields34.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    requestHash: (0, import_fields34.text)({ validation: { isRequired: true } }),
+    propertyKey: (0, import_fields34.text)({ validation: { isRequired: true } }),
+    businessDate: (0, import_fields34.timestamp)({ isIndexed: "unique", validation: { isRequired: true } }),
+    status: (0, import_fields34.select)({
       type: "string",
       validation: { isRequired: true },
       options: [
@@ -8841,36 +8875,36 @@ var NightAuditRun = (0, import_core34.list)({
         { label: "Failed", value: "failed" }
       ]
     }),
-    dueBookingCount: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
-    postedEntryCount: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
-    existingEntryCount: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
-    exceptionCount: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
-    debitMinor: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
-    startedAt: (0, import_fields36.timestamp)({ validation: { isRequired: true } }),
-    completedAt: (0, import_fields36.timestamp)({ validation: { isRequired: true } }),
+    dueBookingCount: (0, import_fields34.integer)({ validation: { isRequired: true, min: 0 } }),
+    postedEntryCount: (0, import_fields34.integer)({ validation: { isRequired: true, min: 0 } }),
+    existingEntryCount: (0, import_fields34.integer)({ validation: { isRequired: true, min: 0 } }),
+    exceptionCount: (0, import_fields34.integer)({ validation: { isRequired: true, min: 0 } }),
+    debitMinor: (0, import_fields34.integer)({ validation: { isRequired: true, min: 0 } }),
+    startedAt: (0, import_fields34.timestamp)({ validation: { isRequired: true } }),
+    completedAt: (0, import_fields34.timestamp)({ validation: { isRequired: true } }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/GroupBlock.ts
-var import_core35 = require("@keystone-6/core");
-var import_access44 = require("@keystone-6/core/access");
-var import_fields37 = require("@keystone-6/core/fields");
+var import_core33 = require("@keystone-6/core");
+var import_access43 = require("@keystone-6/core/access");
+var import_fields35 = require("@keystone-6/core/fields");
 init_access();
-var GroupBlock = (0, import_core35.list)({
+var GroupBlock = (0, import_core33.list)({
   access: {
     operation: {
       query: permissions.canManageBookings,
-      create: import_access44.denyAll,
-      update: import_access44.denyAll,
-      delete: import_access44.denyAll
+      create: import_access43.denyAll,
+      update: import_access43.denyAll,
+      delete: import_access43.denyAll
     }
   },
   ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: "read" } },
   fields: {
-    blockCode: (0, import_fields37.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    name: (0, import_fields37.text)({ validation: { isRequired: true } }),
-    status: (0, import_fields37.select)({
+    blockCode: (0, import_fields35.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    name: (0, import_fields35.text)({ validation: { isRequired: true } }),
+    status: (0, import_fields35.select)({
       type: "string",
       validation: { isRequired: true },
       options: [
@@ -8880,12 +8914,12 @@ var GroupBlock = (0, import_core35.list)({
         { label: "Cancelled", value: "cancelled" }
       ]
     }),
-    arrivalDate: (0, import_fields37.timestamp)({ validation: { isRequired: true } }),
-    departureDate: (0, import_fields37.timestamp)({ validation: { isRequired: true } }),
-    releaseDate: (0, import_fields37.timestamp)(),
-    contactName: (0, import_fields37.text)({ validation: { isRequired: true } }),
-    contactEmail: (0, import_fields37.text)({ validation: { isRequired: true } }),
-    billingType: (0, import_fields37.select)({
+    arrivalDate: (0, import_fields35.timestamp)({ validation: { isRequired: true } }),
+    departureDate: (0, import_fields35.timestamp)({ validation: { isRequired: true } }),
+    releaseDate: (0, import_fields35.timestamp)(),
+    contactName: (0, import_fields35.text)({ validation: { isRequired: true } }),
+    contactEmail: (0, import_fields35.text)({ validation: { isRequired: true } }),
+    billingType: (0, import_fields35.select)({
       type: "string",
       validation: { isRequired: true },
       options: [
@@ -8894,47 +8928,47 @@ var GroupBlock = (0, import_core35.list)({
         { label: "Split", value: "split" }
       ]
     }),
-    allocations: (0, import_fields37.relationship)({ ref: "GroupBlockAllocation.groupBlock", many: true }),
-    bookings: (0, import_fields37.relationship)({ ref: "Booking.groupBlock", many: true }),
-    masterFolio: (0, import_fields37.relationship)({ ref: "Folio.groupBlock", ui: { displayMode: "select", labelField: "folioNumber" } }),
+    allocations: (0, import_fields35.relationship)({ ref: "GroupBlockAllocation.groupBlock", many: true }),
+    bookings: (0, import_fields35.relationship)({ ref: "Booking.groupBlock", many: true }),
+    masterFolio: (0, import_fields35.relationship)({ ref: "Folio.groupBlock", ui: { displayMode: "select", labelField: "folioNumber" } }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/GroupBlockAllocation.ts
-var import_core36 = require("@keystone-6/core");
-var import_access46 = require("@keystone-6/core/access");
-var import_fields38 = require("@keystone-6/core/fields");
+var import_core34 = require("@keystone-6/core");
+var import_access45 = require("@keystone-6/core/access");
+var import_fields36 = require("@keystone-6/core/fields");
 init_access();
-var GroupBlockAllocation = (0, import_core36.list)({
+var GroupBlockAllocation = (0, import_core34.list)({
   access: {
     operation: {
       query: permissions.canManageBookings,
-      create: import_access46.denyAll,
-      update: import_access46.denyAll,
-      delete: import_access46.denyAll
+      create: import_access45.denyAll,
+      update: import_access45.denyAll,
+      delete: import_access45.denyAll
     }
   },
   ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: "read" } },
   fields: {
-    allocationKey: (0, import_fields38.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    groupBlock: (0, import_fields38.relationship)({ ref: "GroupBlock.allocations", db: requiredRelationshipDb }),
-    roomType: (0, import_fields38.relationship)({ ref: "RoomType", db: requiredRelationshipDb }),
-    roomsHeld: (0, import_fields38.integer)({ validation: { isRequired: true, min: 1 } }),
-    roomsPickedUp: (0, import_fields38.integer)({ validation: { isRequired: true, min: 0 } }),
-    rateMinor: (0, import_fields38.integer)({ validation: { isRequired: true, min: 0 } }),
-    currencyCode: (0, import_fields38.text)({ validation: { isRequired: true } }),
-    bookings: (0, import_fields38.relationship)({ ref: "Booking.groupBlockAllocation", many: true }),
+    allocationKey: (0, import_fields36.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    groupBlock: (0, import_fields36.relationship)({ ref: "GroupBlock.allocations", db: requiredRelationshipDb }),
+    roomType: (0, import_fields36.relationship)({ ref: "RoomType", db: requiredRelationshipDb }),
+    roomsHeld: (0, import_fields36.integer)({ validation: { isRequired: true, min: 1 } }),
+    roomsPickedUp: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
+    rateMinor: (0, import_fields36.integer)({ validation: { isRequired: true, min: 0 } }),
+    currencyCode: (0, import_fields36.text)({ validation: { isRequired: true } }),
+    bookings: (0, import_fields36.relationship)({ ref: "Booking.groupBlockAllocation", many: true }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/RefundIntent.ts
-var import_core37 = require("@keystone-6/core");
-var import_access48 = require("@keystone-6/core/access");
-var import_fields39 = require("@keystone-6/core/fields");
+var import_core35 = require("@keystone-6/core");
+var import_access47 = require("@keystone-6/core/access");
+var import_fields37 = require("@keystone-6/core/fields");
 init_access();
-var RefundIntent = (0, import_core37.list)({
+var RefundIntent = (0, import_core35.list)({
   db: {
     extendPrismaSchema: (model) => model.replace(
       "\n}",
@@ -8949,9 +8983,9 @@ var RefundIntent = (0, import_core37.list)({
   access: {
     operation: {
       query: permissions.canManagePayments,
-      create: import_access48.denyAll,
-      update: import_access48.denyAll,
-      delete: import_access48.denyAll
+      create: import_access47.denyAll,
+      update: import_access47.denyAll,
+      delete: import_access47.denyAll
     }
   },
   ui: {
@@ -8961,18 +8995,18 @@ var RefundIntent = (0, import_core37.list)({
     listView: { initialColumns: ["createdAt", "booking", "amountMinor", "status", "attempts"] }
   },
   fields: {
-    intentKey: (0, import_fields39.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    requestHash: (0, import_fields39.text)({ validation: { isRequired: true } }),
-    cancellationEventKey: (0, import_fields39.text)({ validation: { isRequired: true } }),
-    propertyKey: (0, import_fields39.text)({ validation: { isRequired: true } }),
-    booking: (0, import_fields39.relationship)({ ref: "Booking.refundIntents", db: requiredRelationshipDb }),
-    sourcePayment: (0, import_fields39.relationship)({ ref: "BookingPayment.refundIntents", db: requiredRelationshipDb }),
-    paymentProvider: (0, import_fields39.relationship)({ ref: "PaymentProvider.refundIntents", db: requiredRelationshipDb }),
-    amountMinor: (0, import_fields39.integer)({ validation: { isRequired: true, min: 1 } }),
-    currencyCode: (0, import_fields39.text)({ validation: { isRequired: true } }),
-    reason: (0, import_fields39.text)({ validation: { isRequired: true } }),
-    actorId: (0, import_fields39.text)({ db: { isNullable: true } }),
-    status: (0, import_fields39.select)({
+    intentKey: (0, import_fields37.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    requestHash: (0, import_fields37.text)({ validation: { isRequired: true } }),
+    cancellationEventKey: (0, import_fields37.text)({ validation: { isRequired: true } }),
+    propertyKey: (0, import_fields37.text)({ validation: { isRequired: true } }),
+    booking: (0, import_fields37.relationship)({ ref: "Booking.refundIntents", db: requiredRelationshipDb }),
+    sourcePayment: (0, import_fields37.relationship)({ ref: "BookingPayment.refundIntents", db: requiredRelationshipDb }),
+    paymentProvider: (0, import_fields37.relationship)({ ref: "PaymentProvider.refundIntents", db: requiredRelationshipDb }),
+    amountMinor: (0, import_fields37.integer)({ validation: { isRequired: true, min: 1 } }),
+    currencyCode: (0, import_fields37.text)({ validation: { isRequired: true } }),
+    reason: (0, import_fields37.text)({ validation: { isRequired: true } }),
+    actorId: (0, import_fields37.text)({ db: { isNullable: true } }),
+    status: (0, import_fields37.select)({
       type: "string",
       validation: { isRequired: true },
       defaultValue: "pending",
@@ -8984,78 +9018,78 @@ var RefundIntent = (0, import_core37.list)({
         { label: "Dead letter", value: "dead_letter" }
       ]
     }),
-    attempts: (0, import_fields39.integer)({ validation: { isRequired: true, min: 0 }, defaultValue: 0 }),
-    maxAttempts: (0, import_fields39.integer)({ validation: { isRequired: true, min: 1 }, defaultValue: 8 }),
-    availableAt: (0, import_fields39.timestamp)({ validation: { isRequired: true }, defaultValue: { kind: "now" } }),
-    leaseToken: (0, import_fields39.text)(),
-    leaseExpiresAt: (0, import_fields39.timestamp)(),
-    lastAttemptAt: (0, import_fields39.timestamp)(),
-    completedAt: (0, import_fields39.timestamp)(),
-    deadLetteredAt: (0, import_fields39.timestamp)(),
-    providerRefundId: (0, import_fields39.text)({ isIndexed: "unique", db: { isNullable: true } }),
-    providerResultSnapshot: (0, import_fields39.json)({ defaultValue: {} }),
-    lastError: (0, import_fields39.text)(),
+    attempts: (0, import_fields37.integer)({ validation: { isRequired: true, min: 0 }, defaultValue: 0 }),
+    maxAttempts: (0, import_fields37.integer)({ validation: { isRequired: true, min: 1 }, defaultValue: 8 }),
+    availableAt: (0, import_fields37.timestamp)({ validation: { isRequired: true }, defaultValue: { kind: "now" } }),
+    leaseToken: (0, import_fields37.text)(),
+    leaseExpiresAt: (0, import_fields37.timestamp)(),
+    lastAttemptAt: (0, import_fields37.timestamp)(),
+    completedAt: (0, import_fields37.timestamp)(),
+    deadLetteredAt: (0, import_fields37.timestamp)(),
+    providerRefundId: (0, import_fields37.text)({ isIndexed: "unique", db: { isNullable: true } }),
+    providerResultSnapshot: (0, import_fields37.json)({ defaultValue: {} }),
+    lastError: (0, import_fields37.text)(),
     ...trackingFields
   }
 });
 
 // features/keystone/models/HotelSeedRecord.ts
-var import_core38 = require("@keystone-6/core");
-var import_access50 = require("@keystone-6/core/access");
-var import_fields40 = require("@keystone-6/core/fields");
+var import_core36 = require("@keystone-6/core");
+var import_access49 = require("@keystone-6/core/access");
+var import_fields38 = require("@keystone-6/core/fields");
 init_access();
-var HotelSeedRecord = (0, import_core38.list)({
+var HotelSeedRecord = (0, import_core36.list)({
   db: { extendPrismaSchema: (model) => model.replace("\n}", '\n  @@index([section, entityId], map: "HotelSeedRecord_entity_idx")\n}') },
   access: {
-    operation: { query: permissions.canManageOnboarding, create: import_access50.denyAll, update: import_access50.denyAll, delete: import_access50.denyAll }
+    operation: { query: permissions.canManageOnboarding, create: import_access49.denyAll, update: import_access49.denyAll, delete: import_access49.denyAll }
   },
   ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: "read" } },
   fields: {
-    seedKey: (0, import_fields40.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    section: (0, import_fields40.text)({ validation: { isRequired: true } }),
-    entityId: (0, import_fields40.text)({ validation: { isRequired: true } }),
-    contentHash: (0, import_fields40.text)({ validation: { isRequired: true } }),
-    seedVersion: (0, import_fields40.text)({ validation: { isRequired: true } }),
+    seedKey: (0, import_fields38.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    section: (0, import_fields38.text)({ validation: { isRequired: true } }),
+    entityId: (0, import_fields38.text)({ validation: { isRequired: true } }),
+    contentHash: (0, import_fields38.text)({ validation: { isRequired: true } }),
+    seedVersion: (0, import_fields38.text)({ validation: { isRequired: true } }),
     ...trackingFields
   }
 });
 
 // features/keystone/models/HotelAbuseBucket.ts
-var import_core39 = require("@keystone-6/core");
-var import_access52 = require("@keystone-6/core/access");
-var import_fields41 = require("@keystone-6/core/fields");
-var HotelAbuseBucket = (0, import_core39.list)({
+var import_core37 = require("@keystone-6/core");
+var import_access51 = require("@keystone-6/core/access");
+var import_fields39 = require("@keystone-6/core/fields");
+var HotelAbuseBucket = (0, import_core37.list)({
   db: { extendPrismaSchema: (model) => model.replace("\n}", '\n  @@index([expiresAt], map: "HotelAbuseBucket_expiry_idx")\n}') },
-  access: { operation: { query: import_access52.denyAll, create: import_access52.denyAll, update: import_access52.denyAll, delete: import_access52.denyAll } },
+  access: { operation: { query: import_access51.denyAll, create: import_access51.denyAll, update: import_access51.denyAll, delete: import_access51.denyAll } },
   ui: { isHidden: true, hideCreate: true, hideDelete: true },
   fields: {
-    bucketKey: (0, import_fields41.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    count: (0, import_fields41.integer)({ validation: { isRequired: true, min: 0 }, defaultValue: 0 }),
-    windowStartedAt: (0, import_fields41.timestamp)({ validation: { isRequired: true } }),
-    expiresAt: (0, import_fields41.timestamp)({ validation: { isRequired: true } })
+    bucketKey: (0, import_fields39.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    count: (0, import_fields39.integer)({ validation: { isRequired: true, min: 0 }, defaultValue: 0 }),
+    windowStartedAt: (0, import_fields39.timestamp)({ validation: { isRequired: true } }),
+    expiresAt: (0, import_fields39.timestamp)({ validation: { isRequired: true } })
   }
 });
 
 // features/keystone/models/HotelWorkerLease.ts
-var import_core40 = require("@keystone-6/core");
-var import_access53 = require("@keystone-6/core/access");
-var import_fields42 = require("@keystone-6/core/fields");
-var HotelWorkerLease = (0, import_core40.list)({
-  access: { operation: { query: import_access53.denyAll, create: import_access53.denyAll, update: import_access53.denyAll, delete: import_access53.denyAll } },
+var import_core38 = require("@keystone-6/core");
+var import_access52 = require("@keystone-6/core/access");
+var import_fields40 = require("@keystone-6/core/fields");
+var HotelWorkerLease = (0, import_core38.list)({
+  access: { operation: { query: import_access52.denyAll, create: import_access52.denyAll, update: import_access52.denyAll, delete: import_access52.denyAll } },
   ui: { isHidden: true, hideCreate: true, hideDelete: true },
   fields: {
-    leaseKey: (0, import_fields42.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    ownerId: (0, import_fields42.text)({ validation: { isRequired: true } }),
-    expiresAt: (0, import_fields42.timestamp)({ validation: { isRequired: true } }),
-    heartbeatAt: (0, import_fields42.timestamp)({ validation: { isRequired: true } })
+    leaseKey: (0, import_fields40.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    ownerId: (0, import_fields40.text)({ validation: { isRequired: true } }),
+    expiresAt: (0, import_fields40.timestamp)({ validation: { isRequired: true } }),
+    heartbeatAt: (0, import_fields40.timestamp)({ validation: { isRequired: true } })
   }
 });
 
 // features/keystone/models/BookingModificationRequest.ts
-var import_core41 = require("@keystone-6/core");
-var import_fields43 = require("@keystone-6/core/fields");
+var import_core39 = require("@keystone-6/core");
+var import_fields41 = require("@keystone-6/core/fields");
 init_access();
-var BookingModificationRequest = (0, import_core41.list)({
+var BookingModificationRequest = (0, import_core39.list)({
   db: {
     extendPrismaSchema: (model) => model.replace(
       "\n}",
@@ -9072,13 +9106,13 @@ var BookingModificationRequest = (0, import_core41.list)({
   },
   ui: { isHidden: true, hideCreate: true, hideDelete: true },
   fields: {
-    requestKey: (0, import_fields43.text)({ isIndexed: "unique", validation: { isRequired: true } }),
-    booking: (0, import_fields43.relationship)({ ref: "Booking.modificationRequests", db: { foreignKey: true, ...requiredRelationshipDb } }),
-    requestedCheckInDate: (0, import_fields43.timestamp)(),
-    requestedCheckOutDate: (0, import_fields43.timestamp)(),
-    guestMessage: (0, import_fields43.text)({ ui: { displayMode: "textarea" } }),
-    requestedByEmailHash: (0, import_fields43.text)({ validation: { isRequired: true } }),
-    status: (0, import_fields43.select)({
+    requestKey: (0, import_fields41.text)({ isIndexed: "unique", validation: { isRequired: true } }),
+    booking: (0, import_fields41.relationship)({ ref: "Booking.modificationRequests", db: { foreignKey: true, ...requiredRelationshipDb } }),
+    requestedCheckInDate: (0, import_fields41.timestamp)(),
+    requestedCheckOutDate: (0, import_fields41.timestamp)(),
+    guestMessage: (0, import_fields41.text)({ ui: { displayMode: "textarea" } }),
+    requestedByEmailHash: (0, import_fields41.text)({ validation: { isRequired: true } }),
+    status: (0, import_fields41.select)({
       type: "string",
       validation: { isRequired: true },
       defaultValue: "pending",
@@ -9088,12 +9122,12 @@ var BookingModificationRequest = (0, import_core41.list)({
         { label: "Declined", value: "declined" }
       ]
     }),
-    resolutionKey: (0, import_fields43.text)({ isIndexed: "unique", db: { isNullable: true } }),
-    resolutionRequestHash: (0, import_fields43.text)(),
-    resolvedBy: (0, import_fields43.relationship)({ ref: "User" }),
-    resolvedAt: (0, import_fields43.timestamp)(),
-    staffNote: (0, import_fields43.text)({ ui: { displayMode: "textarea" } }),
-    resultSnapshot: (0, import_fields43.json)({ defaultValue: {} }),
+    resolutionKey: (0, import_fields41.text)({ isIndexed: "unique", db: { isNullable: true } }),
+    resolutionRequestHash: (0, import_fields41.text)(),
+    resolvedBy: (0, import_fields41.relationship)({ ref: "User" }),
+    resolvedAt: (0, import_fields41.timestamp)(),
+    staffNote: (0, import_fields41.text)({ ui: { displayMode: "textarea" } }),
+    resultSnapshot: (0, import_fields41.json)({ defaultValue: {} }),
     ...trackingFields
   }
 });
@@ -9128,9 +9162,7 @@ var models = {
   Folio,
   FolioEntry,
   HotelAuditEvent,
-  HotelOutboxEvent,
-  HotelOutboxAttempt,
-  HotelOutboxReceipt,
+  HotelContactMessage,
   HotelBusinessDate,
   NightAuditRun,
   GroupBlock,
@@ -9145,7 +9177,7 @@ var models = {
 // features/keystone/index.ts
 var import_session = require("@keystone-6/core/session");
 
-// features/keystone/lib/hotelHousekeepingSkills.ts
+// features/keystone/workforce/housekeepingCapabilities.ts
 init_access();
 init_hotelLifecycle();
 init_serializableTransaction();
@@ -9218,8 +9250,9 @@ async function updateHotelHousekeepingStaffCapability(_root, { staffId, configur
 // features/keystone/queries/guestFolio.ts
 init_guestBookingAccess();
 init_bookingFolio();
-init_folioLedger();
+init_ledger();
 init_serializableTransaction();
+init_hotelBusinessTime();
 async function guestFolio(_root, { bookingId }, context) {
   await assertGuestBookingAccess(context, bookingId);
   return runSerializableTransaction(context, async (tx) => {
@@ -9233,6 +9266,16 @@ async function guestFolio(_root, { bookingId }, context) {
     const collectible = calculateCollectibleBalance(entries, [booking], intents, booking.folio.currencyCode);
     const ledger = calculateFolioBalance(entries);
     const directBilled = entries.some((entry) => entry.entryType === "transfer" && entry.direction === "credit");
+    const settings = await tx.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { timeZone: true } });
+    const guestDate = (entry) => {
+      if ((entry.sourceType === "payment" || entry.sourceType === "refund") && entry.postedAt) {
+        try {
+          return propertyCalendarDate(new Date(entry.postedAt), settings?.timeZone || "UTC").toISOString().slice(0, 10);
+        } catch {
+        }
+      }
+      return entry.serviceDate.toISOString().slice(0, 10);
+    };
     return {
       managedByProperty: false,
       folioNumber: booking.folio.folioNumber,
@@ -9243,26 +9286,46 @@ async function guestFolio(_root, { bookingId }, context) {
       ...collectible,
       pendingRefundMinor: intents.reduce((sum, intent) => sum + intent.amountMinor, 0),
       unpostedContractMinor: collectible.balanceMinor - ledger.balanceMinor - intents.reduce((sum, intent) => sum + intent.amountMinor, 0),
-      entries: entries.map((entry) => ({ date: entry.serviceDate.toISOString().slice(0, 10), type: entry.entryType, direction: entry.direction, amountMinor: entry.amountMinor, description: entry.description }))
+      entries: entries.map((entry) => ({ date: guestDate(entry), type: entry.entryType, direction: entry.direction, amountMinor: entry.amountMinor, description: entry.description }))
     };
   });
 }
 
-// features/keystone/lib/hotelPayoutReconciliation.ts
-var import_node_crypto5 = require("node:crypto");
-var import_client = require("@prisma/client");
+// features/keystone/finance/hotelPayoutReconciliation.ts
+var import_node_crypto8 = require("node:crypto");
+var import_client2 = require("@prisma/client");
 init_access();
-init_hotelGuestGovernance();
+init_commands();
 init_hotelLifecycle();
 init_serializableTransaction();
-function text41(value, label, max = 200) {
+function text39(value, label, max = 200) {
   const result = String(value || "").trim();
   if (!result || result.length > max) throw new Error(`${label} is required and bounded.`);
   return result;
 }
 function amount(value, signed = false) {
-  if (!Number.isSafeInteger(value) || !signed && value < 0 || Math.abs(value) > 2147483647) throw new Error("Statement amounts must be bounded integer minor units.");
+  if (!Number.isSafeInteger(value) || !signed && value < 0 || Math.abs(value) > 2147483647) throw new Error("Statement amounts must be whole numbers of cents.");
   return value;
+}
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function parseManageHotelPayoutInput(value) {
+  if (!isRecord(value)) throw new Error("Action is required and bounded.");
+  const actionText = text39(value.action, "Action");
+  const idempotencyKey = text39(value.idempotencyKey, "Attempt key", 150);
+  if (!["import", "refresh", "confirm"].includes(actionText)) throw new Error("Unsupported statement action.");
+  if (actionText === "import") {
+    const providerCode = text39(value.providerCode, "Provider");
+    if (!["pp_stripe_stripe", "pp_paypal_paypal"].includes(providerCode)) throw new Error("Unsupported statement provider.");
+    const payoutId = text39(value.payoutId, "Payout ID", 150), payoutDate = text39(value.payoutDate, "Payout date", 10), currencyCode = text39(value.currencyCode, "Currency", 3).toUpperCase();
+    if (currencyCode !== "USD" || !/^\d{4}-\d{2}-\d{2}$/.test(payoutDate) || Number.isNaN(Date.parse(payoutDate)) || new Date(payoutDate).toISOString().slice(0, 10) !== payoutDate) throw new Error("A valid payout date and USD statement are required.");
+    if (typeof value.csv !== "string") throw new Error("Statement CSV exceeds the bounded import size.");
+    return { action: "import", idempotencyKey, providerCode, payoutId, payoutDate, currencyCode, csv: value.csv };
+  }
+  if (actionText === "refresh") return { action: "refresh", idempotencyKey, id: text39(value.id, "Statement ID") };
+  const approvalId = typeof value.approvalId === "string" ? value.approvalId : void 0;
+  return { action: "confirm", idempotencyKey, id: text39(value.id, "Statement ID"), bankReference: text39(value.bankReference, "Bank deposit/debit reference", 200), bankAmountMinor: amount(value.bankAmountMinor, true), approvalId };
 }
 function parseHotelPayoutCsv(csv) {
   if (typeof csv !== "string" || csv.length > 3e5) throw new Error("Statement CSV exceeds the bounded import size.");
@@ -9280,7 +9343,7 @@ function parseHotelPayoutCsv(csv) {
   });
 }
 async function statements(prisma) {
-  const rows = await prisma.$queryRaw(import_client.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent" WHERE "propertyKey"=${HOTEL_PROPERTY_KEY} AND "aggregateType"='payout_statement' ORDER BY "aggregateId", ("afterSnapshot"->>'sequence')::integer DESC`);
+  const rows = await prisma.$queryRaw(import_client2.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent" WHERE "propertyKey"=${HOTEL_PROPERTY_KEY} AND "aggregateType"='payout_statement' ORDER BY "aggregateId", ("afterSnapshot"->>'sequence')::integer DESC`);
   return rows.map((row) => row.state);
 }
 async function validateSource(prisma, statement, all) {
@@ -9319,26 +9382,23 @@ async function hotelPayoutOperations(_root, _args, context) {
   authorize(context);
   return { statements: await statements(context.prisma) };
 }
-async function manageHotelPayout(_root, { input }, context) {
+async function manageHotelPayout(_root, args, context) {
   const actorId = authorize(context);
-  const action = text41(input?.action, "Action");
-  const key4 = text41(input?.idempotencyKey, "Attempt key", 150);
-  if (!["import", "refresh", "confirm"].includes(action)) throw new Error("Unsupported statement action.");
+  const input = parseManageHotelPayoutInput(args.input);
+  const action = input.action;
+  const key4 = input.idempotencyKey;
   let candidate;
   if (action === "import") {
-    const providerCode = text41(input.providerCode, "Provider");
-    if (!["pp_stripe_stripe", "pp_paypal_paypal"].includes(providerCode)) throw new Error("Unsupported statement provider.");
-    const payoutId = text41(input.payoutId, "Payout ID", 150), payoutDate = text41(input.payoutDate, "Payout date", 10), currencyCode = text41(input.currencyCode, "Currency", 3).toUpperCase();
-    if (currencyCode !== "USD" || !/^\d{4}-\d{2}-\d{2}$/.test(payoutDate) || Number.isNaN(Date.parse(payoutDate)) || new Date(payoutDate).toISOString().slice(0, 10) !== payoutDate) throw new Error("A valid payout date and USD statement are required.");
+    const { providerCode, payoutId, payoutDate, currencyCode } = input;
     const rows = parseHotelPayoutCsv(input.csv);
     const totals = rows.reduce((sum, row) => ({ grossMinor: sum.grossMinor + row.grossMinor, refundMinor: sum.refundMinor + row.refundMinor, feeMinor: sum.feeMinor + row.feeMinor, netMinor: sum.netMinor + row.netMinor }), { grossMinor: 0, refundMinor: 0, feeMinor: 0, netMinor: 0 });
     Object.values(totals).forEach((value) => amount(value, true));
-    const sourceHash = (0, import_node_crypto5.createHash)("sha256").update(JSON.stringify({ providerCode, payoutId, payoutDate, currencyCode, rows })).digest("hex");
-    candidate = { id: (0, import_node_crypto5.createHash)("sha256").update(`${providerCode}:${payoutId}`).digest("hex").slice(0, 24), providerCode, payoutId, payoutDate, currencyCode, rows, totals, sourceHash };
+    const sourceHash = (0, import_node_crypto8.createHash)("sha256").update(JSON.stringify({ providerCode, payoutId, payoutDate, currencyCode, rows })).digest("hex");
+    candidate = { id: (0, import_node_crypto8.createHash)("sha256").update(`${providerCode}:${payoutId}`).digest("hex").slice(0, 24), providerCode, payoutId, payoutDate, currencyCode, rows, totals, sourceHash };
   }
-  const id = candidate?.id || text41(input.id, "Statement ID");
-  const bankReference = action === "confirm" ? text41(input.bankReference, "Bank deposit/debit reference", 200) : "";
-  const bankAmountMinor = action === "confirm" ? amount(input.bankAmountMinor, true) : 0;
+  const id = action === "import" ? candidate.id : input.id;
+  const bankReference = action === "confirm" ? input.bankReference : "";
+  const bankAmountMinor = action === "confirm" ? input.bankAmountMinor : 0;
   const eventKey = `payout:${key4}`;
   const identity = { request: { action, id, candidate: candidate || null, bankReference, bankAmountMinor, actorId }, aggregateType: "payout_statement", aggregateId: id, action };
   return runSerializableTransaction(context, async (tx) => {
@@ -9369,9 +9429,9 @@ async function manageHotelPayout(_root, { input }, context) {
   });
 }
 
-// features/keystone/lib/hotelRelocation.ts
+// features/keystone/operations/guestRelocation.ts
 init_access();
-init_folioLedger();
+init_ledger();
 init_hotelLifecycle();
 init_serializableTransaction();
 var next = { requested: ["requested", "arranged"], arranged: ["arranged", "transferred"], transferred: ["transferred", "completed"], completed: [] };
@@ -9428,28 +9488,814 @@ async function updateHotelRelocation(_root, input, context) {
   });
 }
 
-// features/keystone/lib/hotelSecurityAuthorization.ts
-var import_node_crypto14 = require("node:crypto");
-var import_client5 = require("@prisma/client");
+// features/keystone/security/authorization.ts
+var import_node_crypto15 = require("node:crypto");
+var import_client7 = require("@prisma/client");
 init_access();
 init_guestBookingAccess();
 init_paymentProviderAdapter();
 init_paymentSecurity();
 init_serializableTransaction();
 init_hotelLifecycle();
-init_hotelGuestGovernance();
+init_commands();
 init_bookingFolio();
 init_bookingRefund();
 
-// features/keystone/lib/bookingPaymentSettlement.ts
-var import_node_crypto13 = require("node:crypto");
+// features/keystone/payments/settlement.ts
+var import_node_crypto14 = require("node:crypto");
+var import_client6 = require("@prisma/client");
 init_bookingFolio();
 init_hotelLifecycle();
-init_hotelCommunications();
-init_bookingConfirmation();
+init_confirmation();
 init_paymentSecurity();
 init_bookingRefund();
-init_bookingCancellation();
+
+// features/keystone/bookings/cancellation.ts
+init_commands3();
+
+// features/keystone/receivables/commands.ts
+var import_client5 = require("@prisma/client");
+init_access();
+init_bookingFolio();
+init_ledger();
+init_hotelBusinessTime();
+init_commands4();
+init_commands();
+init_hotelLifecycle();
+init_serializableTransaction();
+
+// features/keystone/receivables/contracts.ts
+var HOTEL_RECEIVABLE_ACTIONS = [
+  "account",
+  "invoice",
+  "route_charges",
+  "collect",
+  "write_off",
+  "refund_credit"
+];
+
+// features/keystone/receivables/commands.ts
+var RECEIVABLE_PROJECTION_VERSION = 1;
+var MAX_RECEIVABLE_MINOR = 2147483647;
+function authorize6(context) {
+  if (!permissions.canManagePayments({ session: context.session })) throw new Error("Receivables payment permission is required.");
+  return context.session.itemId;
+}
+function text41(value, label, max = 200) {
+  const result = String(value || "").trim();
+  if (!result || result.length > max) throw new Error(`${label} is required and bounded.`);
+  return result;
+}
+function minor2(value, minimum = 1, maximum = MAX_RECEIVABLE_MINOR) {
+  if (!Number.isSafeInteger(value) || Number(value) < minimum || Number(value) > maximum) throw new Error("Enter a valid integer minor-unit amount.");
+  return Number(value);
+}
+function projectionError() {
+  throw new Error("Receivable event projection integrity is invalid.");
+}
+function isRecord3(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function projectionDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return projectionError();
+  const parsed = /* @__PURE__ */ new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) return projectionError();
+  return value;
+}
+function validateReceivableProjection(type, aggregateId, value) {
+  if (!isRecord3(value) || typeof value.id !== "string" || !value.id || value.id !== aggregateId || !Number.isSafeInteger(value.sequence) || Number(value.sequence) < 1) return projectionError();
+  if (value.projectionVersion !== void 0 && value.projectionVersion !== RECEIVABLE_PROJECTION_VERSION) return projectionError();
+  const { projectionVersion: _projectionVersion, ...state } = value;
+  if (type === "receivable_account") {
+    if (typeof state.name !== "string" || !state.name || state.name.length > 200 || typeof state.billingEmail !== "string" || state.billingEmail.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.billingEmail) || !Number.isSafeInteger(state.creditLimitMinor) || Number(state.creditLimitMinor) < 0 || !Number.isInteger(state.termsDays) || Number(state.termsDays) < 0 || Number(state.termsDays) > 365 || state.currencyCode !== "USD") return projectionError();
+    return state;
+  }
+  if (type !== "receivable_invoice" || typeof state.accountId !== "string" || !state.accountId || typeof state.folioId !== "string" || !state.folioId || !(state.bookingId === null || typeof state.bookingId === "string" && Boolean(state.bookingId)) || state.currencyCode !== "USD" || !Number.isSafeInteger(state.amountMinor) || Number(state.amountMinor) <= 0 || Number(state.amountMinor) > MAX_RECEIVABLE_MINOR || !Number.isSafeInteger(state.balanceMinor) || Math.abs(Number(state.balanceMinor)) > Number(state.amountMinor) || !["open", "paid", "written_off", "credit_due", "refunded"].includes(String(state.status)) || typeof state.reference !== "string" || !state.reference || state.reference.length > 200) return projectionError();
+  const issuedOn = projectionDate(state.issuedOn);
+  const dueOn = projectionDate(state.dueOn);
+  if (dueOn < issuedOn) return projectionError();
+  for (const field of ["creditedMinor", "writtenOffMinor"]) {
+    if (state[field] !== void 0 && (!Number.isSafeInteger(state[field]) || Number(state[field]) < 0 || Number(state[field]) > Number(state.amountMinor))) return projectionError();
+  }
+  const creditedMinor = Number(state.creditedMinor || 0);
+  const writtenOffMinor = Number(state.writtenOffMinor || 0);
+  if (creditedMinor + writtenOffMinor > Number(state.amountMinor) || state.status === "open" && Number(state.balanceMinor) <= 0 || ["paid", "written_off", "refunded"].includes(String(state.status)) && Number(state.balanceMinor) !== 0 || state.status === "credit_due" && Number(state.balanceMinor) >= 0 || state.status === "written_off" && writtenOffMinor === 0) return projectionError();
+  if (state.payerAllocations !== void 0) {
+    if (!Array.isArray(state.payerAllocations) || state.payerAllocations.length > 200) return projectionError();
+    const seen = /* @__PURE__ */ new Set();
+    let allocatedMinor = 0;
+    for (const allocation of state.payerAllocations) {
+      if (!isRecord3(allocation) || typeof allocation.entryId !== "string" || !allocation.entryId || seen.has(allocation.entryId) || !Number.isSafeInteger(allocation.amountMinor) || Number(allocation.amountMinor) <= 0 || Number(allocation.amountMinor) > MAX_RECEIVABLE_MINOR) return projectionError();
+      seen.add(allocation.entryId);
+      allocatedMinor += Number(allocation.amountMinor);
+      if (!Number.isSafeInteger(allocatedMinor)) return projectionError();
+    }
+    if (allocatedMinor > Number(state.amountMinor)) return projectionError();
+  }
+  return state;
+}
+function versionReceivableProjection(state) {
+  return { ...state, projectionVersion: RECEIVABLE_PROJECTION_VERSION };
+}
+async function latest(prisma, type) {
+  const rows = await prisma.$queryRaw(import_client5.Prisma.sql`WITH raw_events AS (
+      SELECT "id", "aggregateId", "afterSnapshot", "occurredAt",
+        CASE WHEN jsonb_typeof("afterSnapshot")='object' AND jsonb_typeof("afterSnapshot"->'sequence')='number'
+          THEN CASE WHEN ("afterSnapshot"->>'sequence') ~ '^[1-9][0-9]{0,15}$' THEN ("afterSnapshot"->>'sequence')::numeric ELSE NULL END
+          ELSE NULL END AS raw_sequence
+      FROM "HotelAuditEvent" WHERE "aggregateType"=${type} AND "propertyKey"=${HOTEL_PROPERTY_KEY}
+    ), sequenced AS (
+      SELECT *, CASE WHEN raw_sequence <= 9007199254740991 THEN raw_sequence ELSE NULL END AS sequence FROM raw_events
+    ), integrity AS (
+      SELECT EXISTS(SELECT 1 FROM sequenced WHERE sequence IS NULL) AS "hasMalformed",
+        EXISTS(SELECT 1 FROM sequenced WHERE sequence IS NOT NULL GROUP BY "aggregateId", sequence HAVING COUNT(*) > 1) AS "hasTied"
+    ), selected AS (
+      SELECT DISTINCT ON ("aggregateId") "aggregateId", "afterSnapshot" AS state FROM sequenced WHERE sequence IS NOT NULL
+      ORDER BY "aggregateId", sequence DESC, "occurredAt" DESC, "id" DESC
+    )
+    SELECT selected."aggregateId", selected.state, integrity."hasMalformed", integrity."hasTied"
+    FROM integrity LEFT JOIN selected ON TRUE`);
+  if (rows.some((row) => row.hasMalformed || row.hasTied)) return projectionError();
+  return rows.filter((row) => row.state !== null && row.state !== void 0).map((row) => validateReceivableProjection(type, row.aggregateId, row.state));
+}
+function receivableAging(invoices, on) {
+  const day2 = new Date(on);
+  day2.setUTCHours(0, 0, 0, 0);
+  return invoices.map((invoice) => {
+    const overdueDays = Math.max(0, Math.floor((day2.getTime() - new Date(invoice.dueOn).getTime()) / 864e5));
+    return { ...invoice, overdueDays, agingBucket: invoice.balanceMinor < 0 ? "credit due to company" : !invoice.balanceMinor ? "settled" : overdueDays === 0 ? "current" : overdueDays <= 30 ? "1\u201330 days" : overdueDays <= 60 ? "31\u201360 days" : "61+ days" };
+  });
+}
+function receivableAccountBalances(accounts, invoices) {
+  const accountIds = new Set(accounts.map((account) => account.id));
+  const balances = /* @__PURE__ */ new Map();
+  for (const invoice of invoices) {
+    if (!accountIds.has(invoice.accountId)) return projectionError();
+    const outstanding = (balances.get(invoice.accountId) || 0) + invoice.balanceMinor;
+    if (!Number.isSafeInteger(outstanding)) return projectionError();
+    balances.set(invoice.accountId, outstanding);
+  }
+  return balances;
+}
+async function loadReceivableWorkspace(context) {
+  authorize6(context);
+  const [accounts, invoices, clock] = await Promise.all([latest(context.prisma, "receivable_account"), latest(context.prisma, "receivable_invoice"), context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } })]);
+  if (!clock) throw new Error("Property business date is required.");
+  const balances = receivableAccountBalances(accounts, invoices);
+  return {
+    accounts: accounts.map((account) => ({ ...account, outstandingMinor: balances.get(account.id) || 0 })),
+    invoices: receivableAging(invoices, clock.currentBusinessDate)
+  };
+}
+function receivablePageSize(value) {
+  if (value === void 0 || value === null) return 50;
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 100) {
+    throw new Error("Receivable page size must be an integer from 1 to 100.");
+  }
+  return Number(value);
+}
+function pageReceivableRows(rows, cursor, pageSize) {
+  const ordered = [...rows].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  let start = 0;
+  if (cursor !== void 0 && cursor !== null) {
+    const cursorId = text41(cursor, "Receivable page cursor");
+    const cursorIndex = ordered.findIndex((row) => row.id === cursorId);
+    if (cursorIndex < 0) throw new Error("Receivable page cursor is invalid; reload the workspace.");
+    start = cursorIndex + 1;
+  }
+  const items = ordered.slice(start, start + pageSize);
+  const hasMore = start + items.length < ordered.length;
+  return { items, hasMore, nextCursor: hasMore && items.length ? items[items.length - 1].id : null };
+}
+async function hotelReceivableOperations(_root, _args, context) {
+  return loadReceivableWorkspace(context);
+}
+async function hotelReceivableOperationsPage(_root, args, context) {
+  const workspace2 = await loadReceivableWorkspace(context);
+  const pageSize = receivablePageSize(args?.pageSize);
+  const accounts = pageReceivableRows(workspace2.accounts, args?.afterAccountId, pageSize);
+  const invoices = pageReceivableRows(workspace2.invoices, args?.afterInvoiceId, pageSize);
+  return {
+    accounts: accounts.items,
+    invoices: invoices.items,
+    accountsHasMore: accounts.hasMore,
+    nextAccountCursor: accounts.nextCursor,
+    invoicesHasMore: invoices.hasMore,
+    nextInvoiceCursor: invoices.nextCursor
+  };
+}
+function parseManageHotelReceivableInput(value) {
+  if (!isRecord3(value)) throw new Error("Receivables input must be an object.");
+  const actionValue = value.action;
+  if (typeof actionValue !== "string" || !HOTEL_RECEIVABLE_ACTIONS.includes(actionValue)) {
+    throw new Error("Unknown receivables action.");
+  }
+  const action = actionValue;
+  const base = {
+    id: text41(value.id, "Record ID"),
+    idempotencyKey: text41(value.idempotencyKey, "Idempotency key"),
+    reference: text41(value.reference, "Billing or payment reference"),
+    billingEmail: String(value.billingEmail || ""),
+    termsDays: Number(value.termsDays || 0),
+    accountId: String(value.accountId || ""),
+    folioId: String(value.folioId || ""),
+    bookingId: String(value.bookingId || ""),
+    method: String(value.method || ""),
+    approvalId: String(value.approvalId || "")
+  };
+  if (action === "route_charges") {
+    const payerAllocations = normalizePayerAllocations(value.payerAllocations);
+    return { ...base, action, amountMinor: minor2(payerAllocations.reduce((sum, row) => sum + row.amountMinor, 0)), payerAllocations };
+  }
+  return { ...base, action, amountMinor: minor2(value.amountMinor, action === "account" ? 0 : 1, action === "account" ? Number.MAX_SAFE_INTEGER : MAX_RECEIVABLE_MINOR) };
+}
+async function manageHotelReceivable(_root, args, context) {
+  const actorId = authorize6(context);
+  const input = parseManageHotelReceivableInput(args.input);
+  const action = input.action;
+  const id = input.id;
+  const idempotencyKey = input.idempotencyKey;
+  const payerAllocations = input.action === "route_charges" ? input.payerAllocations : [];
+  const amountMinor = input.amountMinor;
+  const createsInvoice = action === "invoice" || action === "route_charges";
+  const reference = input.reference;
+  const normalized = {
+    action,
+    id,
+    amountMinor,
+    payerAllocations,
+    reference,
+    accountId: input.accountId,
+    folioId: input.folioId,
+    bookingId: input.bookingId,
+    billingEmail: input.billingEmail,
+    termsDays: input.termsDays,
+    method: input.method,
+    approvalId: input.approvalId,
+    actorId
+  };
+  const aggregateType = action === "account" ? "receivable_account" : "receivable_invoice";
+  const eventKey = `receivable:${idempotencyKey}`;
+  const identity = { request: normalized, aggregateType, aggregateId: id, action };
+  return runSerializableTransaction(context, async (tx) => {
+    const parentFolio = createsInvoice ? await tx.prisma.folio.findUnique({ where: { id: text41(input.folioId, "Folio ID") }, select: { bookingId: true } }) : null;
+    const settlementBookingId = parentFolio?.bookingId || (action === "route_charges" ? normalized.bookingId : "");
+    if (settlementBookingId) await tx.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${settlementBookingId}`);
+    if (createsInvoice) await tx.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-folio:${normalized.folioId}`);
+    await lockHotelLifecycle(tx.prisma, "receivables");
+    const folio = createsInvoice ? await tx.prisma.folio.findUnique({ where: { id: input.folioId }, include: { entries: true } }) : null;
+    const replay = await findHotelLifecycleReplay(tx.prisma, eventKey, identity);
+    if (replay) return validateReceivableProjection(aggregateType, replay.aggregateId, replay.afterSnapshot);
+    const accounts = await latest(tx.prisma, "receivable_account");
+    const invoices = await latest(tx.prisma, "receivable_invoice");
+    receivableAccountBalances(accounts, invoices);
+    let before = null;
+    let next2;
+    if (action === "account") {
+      if (accounts.some((a) => a.id === id)) throw new Error("This credit account already exists.");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized.billingEmail) || normalized.billingEmail.length > 320) throw new Error("A valid billing email is required.");
+      if (!Number.isInteger(normalized.termsDays) || normalized.termsDays < 0 || normalized.termsDays > 365) throw new Error("Credit terms must be 0\u2013365 days.");
+      next2 = { id, sequence: 1, name: reference, billingEmail: normalized.billingEmail, creditLimitMinor: amountMinor, termsDays: normalized.termsDays, currencyCode: "USD" };
+    } else if (createsInvoice) {
+      if (!folio || folio.status !== "open" || folio.currencyCode !== "USD") throw new Error("An open USD folio is required for direct billing.");
+      if (action === "route_charges") {
+        const member = await payerWindowMember(tx.prisma, folio, normalized.bookingId);
+        validatePayerAllocations(folio, invoices, payerAllocations, member);
+      }
+      if (invoices.some((i) => i.id === id)) throw new Error("This invoice already exists.");
+      const account = accounts.find((a) => a.id === input.accountId);
+      if (!account) throw new Error("Approved credit account not found.");
+      const balance = settlementBookingId ? (await getBookingCollectibleBalance(tx, settlementBookingId)).balanceDueMinor : calculateFolioBalance(folio.entries).balanceMinor;
+      if (amountMinor > balance) throw new Error("Invoice allocation exceeds the remaining folio balance.");
+      const outstanding = invoices.filter((i) => i.accountId === account.id).reduce((sum, i) => sum + i.balanceMinor, 0);
+      if (outstanding + amountMinor > account.creditLimitMinor) throw new Error("Account credit limit would be exceeded.");
+      const day2 = await currentPostingDate(tx.prisma);
+      const due = new Date(day2);
+      due.setUTCDate(due.getUTCDate() + account.termsDays);
+      next2 = {
+        id,
+        sequence: 1,
+        accountId: account.id,
+        folioId: folio.id,
+        bookingId: settlementBookingId || null,
+        currencyCode: "USD",
+        amountMinor,
+        balanceMinor: amountMinor,
+        issuedOn: day2.toISOString().slice(0, 10),
+        dueOn: due.toISOString().slice(0, 10),
+        status: "open",
+        reference,
+        ...payerAllocations.length ? { payerAllocations } : {}
+      };
+      await tx.prisma.folioEntry.create({ data: {
+        folioId: folio.id,
+        postingKey: `ar-transfer:${id}`,
+        entryType: "transfer",
+        direction: "credit",
+        amountMinor,
+        currencyCode: "USD",
+        description: `Direct bill to ${account.name}: ${reference}`,
+        serviceDate: day2,
+        postedAt: /* @__PURE__ */ new Date(),
+        sourceType: "system",
+        sourceId: id,
+        metadataSnapshot: { receivableInvoiceId: id, accountId: account.id, sourceEntryIds: payerAllocations.length ? payerAllocations.map((row) => row.entryId) : folio.entries.map((entry) => entry.id), payerAllocations, actorId }
+      } });
+    } else {
+      const invoice = invoices.find((i) => i.id === id);
+      if (!invoice || (action === "refund_credit" ? invoice.status !== "credit_due" || amountMinor > -invoice.balanceMinor : invoice.status !== "open" || amountMinor > invoice.balanceMinor)) throw new Error("Collection or payout exceeds the eligible invoice balance.");
+      before = invoice;
+      const remaining = invoice.balanceMinor + (action === "refund_credit" ? amountMinor : -amountMinor);
+      if (action === "write_off") {
+        await requireHotelApproval(tx.prisma, { approvalId: input.approvalId, action: "write_off", aggregateId: id, amountMinor, actorId, operationKey: eventKey });
+      } else if (action === "refund_credit") {
+        await requireHotelApproval(tx.prisma, { approvalId: input.approvalId, action: "refund", aggregateId: id, amountMinor, actorId, operationKey: eventKey });
+      }
+      if (action !== "write_off" && !["cash", "bank_transfer", "check"].includes(normalized.method)) throw new Error("Record a cash, bank transfer or check collection with its receipt reference.");
+      const cashierShiftId = action !== "write_off" && normalized.method === "cash" ? await assertActiveCashierShift(tx.prisma, actorId, "USD") : null;
+      const day2 = await currentPostingDate(tx.prisma);
+      next2 = { ...invoice, sequence: invoice.sequence + 1, writtenOffMinor: (invoice.writtenOffMinor || 0) + (action === "write_off" ? amountMinor : 0), balanceMinor: remaining, status: remaining < 0 ? "credit_due" : remaining > 0 ? "open" : action === "write_off" ? "written_off" : action === "refund_credit" ? "refunded" : "paid" };
+      await recordHotelLifecycleEvent({
+        prisma: tx.prisma,
+        actorId,
+        eventKey: `${eventKey}:collection`,
+        identity: { request: normalized, aggregateType: "receivable_payment", aggregateId: id, action },
+        afterSnapshot: { invoiceId: id, amountMinor: action === "refund_credit" ? -amountMinor : amountMinor, currencyCode: "USD", method: normalized.method, cashierShiftId, reference, serviceDate: day2.toISOString().slice(0, 10), kind: action }
+      });
+    }
+    if (createsInvoice && settlementBookingId) {
+      const obligation = await getBookingCollectibleBalance(tx, settlementBookingId);
+      await tx.prisma.booking.update({ where: { id: settlementBookingId }, data: { balanceDueMinor: obligation.balanceDueMinor, balanceDue: obligation.balanceDueMinor / 100, paymentStatus: obligation.balanceDueMinor ? "partial" : "paid" } });
+    }
+    await recordHotelLifecycleEvent({ prisma: tx.prisma, actorId, eventKey, identity, beforeSnapshot: before, afterSnapshot: versionReceivableProjection(next2) });
+    return next2;
+  });
+}
+async function creditDirectBillingForCancellation(tx, bookingId, folioId, cancellationKey) {
+  await lockHotelLifecycle(tx.prisma, "receivables");
+  const invoices = (await latest(tx.prisma, "receivable_invoice")).filter((invoice) => invoice.folioId === folioId && (invoice.bookingId === bookingId || invoice.bookingId === null && Array.isArray(invoice.payerAllocations) && invoice.payerAllocations.length > 0));
+  const entries = await tx.prisma.folioEntry.findMany({ where: { folioId }, select: { id: true, reversesId: true, amountMinor: true, direction: true, currencyCode: true } });
+  const reversed = new Set(entries.filter((entry) => entry.reversesId).map((entry) => entry.reversesId));
+  let available = Math.max(0, -calculateFolioBalance(entries).balanceMinor);
+  for (const invoice of invoices.sort((a, b) => a.issuedOn.localeCompare(b.issuedOn) || a.id.localeCompare(b.id))) {
+    const eventKey = `${cancellationKey}:ar-credit:${invoice.id}`;
+    if (await tx.prisma.hotelAuditEvent.findUnique({ where: { eventKey } })) continue;
+    const routedCancelledMinor = invoice.payerAllocations?.reduce((sum, row) => sum + (reversed.has(row.entryId) ? row.amountMinor : 0), 0);
+    const creditMinor = Math.min(available, Math.max(0, invoice.amountMinor - (invoice.creditedMinor || 0)), routedCancelledMinor ?? Infinity);
+    if (!creditMinor) continue;
+    available -= creditMinor;
+    const writtenOffReversed = Math.min(invoice.writtenOffMinor || 0, Math.max(0, creditMinor - Math.max(0, invoice.balanceMinor)));
+    const balanceMinor = invoice.balanceMinor - creditMinor + writtenOffReversed;
+    let allocationCredit = creditMinor;
+    const payerAllocations = invoice.payerAllocations?.map((row) => {
+      const release = reversed.has(row.entryId) ? Math.min(allocationCredit, row.amountMinor) : 0;
+      allocationCredit -= release;
+      return { ...row, amountMinor: row.amountMinor - release };
+    }).filter((row) => row.amountMinor > 0);
+    const next2 = {
+      ...invoice,
+      ...payerAllocations ? { payerAllocations } : {},
+      sequence: invoice.sequence + 1,
+      writtenOffMinor: (invoice.writtenOffMinor || 0) - writtenOffReversed,
+      creditedMinor: (invoice.creditedMinor || 0) + creditMinor,
+      balanceMinor,
+      status: balanceMinor < 0 ? "credit_due" : balanceMinor > 0 ? "open" : "paid"
+    };
+    const day2 = await currentPostingDate(tx.prisma);
+    await tx.prisma.folioEntry.create({ data: {
+      folioId,
+      postingKey: eventKey,
+      entryType: "transfer",
+      direction: "debit",
+      amountMinor: creditMinor,
+      currencyCode: "USD",
+      description: `Cancellation credit memo for company invoice ${invoice.reference}`,
+      serviceDate: day2,
+      postedAt: /* @__PURE__ */ new Date(),
+      sourceType: "system",
+      sourceId: invoice.id,
+      metadataSnapshot: { receivableInvoiceId: invoice.id, cancellationKey, creditMemo: true }
+    } });
+    await recordHotelLifecycleEvent({
+      prisma: tx.prisma,
+      eventKey,
+      identity: { request: { bookingId, invoiceId: invoice.id, creditMinor, cancellationKey }, aggregateType: "receivable_invoice", aggregateId: invoice.id, action: "cancellation_credited" },
+      beforeSnapshot: invoice,
+      afterSnapshot: versionReceivableProjection(next2)
+    });
+  }
+}
+function normalizePayerAllocations(input) {
+  if (!Array.isArray(input) || !input.length || input.length > 200) throw new Error("Choose 1\u2013200 posted charge allocations.");
+  const rows = input.map((row) => {
+    if (!isRecord3(row)) throw new Error("Each charge allocation must be an object.");
+    return { entryId: text41(row.entryId, "Charge entry ID"), amountMinor: minor2(row.amountMinor) };
+  });
+  if (new Set(rows.map((row) => row.entryId)).size !== rows.length) throw new Error("A charge may appear only once per routing request.");
+  return rows.sort((a, b) => a.entryId.localeCompare(b.entryId));
+}
+function validatePayerAllocations(folio, invoices, allocations, member) {
+  const sameFolio = invoices.filter((invoice) => invoice.folioId === folio.id);
+  if (sameFolio.some((invoice) => !invoice.payerAllocations && invoice.amountMinor > (invoice.creditedMinor || 0))) throw new Error("Existing amount-only company allocations require reviewed charge attribution before adding charge-level windows.");
+  const reversed = new Set(folio.entries.filter((entry) => entry.reversesId).map((entry) => entry.reversesId));
+  for (const row of allocations) {
+    const charge = folio.entries.find((entry) => entry.id === row.entryId);
+    if (member && (!charge || charge.sourceType !== "reservation_snapshot" || !member.lineItems.some((line) => line.id === charge.sourceId))) throw new Error("A group member window can route only that member\u2019s attributable posted reservation charges.");
+    if (!charge || charge.direction !== "debit" || charge.currencyCode !== folio.currencyCode || !["room_charge", "tax", "fee", "addon"].includes(charge.entryType) || reversed.has(charge.id) || charge.reversedById) throw new Error("Every allocation must reference an unreversed posted charge belonging to this folio.");
+    const assigned = sameFolio.flatMap((invoice) => invoice.payerAllocations || []).filter((item) => item.entryId === row.entryId).reduce((sum, item) => sum + item.amountMinor, 0);
+    if (assigned + row.amountMinor > charge.amountMinor) throw new Error("Company windows cannot allocate a charge more than once or exceed its remaining guest portion.");
+  }
+}
+async function hotelPayerWindows(_root, { folioId, bookingId }, context) {
+  authorize6(context);
+  const folio = await context.prisma.folio.findUnique({ where: { id: text41(folioId, "Folio ID") }, include: { entries: { orderBy: [{ serviceDate: "asc" }, { id: "asc" }] } } });
+  if (!folio) throw new Error("Source folio not found.");
+  const member = await payerWindowMember(context.prisma, folio, String(bookingId || ""));
+  const invoices = (await latest(context.prisma, "receivable_invoice")).filter((invoice) => invoice.folioId === folio.id && (!member || invoice.bookingId === member.id || invoice.bookingId === null));
+  const reversed = new Set(folio.entries.filter((entry) => entry.reversesId).map((entry) => entry.reversesId));
+  const charges = folio.entries.filter((entry) => (!member || entry.sourceType === "reservation_snapshot" && member.lineItems.some((line) => line.id === entry.sourceId)) && entry.direction === "debit" && ["room_charge", "tax", "fee", "addon"].includes(entry.entryType)).map((entry) => {
+    const companyMinor = invoices.flatMap((invoice) => invoice.payerAllocations || []).filter((row) => row.entryId === entry.id).reduce((sum, row) => sum + row.amountMinor, 0);
+    const isReversed = reversed.has(entry.id);
+    return { entryId: entry.id, description: entry.description, amountMinor: entry.amountMinor, companyMinor, guestMinor: isReversed ? 0 : Math.max(0, entry.amountMinor - companyMinor), reversed: isReversed };
+  });
+  return {
+    folioId: folio.id,
+    bookingId: member?.id || folio.bookingId,
+    remainingPayer: member ? "group_master" : "guest",
+    currencyCode: folio.currencyCode,
+    guestLedgerBalanceMinor: calculateFolioBalance(folio.entries).balanceMinor,
+    charges,
+    companyWindows: invoices.map((invoice) => ({ invoiceId: invoice.id, accountId: invoice.accountId, reference: invoice.reference, balanceMinor: invoice.balanceMinor, status: invoice.status, payerAllocations: invoice.payerAllocations || [], unassignedMinor: invoice.payerAllocations ? 0 : Math.max(0, invoice.amountMinor - (invoice.creditedMinor || 0)) }))
+  };
+}
+async function payerWindowMember(prisma, folio, bookingId) {
+  if (folio.bookingId) {
+    if (bookingId && folio.bookingId !== bookingId) throw new Error("Selected booking does not own this folio.");
+    return null;
+  }
+  if (!folio.groupBlockId || !bookingId) throw new Error("Select the group member booking ID for a shared master folio window.");
+  const member = await prisma.booking.findUnique({ where: { id: bookingId }, include: { lineItems: true } });
+  if (!member || member.id !== bookingId || member.billingFolioId !== folio.id || member.groupBlockId !== folio.groupBlockId) throw new Error("Selected group member does not belong to this master folio.");
+  return member;
+}
+
+// features/keystone/bookings/cancellation.ts
+init_hotelBusinessTime();
+init_bookingFolio();
+init_bookingRefund();
+
+// features/keystone/lib/cancellationPolicy.ts
+function safeMinor(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer amount.`);
+  }
+  return value;
+}
+function normalizeCancellationPolicy(value) {
+  const policy = String(value || "").trim().toLowerCase();
+  if (policy === "flexible" || policy === "moderate" || policy === "strict" || policy === "non_refundable") {
+    return policy;
+  }
+  return "non_refundable";
+}
+function cancellationPolicyDescription(policyValue) {
+  const policy = normalizeCancellationPolicy(policyValue);
+  if (policy === "flexible") {
+    return "Full refund until 48 hours before arrival; after that, the first night is retained.";
+  }
+  if (policy === "moderate") {
+    return "Full refund until 7 days before arrival, 50% refund until 48 hours before arrival, then non-refundable.";
+  }
+  if (policy === "strict") {
+    return "50% refund until 14 days before arrival; after that, the stay is non-refundable.";
+  }
+  return "This rate is non-refundable after booking.";
+}
+function calculateCancellationTerms({
+  policy: policyValue,
+  checkInDate,
+  cancelledAt = /* @__PURE__ */ new Date(),
+  capturedMinor,
+  firstNightMinor,
+  bookingTotalMinor = capturedMinor
+}) {
+  const policy = normalizeCancellationPolicy(policyValue);
+  const captured = safeMinor(capturedMinor, "capturedMinor");
+  const firstNight = safeMinor(firstNightMinor, "firstNightMinor");
+  const bookingTotal = safeMinor(bookingTotalMinor, "bookingTotalMinor");
+  const checkIn = new Date(checkInDate);
+  const cancellation = new Date(cancelledAt);
+  if (Number.isNaN(checkIn.getTime()) || Number.isNaN(cancellation.getTime())) {
+    throw new Error("Cancellation dates are invalid.");
+  }
+  const hoursBeforeArrival = (checkIn.getTime() - cancellation.getTime()) / 36e5;
+  let cancellationFeeMinor = bookingTotal;
+  let fullRefundDeadline = null;
+  if (policy === "flexible") {
+    fullRefundDeadline = new Date(checkIn.getTime() - 48 * 36e5);
+    cancellationFeeMinor = hoursBeforeArrival >= 48 ? 0 : Math.min(bookingTotal, firstNight);
+  } else if (policy === "moderate") {
+    fullRefundDeadline = new Date(checkIn.getTime() - 7 * 24 * 36e5);
+    cancellationFeeMinor = hoursBeforeArrival >= 7 * 24 ? 0 : hoursBeforeArrival >= 48 ? Math.ceil(bookingTotal / 2) : bookingTotal;
+  } else if (policy === "strict") {
+    cancellationFeeMinor = hoursBeforeArrival >= 14 * 24 ? Math.ceil(bookingTotal / 2) : bookingTotal;
+  }
+  const refundableMinor = Math.max(0, captured - cancellationFeeMinor);
+  return {
+    policy,
+    refundableMinor,
+    cancellationFeeMinor,
+    capturedMinor: captured,
+    summary: cancellationPolicyDescription(policy),
+    fullRefundDeadline
+  };
+}
+
+// features/keystone/bookings/cancellation.ts
+init_ledger();
+init_paymentSecurity();
+init_hotelLifecycle();
+init_refundIntentWorker();
+var CANCELLABLE_BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed"]);
+var ACTIVE_REFUND_INTENT_STATUSES = ["pending", "processing", "failed", "dead_letter"];
+var REFUND_MAX_ATTEMPTS = 8;
+var MAX_REFUND_INTENT_MINOR = 2147483647;
+var TRANSACTION_RETRY_LIMIT = 5;
+function requirePrismaResult3(value) {
+  if (value instanceof Error || value?.extensions?.code === "KS_PRISMA_ERROR") throw value;
+  return value;
+}
+function retryableTransactionError(error) {
+  const code = error?.code || error?.extensions?.prisma?.code;
+  return code === "P2002" || code === "P2034";
+}
+function paymentMinor2(payment) {
+  if (Number.isSafeInteger(payment.amountMinor)) return Math.abs(payment.amountMinor);
+  const value = Math.round(Math.abs(Number(payment.amount || 0)) * 100);
+  if (!Number.isSafeInteger(value)) throw new Error("Payment amount cannot be represented in cents.");
+  return value;
+}
+function normalizeCancellationInput(input) {
+  const idempotencyKey = String(input.idempotencyKey || "").trim();
+  if (!idempotencyKey || idempotencyKey.length > 200) throw new Error("A stable idempotency key is required.");
+  const reason = String(input.refundReason || "Cancellation requested").trim();
+  if (!reason || reason.length > 500) throw new Error("Cancellation reason is required.");
+  return { bookingId: input.bookingId, reason, idempotencyKey };
+}
+async function applyCancellationFolioTerms(tx, booking, eventKey, cancellationFeeMinor) {
+  const ensured = await ensureBookingFolio(tx, booking.id, { postSnapshotEntries: true });
+  const activeLineIds = new Set(booking.lineItems.map((line) => line.id));
+  const entries = await tx.prisma.folioEntry.findMany({
+    where: { folioId: ensured.folioId },
+    include: { reversedBy: true },
+    orderBy: [{ postedAt: "asc" }, { id: "asc" }]
+  });
+  const now = /* @__PURE__ */ new Date();
+  const serviceDay = await currentPostingDate(tx.prisma);
+  for (const entry of entries) {
+    if (entry.sourceType !== "reservation_snapshot" || !activeLineIds.has(entry.sourceId) || entry.reversedBy) continue;
+    const reversal = buildFolioReversalPosting(entry, {
+      postingKey: `${eventKey}:reverse:${entry.id}`,
+      reason: "Reservation cancelled under snapshotted rate terms"
+    });
+    await tx.prisma.folioEntry.create({
+      data: {
+        folioId: ensured.folioId,
+        ...reversal,
+        serviceDate: serviceDay,
+        postedAt: now,
+        metadataSnapshot: { ...reversal.metadataSnapshot, cancellationEventKey: eventKey, originalServiceDate: entry.serviceDate }
+      }
+    });
+  }
+  if (cancellationFeeMinor > 0) {
+    await tx.prisma.folioEntry.upsert({
+      where: { postingKey: `${eventKey}:fee` },
+      create: {
+        folioId: ensured.folioId,
+        postingKey: `${eventKey}:fee`,
+        entryType: "adjustment",
+        direction: "debit",
+        amountMinor: cancellationFeeMinor,
+        currencyCode: String(booking.currencyCode || "USD").toUpperCase(),
+        description: "Cancellation fee due under booked rate terms",
+        serviceDate: serviceDay,
+        postedAt: now,
+        sourceType: "system",
+        sourceId: booking.id,
+        metadataSnapshot: { cancellationEventKey: eventKey }
+      },
+      update: {}
+    });
+  }
+  await creditDirectBillingForCancellation(tx, booking.id, ensured.folioId, eventKey);
+  return ensured.folioId;
+}
+async function requestBookingCancellation({
+  context,
+  bookingId,
+  refundReason,
+  idempotencyKey,
+  actorId,
+  source = "guest",
+  withinTransaction = false
+}) {
+  const normalized = normalizeCancellationInput({ bookingId, refundReason, idempotencyKey });
+  const eventKey = `booking:cancel:${normalized.idempotencyKey}`;
+  const identity = {
+    request: { bookingId, refundReason: normalized.reason, source },
+    aggregateType: "booking",
+    aggregateId: bookingId,
+    action: "cancellation_requested"
+  };
+  const execute = async (tx) => {
+    const prisma = tx.prisma;
+    await lockHotelLifecycle(prisma, eventKey);
+    await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
+    if (await findHotelLifecycleReplay(prisma, eventKey, identity)) {
+      const current = await prisma.booking.findUnique({ where: { id: bookingId } });
+      if (!current) throw new Error("Cancellation replay evidence is incomplete.");
+      return current;
+    }
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        ratePlan: true,
+        lineItems: {
+          where: { snapshotStatus: "active" },
+          orderBy: [{ date: "asc" }, { id: "asc" }]
+        },
+        payments: { include: { paymentProvider: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+        refundIntents: true
+      }
+    });
+    if (!booking) throw new Error("Booking not found.");
+    if (booking.status === "cancelled" || booking.status === "cancellation_pending") {
+      throw new Error(`Booking is already ${booking.status.replaceAll("_", " ")}.`);
+    }
+    if (!CANCELLABLE_BOOKING_STATUSES.has(booking.status)) {
+      throw new Error(`A ${booking.status} booking cannot be cancelled.`);
+    }
+    if (source === "no_show") {
+      if (booking.status !== "confirmed") throw new Error("Only a confirmed reservation can be marked no-show.");
+      const settings = booking.pricingSnapshot?.arrivalInstant ? null : await prisma.hotelSettings.findUnique({ where: { id: 1 } });
+      const arrival = booking.pricingSnapshot?.arrivalInstant ? new Date(booking.pricingSnapshot.arrivalInstant) : new Date(propertyArrivalInstant(booking.checkInDate, settings?.checkInTime || "15:00", settings?.timeZone || "UTC"));
+      if (!Number.isFinite(arrival.getTime()) || arrival > /* @__PURE__ */ new Date()) throw new Error("A reservation cannot be marked no-show before its arrival time.");
+    }
+    const abandoned = source === "hold_expiry" || source === "payment_recovery";
+    if (abandoned && booking.status !== "pending") throw new Error("Only an unconfirmed reservation can use hold recovery.");
+    if (source === "hold_expiry" && (!booking.holdExpiresAt || new Date(booking.holdExpiresAt) > /* @__PURE__ */ new Date())) {
+      throw new Error("The reservation hold has not expired.");
+    }
+    const captures = booking.payments.filter(
+      (payment) => payment.status === "completed" && payment.paymentType !== "refund" && paymentMinor2(payment) > 0
+    );
+    const refunds = booking.payments.filter(
+      (payment) => payment.paymentType === "refund" && payment.status === "refunded"
+    );
+    const availableByPayment = /* @__PURE__ */ new Map();
+    let availableCapturedMinor = 0;
+    for (const payment of captures) {
+      const settledRefundMinor = refunds.filter((refund) => refund.providerData?.sourcePaymentId === payment.id).reduce((sum, refund) => sum + paymentMinor2(refund), 0);
+      const reservedRefundMinor = booking.refundIntents.filter((intent) => intent.sourcePaymentId === payment.id && ACTIVE_REFUND_INTENT_STATUSES.includes(intent.status)).reduce((sum, intent) => sum + intent.amountMinor, 0);
+      const available = paymentMinor2(payment) - settledRefundMinor - reservedRefundMinor;
+      if (available < 0) throw new Error("Recorded refunds exceed the captured payment.");
+      availableByPayment.set(payment.id, available);
+      availableCapturedMinor += available;
+    }
+    const firstRoomNight = booking.lineItems.find((line) => line.type === "room");
+    const policy = firstRoomNight?.cancellationPolicySnapshot || booking.pricingSnapshot?.cancellationPolicy || booking.ratePlan?.cancellationPolicy;
+    const stayNights = Math.max(1, Math.round((booking.checkOutDate.getTime() - booking.checkInDate.getTime()) / 864e5));
+    const bookingTotalMinor = Number(booking.totalAmountMinor || Math.round(Number(booking.totalAmount || 0) * 100));
+    const firstNightMinor = Number(firstRoomNight?.totalPrice || 0) || Math.ceil(bookingTotalMinor / stayNights);
+    const channelTermsUnknown = !policy && booking.source === "ota";
+    if (channelTermsUnknown && source !== "channel" && !abandoned) {
+      throw new Error("This channel reservation has no recorded cancellation terms. Cancel it in the booking channel.");
+    }
+    const cancellationTerms = abandoned ? { policy: "flexible", refundableMinor: availableCapturedMinor, cancellationFeeMinor: 0, capturedMinor: availableCapturedMinor, summary: "Unconfirmed reservation released without a cancellation fee. Any received payment is being returned.", fullRefundDeadline: null } : channelTermsUnknown ? { policy: "flexible", refundableMinor: 0, cancellationFeeMinor: 0, capturedMinor: availableCapturedMinor, summary: "Cancelled by the booking channel. Any refund follows the channel\u2019s own terms.", fullRefundDeadline: null } : calculateCancellationTerms({
+      policy,
+      checkInDate: booking.pricingSnapshot?.arrivalInstant || booking.checkInDate,
+      cancelledAt: /* @__PURE__ */ new Date(),
+      capturedMinor: availableCapturedMinor,
+      firstNightMinor,
+      bookingTotalMinor
+    });
+    const folioId = await applyCancellationFolioTerms(tx, booking, eventKey, cancellationTerms.cancellationFeeMinor);
+    let remainingRefundMinor = cancellationTerms.refundableMinor;
+    const cancellationRefundIntentIds = [];
+    const manualRefundIds = [];
+    for (const payment of captures) {
+      const available = availableByPayment.get(payment.id) || 0;
+      const refundMinor = Math.min(available, remainingRefundMinor);
+      if (refundMinor <= 0) continue;
+      if (!Number.isSafeInteger(refundMinor) || refundMinor > MAX_REFUND_INTENT_MINOR) {
+        throw new Error("Cancellation refund amount exceeds the PostgreSQL Int32 minor-unit limit.");
+      }
+      remainingRefundMinor -= refundMinor;
+      const isManual = payment.paymentProvider?.code === "pp_manual_manual";
+      if (!payment.paymentProvider || !isManual && !isOnlinePaymentProviderCode(payment.paymentProvider.code)) {
+        throw new Error("The captured payment provider does not support a durable refund workflow.");
+      }
+      const providerPaymentId = payment.providerCaptureId || payment.providerPaymentId || payment.stripePaymentIntentId;
+      if (!isManual && !providerPaymentId) throw new Error("A completed payment is missing its provider identifier.");
+      const sourceCurrencyCode = normalizeFolioCurrency(String(payment.currency || ""));
+      const bookingCurrencyCode = normalizeFolioCurrency(String(booking.currencyCode || "USD"));
+      if (sourceCurrencyCode !== bookingCurrencyCode) {
+        throw new Error("Cancellation refund currency does not match booking currency.");
+      }
+      const intentKey = `${eventKey}:${payment.id}`;
+      const refundRequest = { bookingId, sourcePaymentId: payment.id, amountMinor: refundMinor, reason: normalized.reason };
+      const intent = requirePrismaResult3(await prisma.refundIntent.create({
+        data: {
+          intentKey,
+          requestHash: hashLifecycleRequest(refundRequest),
+          cancellationEventKey: eventKey,
+          propertyKey: HOTEL_PROPERTY_KEY,
+          bookingId,
+          sourcePaymentId: payment.id,
+          paymentProviderId: payment.paymentProvider.id,
+          amountMinor: refundMinor,
+          currencyCode: sourceCurrencyCode,
+          reason: normalized.reason,
+          actorId: actorId || null,
+          status: "pending",
+          attempts: 0,
+          maxAttempts: REFUND_MAX_ATTEMPTS,
+          availableAt: /* @__PURE__ */ new Date()
+        },
+        select: { id: true }
+      }));
+      cancellationRefundIntentIds.push(intent.id);
+    }
+    if (remainingRefundMinor !== 0) throw new Error("Cancellation refund allocation did not match captured payment evidence.");
+    const outstandingRefundIntents = booking.refundIntents.filter(
+      (intent) => ACTIVE_REFUND_INTENT_STATUSES.includes(intent.status)
+    );
+    for (const intent of outstandingRefundIntents) {
+      const boundCancellationKey = String(intent.cancellationEventKey || "").trim();
+      if (boundCancellationKey && boundCancellationKey !== eventKey) {
+        throw new Error("An outstanding refund is already bound to a different cancellation.");
+      }
+      if (!boundCancellationKey) {
+        await prisma.refundIntent.update({ where: { id: intent.id }, data: { cancellationEventKey: eventKey } });
+      }
+    }
+    const refundIntentIds = [.../* @__PURE__ */ new Set([
+      ...cancellationRefundIntentIds,
+      ...outstandingRefundIntents.map((intent) => intent.id)
+    ])];
+    const hasOutstandingRefunds = refundIntentIds.length > 0;
+    const retainedMinor = Math.max(0, availableCapturedMinor - cancellationTerms.refundableMinor);
+    const outstandingFeeMinor = Math.max(0, cancellationTerms.cancellationFeeMinor - retainedMinor);
+    const finalPaymentStatus = outstandingFeeMinor > 0 ? retainedMinor > 0 ? "partial" : "unpaid" : availableCapturedMinor > 0 && cancellationTerms.refundableMinor === availableCapturedMinor ? "refunded" : booking.paymentStatus;
+    const now = /* @__PURE__ */ new Date();
+    const updated = requirePrismaResult3(await prisma.booking.update({
+      where: { id: bookingId },
+      data: hasOutstandingRefunds && !abandoned ? { status: "cancellation_pending", balanceDueMinor: outstandingFeeMinor, balanceDue: outstandingFeeMinor / 100 } : {
+        status: source === "no_show" ? "no_show" : "cancelled",
+        paymentStatus: finalPaymentStatus,
+        balanceDueMinor: outstandingFeeMinor,
+        balanceDue: outstandingFeeMinor / 100,
+        cancelledAt: now,
+        holdExpiresAt: null
+      }
+    }));
+    await recomputeBookingPaymentState(prisma, bookingId);
+    await prisma.bookingModificationRequest.updateMany({
+      where: { bookingId, status: "pending" },
+      data: { status: "declined", resolvedAt: now, staffNote: "Closed because the reservation was cancelled.", updatedAt: now }
+    });
+    if (["cancelled", "no_show"].includes(updated.status)) await releaseCancelledGroupPickup(prisma, bookingId, eventKey);
+    await recordHotelLifecycleEvent({
+      prisma,
+      eventKey,
+      actorId: actorId || null,
+      identity,
+      beforeSnapshot: { status: booking.status, paymentStatus: booking.paymentStatus, balanceDue: booking.balanceDue },
+      afterSnapshot: {
+        status: updated.status,
+        folioId,
+        refundIntentIds,
+        manualRefundIds,
+        cancellationTerms
+      },
+      metadata: { confirmationNumber: booking.confirmationNumber, refundReason: normalized.reason, source }
+    });
+    return updated;
+  };
+  if (withinTransaction) return execute(context);
+  for (let attempt = 1; attempt <= TRANSACTION_RETRY_LIMIT; attempt += 1) {
+    try {
+      return await context.transaction(execute, { maxWait: 5e3, timeout: 3e4, isolationLevel: "ReadCommitted" });
+    } catch (error) {
+      if (!retryableTransactionError(error) || attempt === TRANSACTION_RETRY_LIMIT) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 10));
+    }
+  }
+  throw new Error("Cancellation transaction retry limit exceeded.");
+}
+
+// features/keystone/payments/settlement.ts
 init_paymentProviderAdapter();
 var TRANSACTION_OPTIONS = {
   maxWait: 5e3,
@@ -9474,6 +10320,23 @@ async function lockBookingPayment(prisma, bookingId) {
     "SELECT pg_advisory_xact_lock(hashtext($1))",
     `hotel-booking:${bookingId}`
   );
+}
+function paymentSessionObligationRecoveryReason(session) {
+  if (session.data?.retiredAt) return "Capture belongs to a retired payment session";
+  const obligation = session.data?.obligation;
+  if (!obligation || typeof obligation !== "object" || Array.isArray(obligation)) {
+    return "Capture has no frozen payment-session obligation";
+  }
+  const booking = session.booking;
+  if (obligation.pricingRevision !== (booking.pricingRevision || 1)) {
+    return "Capture belongs to an earlier reservation pricing revision";
+  }
+  const expectedDepositPercent = Number(booking.pricingSnapshot?.depositPercent ?? 100);
+  const expectedCurrencyCode = String(booking.currencyCode || "USD").toUpperCase();
+  if (!Number.isSafeInteger(obligation.amountMinor) || obligation.amountMinor !== session.amount || !Number.isSafeInteger(obligation.depositPercent) || obligation.depositPercent !== expectedDepositPercent || obligation.currencyCode !== expectedCurrencyCode) {
+    return "Capture does not match its frozen payment-session obligation";
+  }
+  return "";
 }
 function assertReplayMatches(existing, replay) {
   if (existing.providerCode !== replay.providerCode || existing.providerEventId !== replay.providerEventId || existing.eventType !== replay.eventType || existing.payloadHash !== replay.payloadHash) {
@@ -9555,9 +10418,10 @@ async function finalizeBookingPayment({
     } });
     if (otherCapture) throw new Error("Provider capture is already bound to another payment session.");
     const now = /* @__PURE__ */ new Date();
-    let confirmationAvailable = ["pending", "confirmed"].includes(session.booking.status);
+    const inHouse = session.booking.status === "checked_in";
+    let confirmationAvailable = inHouse || ["pending", "confirmed"].includes(session.booking.status);
     let recoveryReason = confirmationAvailable ? "" : `Late capture for ${session.booking.status} reservation`;
-    if (confirmationAvailable) {
+    if (confirmationAvailable && !inHouse) {
       try {
         await assertBookingConfirmationInventory(transactionContext, session.booking, now);
       } catch (error) {
@@ -9569,13 +10433,14 @@ async function finalizeBookingPayment({
     const beforeCapture = await getBookingCollectibleBalance(transactionContext, bookingId);
     const reservedRefunds = await prisma.refundIntent.findMany({ where: { bookingId, status: { in: ["pending", "processing", "failed", "dead_letter"] } }, select: { amountMinor: true } });
     const reservedMinor = reservedRefunds.reduce((sum, intent) => sum + intent.amountMinor, 0);
-    const staleObligation = Boolean(session.data?.retiredAt) || session.data?.obligation && session.data.obligation.pricingRevision !== (session.booking.pricingRevision || 1);
+    const obligationRecoveryReason = paymentSessionObligationRecoveryReason(session);
+    const staleObligation = Boolean(obligationRecoveryReason);
     const recoveryMinor = staleObligation ? amount3 : captureRecoveryAmount(session.booking, amount3, beforeCapture.balanceDueMinor, confirmationAvailable);
-    if (staleObligation) recoveryReason = "Capture belongs to an earlier reservation pricing revision";
+    if (staleObligation) recoveryReason = obligationRecoveryReason;
     if (recoveryMinor && !recoveryReason) recoveryReason = "Capture exceeds the current reservation obligation";
     const payment = await prisma.bookingPayment.create({
       data: {
-        paymentReference: `PAY-${(0, import_node_crypto13.randomUUID)().replaceAll("-", "").slice(0, 16).toUpperCase()}`,
+        paymentReference: `PAY-${(0, import_node_crypto14.randomUUID)().replaceAll("-", "").slice(0, 16).toUpperCase()}`,
         paymentType: session.booking.status === "pending" && Number(session.booking.pricingSnapshot?.depositPercent ?? 100) < 100 ? "deposit" : "full_payment",
         amountMinor: amount3,
         amount: amount3 / 100,
@@ -9635,7 +10500,7 @@ async function finalizeBookingPayment({
         balanceDueMinor: remainingMinor,
         balanceDue: remainingMinor / 100,
         ...payment.paymentType === "deposit" ? { depositAmountMinor: paidMinor, depositAmount: paidMinor / 100 } : {},
-        ...depositSatisfied ? {
+        ...depositSatisfied && !inHouse ? {
           status: "confirmed",
           holdExpiresAt: null,
           confirmedAt: session.booking.confirmedAt || now
@@ -9666,13 +10531,6 @@ async function finalizeBookingPayment({
       },
       metadata: { providerCode, paymentSessionId: session.id }
     });
-    if (confirmationAvailable && depositSatisfied) {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: "booking_confirmation",
-        eventKey: `booking:${bookingId}:confirmation:v${session.booking.pricingRevision || 1}`
-      });
-    }
     if (replay) {
       await prisma.paymentEvent.create({
         data: {
@@ -9688,83 +10546,10 @@ async function finalizeBookingPayment({
     return { paymentId: payment.id, replayed: false, recoveryMinor, confirmationAvailable };
   });
 }
-async function retireBookingPaymentSession(context, sessionId, bookingId, cancel = cancelPayment) {
-  const session = await serializableTransaction(context, async (tx) => {
-    await lockBookingPayment(tx.prisma, bookingId);
-    const current = await tx.prisma.bookingPaymentSession.findUnique({ where: { id: sessionId }, include: { paymentProvider: true, payment: true } });
-    if (!current || current.bookingId !== bookingId) throw new Error("Retired payment session does not belong to booking.");
-    if (current.payment) {
-      await tx.prisma.bookingPaymentSession.update({ where: { id: current.id }, data: { isSelected: false, data: { ...current.data || {}, retirement: { status: "captured" } } } });
-      return null;
-    }
-    const data = {
-      ...current.data || {},
-      retiredAt: current.data?.retiredAt || (/* @__PURE__ */ new Date()).toISOString(),
-      retirement: current.data?.retirement || { status: current.paymentProvider?.code === "pp_stripe_stripe" ? "pending" : "provider_expiry_required", attempts: 0 }
-    };
-    await tx.prisma.bookingPaymentSession.update({ where: { id: current.id }, data: { isSelected: false, data } });
-    return { ...current, data };
-  });
-  if (!session || session.paymentProvider?.code !== "pp_stripe_stripe" || ["cancelled", "captured"].includes(session.data?.retirement?.status)) return;
-  const attempts = Number(session.data?.retirement?.attempts || 0) + 1;
-  let retirement;
-  try {
-    const result = await cancel({
-      provider: session.paymentProvider,
-      paymentId: session.data.paymentIntentId,
-      idempotencyKey: `retire:${session.id}`
-    });
-    if (result.settlement?.isSettled) {
-      await finalizeBookingPayment({
-        context,
-        bookingId,
-        paymentSessionId: session.id,
-        providerCode: session.paymentProvider.code,
-        providerPaymentId: session.data.paymentIntentId,
-        providerCaptureId: session.data.paymentIntentId,
-        amount: result.settlement.amount,
-        currencyCode: result.settlement.currencyCode,
-        providerData: result.data
-      });
-      retirement = { status: "captured", attempts };
-    } else if (result.status === "canceled") retirement = { status: "cancelled", attempts };
-    else throw new Error("Provider cancellation is not terminal.");
-  } catch {
-    retirement = {
-      status: "failed",
-      attempts,
-      nextAttemptAt: new Date(Date.now() + Math.min(36e5, 5e3 * 2 ** Math.min(attempts, 10))).toISOString(),
-      message: "Provider cancellation could not be confirmed; late settlement remains recoverable."
-    };
-  }
-  await serializableTransaction(context, async (tx) => {
-    await lockBookingPayment(tx.prisma, bookingId);
-    const current = await tx.prisma.bookingPaymentSession.findUnique({ where: { id: sessionId } });
-    await tx.prisma.bookingPaymentSession.update({ where: { id: sessionId }, data: { data: { ...current.data || {}, retirement } } });
-  });
-  return retirement.status;
-}
-async function dispatchPaymentSessionRetirements(context) {
-  const sessions = await context.prisma.bookingPaymentSession.findMany({
-    where: { OR: [{ data: { path: ["retirement", "status"], equals: "pending" } }, { data: { path: ["retirement", "status"], equals: "failed" } }] },
-    orderBy: { updatedAt: "asc" },
-    take: 20
-  });
-  let unresolved = 0;
-  for (const session of sessions) {
-    if (session.data?.retirement?.nextAttemptAt && new Date(session.data.retirement.nextAttemptAt) > /* @__PURE__ */ new Date()) {
-      unresolved += 1;
-      continue;
-    }
-    const status = await retireBookingPaymentSession(context, session.id, session.bookingId);
-    if (status === "failed") unresolved += 1;
-  }
-  return { unresolved };
-}
 
-// features/keystone/lib/hotelSecurityAuthorization.ts
+// features/keystone/security/authorization.ts
 async function states(prisma, bookingId) {
-  const rows = await prisma.$queryRaw(import_client5.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent" WHERE "propertyKey"=${HOTEL_PROPERTY_KEY} AND "aggregateType"='security_authorization' ${bookingId ? import_client5.Prisma.sql`AND "aggregateId"=${bookingId}` : import_client5.Prisma.empty} ORDER BY "aggregateId", ("afterSnapshot"->>'sequence')::integer DESC`);
+  const rows = await prisma.$queryRaw(import_client7.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent" WHERE "propertyKey"=${HOTEL_PROPERTY_KEY} AND "aggregateType"='security_authorization' ${bookingId ? import_client7.Prisma.sql`AND "aggregateId"=${bookingId}` : import_client7.Prisma.empty} ORDER BY "aggregateId", ("afterSnapshot"->>'sequence')::integer DESC`);
   return rows.map((row) => row.state);
 }
 async function persist(prisma, before, after, key4, request) {
@@ -9784,9 +10569,12 @@ function projection(state) {
 async function hotelSecurityAuthorization(_root, { bookingId }, context) {
   await assertGuestBookingAccess(context, bookingId);
   const [state] = await states(context.prisma, bookingId);
-  const booking = await context.prisma.booking.findUnique({ where: { id: bookingId }, select: { pricingSnapshot: true } });
+  const booking = await context.prisma.booking.findUnique({ where: { id: bookingId }, select: { pricingSnapshot: true, status: true, billingFolioId: true } });
   const provider = await context.prisma.paymentProvider.findUnique({ where: { code: "pp_stripe_stripe" } });
-  return { authorization: projection(state), configuredAmountMinor: Number(booking?.pricingSnapshot?.securityDepositMinor || 0), available: Boolean(isPaymentProviderConfigured(provider)), operator: permissions.canManagePayments({ session: context.session }) };
+  const available = Boolean(provider && isPaymentProviderConfigured(provider));
+  const configuredAmountMinor = Number(booking?.pricingSnapshot?.securityDepositMinor || 0);
+  const unavailableReason = !available ? "Card holds are not available right now." : booking?.billingFolioId && !canManageBookingRecords(context) ? "The property manages card holds for group reservations." : booking?.status === "pending" ? "You can authorize the card hold once your reservation is confirmed." : !["confirmed", "checked_in"].includes(String(booking?.status)) ? "Card holds are not available for this reservation." : !Number.isSafeInteger(configuredAmountMinor) || configuredAmountMinor <= 0 ? "This reservation has no card hold amount." : state && !["canceled", "succeeded"].includes(state.status) ? "A card hold is already in progress for this reservation." : "";
+  return { authorization: projection(state), configuredAmountMinor, available, canInitiate: !unavailableReason, unavailableReason, operator: permissions.canManagePayments({ session: context.session }) };
 }
 function validateSecurityEvidence(state, evidence2) {
   if (evidence2.authorizationId !== state.id || evidence2.bookingId !== state.bookingId || state.providerPaymentId && evidence2.id !== state.providerPaymentId || !String(evidence2.id || "").startsWith("pi_")) throw new Error("Security authorization identity mismatch.");
@@ -9811,7 +10599,7 @@ async function applyEvidence(tx, state, evidence2, eventKey) {
       const authorizedCapture = state.pending?.action === "capture" && state.pending.amountMinor === evidence2.amountReceivedMinor;
       const recoveryMinor = !authorizedCapture || !["confirmed", "checked_in"].includes(booking.status) ? evidence2.amountReceivedMinor : Math.max(0, evidence2.amountReceivedMinor - collectible.balanceDueMinor);
       const payment = await prisma.bookingPayment.create({ data: {
-        paymentReference: `SEC-${(0, import_node_crypto14.randomUUID)().replaceAll("-", "").slice(0, 16).toUpperCase()}`,
+        paymentReference: `SEC-${(0, import_node_crypto15.randomUUID)().replaceAll("-", "").slice(0, 16).toUpperCase()}`,
         bookingId: state.bookingId,
         paymentProviderId: state.providerId,
         paymentType: "full_payment",
@@ -9858,7 +10646,7 @@ async function executePending(context, state, adapter = securityAuthorization) {
     await runSerializableTransaction(context, async (tx) => {
       await lockHotelLifecycle(tx.prisma, `security:${state.bookingId}`);
       const [current] = await states(tx.prisma, state.bookingId);
-      if (current?.id === state.id && current.pending?.key === operation?.key) await persist(tx.prisma, current, { ...current, sequence: current.sequence + 1, lastError: "Provider reconciliation failed; retry the same operation.", nextReconcileAt: new Date(Date.now() + 6e4).toISOString() }, `security-error:${(0, import_node_crypto14.randomUUID)()}`, { action: "provider_failed", operationKey: operation?.key });
+      if (current?.id === state.id && current.pending?.key === operation?.key) await persist(tx.prisma, current, { ...current, sequence: current.sequence + 1, lastError: "Provider reconciliation failed; retry the same operation.", nextReconcileAt: new Date(Date.now() + 6e4).toISOString() }, `security-error:${(0, import_node_crypto15.randomUUID)()}`, { action: "provider_failed", operationKey: operation?.key });
     });
     throw new Error("Security authorization is awaiting provider reconciliation. Retry the same operation.");
   }
@@ -9868,7 +10656,7 @@ async function executePending(context, state, adapter = securityAuthorization) {
     const [current] = await states(tx.prisma, state.bookingId);
     if (current?.id !== state.id) throw new Error("Security authorization changed during provider reconciliation.");
     if (["succeeded", "canceled"].includes(current.status) && evidence2.status !== current.status && evidence2.status !== "succeeded") return current;
-    return applyEvidence(tx, current, evidence2, `security-result:${(0, import_node_crypto14.randomUUID)()}`);
+    return applyEvidence(tx, current, evidence2, `security-result:${(0, import_node_crypto15.randomUUID)()}`);
   });
   return { authorization: projection(next2), clientSecret: ["requires_payment_method", "requires_confirmation", "requires_action"].includes(next2.status) ? evidence2.clientSecret : null };
 }
@@ -9913,7 +10701,7 @@ async function manageHotelSecurityAuthorization(_root, { input }, context, adapt
       if (!Number.isSafeInteger(required3) || required3 <= 0) throw new Error("This reservation has no contracted security authorization amount.");
       const provider = await prisma.paymentProvider.findUnique({ where: { code: "pp_stripe_stripe" } });
       if (!provider || !isPaymentProviderConfigured(provider)) throw new Error("Configured Stripe is required for card security authorizations.");
-      next2 = { id: (0, import_node_crypto14.createHash)("sha256").update(`${bookingId}:${key4}`).digest("hex").slice(0, 24), bookingId, sequence: (current?.sequence || 0) + 1, providerId: provider.id, amountMinor: required3, status: "initializing", pending: { action, key: eventKey, amountMinor: required3, actorId } };
+      next2 = { id: (0, import_node_crypto15.createHash)("sha256").update(`${bookingId}:${key4}`).digest("hex").slice(0, 24), bookingId, sequence: (current?.sequence || 0) + 1, providerId: provider.id, amountMinor: required3, status: "initializing", pending: { action, key: eventKey, amountMinor: required3, actorId } };
     } else {
       if (!current?.providerPaymentId || ["canceled", "succeeded"].includes(current.status)) throw new Error("No open card authorization can be changed.");
       if (action === "capture") {
@@ -9934,50 +10722,24 @@ async function manageHotelSecurityAuthorization(_root, { input }, context, adapt
   });
   return executePending(context, state, adapter);
 }
-async function reconcileSecurityAuthorizations(context, adapter = securityAuthorization) {
-  let failed = 0;
-  const due = (await states(context.prisma)).filter((state) => (state.pending || !["succeeded", "canceled"].includes(state.status)) && (!state.nextReconcileAt || new Date(state.nextReconcileAt) <= /* @__PURE__ */ new Date())).sort((a, b) => String(a.nextReconcileAt || "").localeCompare(String(b.nextReconcileAt || ""))).slice(0, 20);
-  for (const state of due) {
-    if (!state.pending && ["succeeded", "canceled"].includes(state.status)) continue;
-    try {
-      let current = state;
-      if (!state.pending) {
-        const booking = await context.prisma.booking.findUnique({ where: { id: state.bookingId } });
-        if (booking && ["cancelled", "no_show", "checked_out"].includes(booking.status)) current = await runSerializableTransaction(context, async (tx) => {
-          await tx.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${state.bookingId}`);
-          await lockHotelLifecycle(tx.prisma, `security:${state.bookingId}`);
-          const [latest2] = await states(tx.prisma, state.bookingId);
-          if (latest2.pending || ["succeeded", "canceled"].includes(latest2.status)) return latest2;
-          const next2 = { ...latest2, sequence: latest2.sequence + 1, pending: { action: "release", key: `security-auto-release:${latest2.id}`, amountMinor: 0, actorId: null } };
-          await persist(tx.prisma, latest2, next2, next2.pending.key, { action: "release_after_departure" });
-          return next2;
-        });
-      }
-      await executePending(context, current, adapter);
-    } catch {
-      failed++;
-    }
-  }
-  return failed;
-}
 
 // features/keystone/mutations/index.ts
-init_hotelDerivedRates();
-init_hotelLoyalty();
+init_derived();
+init_commands2();
 
-// features/keystone/lib/maintenanceCommercial.ts
+// features/keystone/operations/maintenanceCommercial.ts
 init_access();
 init_serializableTransaction();
 init_hotelLifecycle();
 init_hotelBusinessTime();
 var empty = (legacyCostMinor = 0) => ({ revision: 0, vendorName: "", vendorReference: "", dueAt: null, acknowledgedAt: null, legacyCostMinor, laborCostMinor: 0, parts: [] });
-function text44(value, label, max = 500) {
+function text42(value, label, max = 500) {
   const result = String(value || "").trim();
   if (!result || result.length > max) throw new Error(`${label} is required (maximum ${max} characters).`);
   return result;
 }
 function money(value, label) {
-  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 2147483647) throw new Error(`${label} must be a nonnegative integer amount in minor units.`);
+  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > 2147483647) throw new Error(`${label} must be zero or more, in whole cents.`);
   return Number(value);
 }
 function maintenanceCommercialCost(state) {
@@ -9987,10 +10749,10 @@ function maintenanceCommercialCost(state) {
 function planMaintenanceCommercial(state, command, input, now = /* @__PURE__ */ new Date()) {
   const next2 = structuredClone(state);
   if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision !== state.revision) throw new Error("Maintenance commercial details changed. Refresh before retrying.");
-  text44(input.reason, "Evidence or change reason", 1e3);
+  text42(input.reason, "Evidence or change reason", 1e3);
   if (command === "plan") {
-    next2.vendorName = text44(input.vendorName, "Vendor or internal team", 200);
-    next2.vendorReference = text44(input.vendorReference, "Reviewed work-order or vendor reference", 200);
+    next2.vendorName = text42(input.vendorName, "Vendor or internal team", 200);
+    next2.vendorReference = text42(input.vendorReference, "Reviewed work-order or vendor reference", 200);
     const dueAt = new Date(input.dueAt);
     if (!Number.isFinite(dueAt.getTime()) || dueAt < now) throw new Error("Choose a future repair deadline with an explicit time zone.");
     if (!/(Z|[+-]\d\d:\d\d)$/.test(String(input.dueAt))) throw new Error("Repair deadline requires an explicit time zone.");
@@ -10000,11 +10762,11 @@ function planMaintenanceCommercial(state, command, input, now = /* @__PURE__ */ 
     if (!next2.vendorName || !next2.dueAt || next2.acknowledgedAt) throw new Error("An unacknowledged work order is required.");
     next2.acknowledgedAt = now.toISOString();
   } else if (command === "order_part") {
-    const id = text44(input.partId, "Unique part line reference", 100);
+    const id = text42(input.partId, "Unique part line reference", 100);
     if (next2.parts.some((part2) => part2.id === id)) throw new Error("Part line reference already exists.");
     if (next2.parts.length >= 100) throw new Error("A work order supports at most 100 parts lines.");
     if (!Number.isSafeInteger(input.quantity) || input.quantity < 1 || input.quantity > 1e4) throw new Error("Part quantity must be 1\u201310000 whole units.");
-    const part = { id, description: text44(input.description, "Part description", 200), quantity: input.quantity, unitCostMinor: money(input.unitCostMinor, "Part unit cost"), status: "ordered" };
+    const part = { id, description: text42(input.description, "Part description", 200), quantity: input.quantity, unitCostMinor: money(input.unitCostMinor, "Part unit cost"), status: "ordered" };
     money(part.quantity * part.unitCostMinor, "Extended part cost");
     next2.parts.push(part);
   } else if (command === "part_status") {
@@ -10036,12 +10798,12 @@ async function workspace(prisma, requestId) {
 }
 async function hotelMaintenanceCommercial(_root, { requestId }, context) {
   authorize7(context);
-  return JSON.stringify(await workspace(context.prisma, text44(requestId, "Request ID", 200)));
+  return JSON.stringify(await workspace(context.prisma, text42(requestId, "Request ID", 200)));
 }
 async function updateHotelMaintenanceCommercial(_root, { requestId, command, payload, idempotencyKey }, context) {
   authorize7(context);
-  const id = text44(requestId, "Request ID", 200);
-  const eventKey = `maintenance-commercial:${text44(idempotencyKey, "Idempotency key", 150)}`;
+  const id = text42(requestId, "Request ID", 200);
+  const eventKey = `maintenance-commercial:${text42(idempotencyKey, "Idempotency key", 150)}`;
   if (payload.length > 2e4) throw new Error("Work-order payload is too large.");
   const data = JSON.parse(payload);
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("A structured work-order request is required.");
@@ -10072,7 +10834,7 @@ var maintenanceCommercialTypeDefs = String.raw`
 var maintenanceCommercialResolvers = { Query: { hotelMaintenanceCommercial }, Mutation: { updateHotelMaintenanceCommercial } };
 
 // features/keystone/lib/hotelChannelConfiguration.ts
-var import_node_crypto15 = require("node:crypto");
+var import_node_crypto16 = require("node:crypto");
 init_access();
 init_channelCredentials();
 init_hotelLifecycle();
@@ -10086,9 +10848,11 @@ async function saveHotelChannelDraft(_root, { input }, context) {
   if (!name || name.length > 150 || !/^[\w:-]{16,180}$/.test(key4) || !Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new Error("Invalid channel draft identity or version.");
   if (!["ota", "gds", "direct", "metasearch"].includes(input.channelType)) throw new Error("Invalid channel type.");
   const apiBaseUrl = String(input.apiBaseUrl || "").trim();
+  let allowedOrigins = [];
   if (apiBaseUrl) {
     const url = new URL(apiBaseUrl);
     if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Bridge base URL must use HTTPS without credentials, query or fragment.");
+    allowedOrigins = [url.origin];
   }
   const accessToken = String(input.accessToken || "");
   const webhookSecret = String(input.webhookSecret || "");
@@ -10096,8 +10860,8 @@ async function saveHotelChannelDraft(_root, { input }, context) {
   const mapping = input.roomTypes;
   if (!mapping || typeof mapping !== "object" || Array.isArray(mapping) || Object.keys(mapping).length > 500) throw new Error("Room mappings must be an object of external IDs to local room type IDs.");
   for (const [external, local] of Object.entries(mapping)) if (!external || external.length > 150 || typeof local !== "string" || !local || local.length > 100) throw new Error("Invalid room mapping.");
-  const credentials = { mode: "disabled", apiBaseUrl, accessToken, webhookSecret };
-  const request = { name, channelId, channelType: input.channelType, expectedVersion, mapping, credentialDigest: (0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(credentials)).digest("hex") };
+  const credentials = { mode: "disabled", apiBaseUrl, allowedOrigins, accessToken, webhookSecret };
+  const request = { name, channelId, channelType: input.channelType, expectedVersion, mapping, credentialDigest: (0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(credentials)).digest("hex") };
   const eventKey = `channel-draft:${key4}`;
   return runSerializableTransaction(context, async (tx) => {
     await lockHotelLifecycle(tx.prisma, eventKey);
@@ -10123,47 +10887,6 @@ async function saveHotelChannelDraft(_root, { input }, context) {
 var import_node_crypto17 = require("node:crypto");
 init_access();
 init_sensitiveData();
-
-// features/keystone/lib/abuseControl.ts
-var import_node_crypto16 = require("node:crypto");
-var import_client6 = require("@prisma/client");
-function normalizeIp(value) {
-  const ip = value.trim().replace(/^::ffff:/, "");
-  return /^[a-f0-9:.]{2,64}$/i.test(ip) ? ip : "unknown";
-}
-function requestNetworkIdentity(context) {
-  const req = context?.req;
-  const trustMode = String(process.env.TRUST_PROXY || "off").toLowerCase();
-  const railwayRequestId = String(req?.headers?.["x-railway-request-id"] || "");
-  const railwayBoundary = trustMode === "railway" && Boolean(process.env.RAILWAY_ENVIRONMENT) && /^[a-zA-Z0-9_-]{8,128}$/.test(railwayRequestId);
-  if (railwayBoundary) {
-    const forwarded = String(req?.headers?.["x-forwarded-for"] || "").split(",")[0];
-    if (forwarded) return normalizeIp(forwarded);
-  }
-  return normalizeIp(String(req?.socket?.remoteAddress || "unknown"));
-}
-async function enforceAbuseLimit(context, options) {
-  const now = /* @__PURE__ */ new Date();
-  const windowStartedAt = new Date(Math.floor(now.getTime() / options.windowMs) * options.windowMs);
-  const expiresAt = new Date(windowStartedAt.getTime() + options.windowMs * 2);
-  const network = options.includeNetwork === false ? "global" : requestNetworkIdentity(context);
-  const identity = `${network}:${String(options.identity || "").trim().toLowerCase().slice(0, 200)}`;
-  const digest = (0, import_node_crypto16.createHash)("sha256").update(`${options.scope}:${identity}:${windowStartedAt.toISOString()}`).digest("hex");
-  const rows = await context.prisma.$queryRaw(import_client6.Prisma.sql`
-    INSERT INTO "HotelAbuseBucket" ("id", "bucketKey", "count", "windowStartedAt", "expiresAt")
-    VALUES (${`abuse_${digest.slice(0, 24)}`}, ${digest}, 1, ${windowStartedAt}, ${expiresAt})
-    ON CONFLICT ("bucketKey") DO UPDATE SET "count" = "HotelAbuseBucket"."count" + 1
-    RETURNING "count"
-  `);
-  const count = Number(rows[0]?.count || 0);
-  if (count > options.limit) {
-    const error = new Error("Too many requests. Please wait and try again.");
-    error.rateLimitEvidence = { scope: options.scope, count, limit: options.limit };
-    throw error;
-  }
-}
-
-// features/keystone/lib/hotelMfa.ts
 init_serializableTransaction();
 init_hotelLifecycle();
 var BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -10341,17 +11064,517 @@ var hotelMfaTypeDefs = String.raw`
   extend type Mutation { verifyHotelMfa(code:String!, recovery:Boolean):String!, manageHotelMfa(action:String!, password:String!, code:String, recovery:Boolean):String! }
 `;
 
-// features/keystone/mutations/index.ts
-init_hotelReceivables();
+// features/keystone/mutations/guestAccounts.ts
+init_guestBookingAccess();
 
-// features/keystone/lib/hotelDisputes.ts
-var import_client7 = require("@prisma/client");
+// features/keystone/lib/guessablePassword.ts
+var COMMON_WORDS = /* @__PURE__ */ new Set([
+  "password",
+  "passwort",
+  "passwd",
+  "pass",
+  "qwerty",
+  "qwertyuiop",
+  "qwertz",
+  "azerty",
+  "asdf",
+  "asdfgh",
+  "asdfghjkl",
+  "zxcvbn",
+  "zxcvbnm",
+  "abc",
+  "abcd",
+  "abcdef",
+  "abcdefg",
+  "abcdefgh",
+  "letmein",
+  "welcome",
+  "admin",
+  "administrator",
+  "iloveyou",
+  "monkey",
+  "dragon",
+  "football",
+  "baseball",
+  "soccer",
+  "sunshine",
+  "princess",
+  "master",
+  "hello",
+  "login",
+  "secret",
+  "changeme",
+  "trustno",
+  "starwars",
+  "superman",
+  "batman",
+  "shadow",
+  "freedom",
+  "whatever",
+  "hotel",
+  "guest",
+  "booking",
+  "test",
+  "user",
+  "default"
+]);
+function guessablePassword(password2, email) {
+  const lower = password2.toLowerCase();
+  if (new Set(lower).size < 5) return true;
+  if (/^[\d\s.+()-]+$/.test(lower)) return true;
+  const letters = lower.replace(/[^a-z]/g, "");
+  if (COMMON_WORDS.has(letters)) return true;
+  const mailbox = String(email || "").trim().toLowerCase().split("@")[0].replace(/[^a-z0-9]/g, "");
+  return mailbox.length >= 4 && lower.replace(/[^a-z0-9]/g, "").includes(mailbox);
+}
+
+// features/keystone/lib/mail.ts
+var import_nodemailer = require("nodemailer");
+
+// features/keystone/lib/productionConfig.ts
+var PLACEHOLDER2 = /(^|[-_.])(test|dummy|placeholder|changeme|your[_-]|example)([-_.]|$)|keystone|ethereal|localhost|127\.0\.0\.1/i;
+function required(env, key4) {
+  const value = String(env[key4] || "").trim();
+  if (!value) throw new Error(`${key4} is required in production.`);
+  return value;
+}
+function strongDomainSecret(env, key4) {
+  const value = required(env, key4);
+  if (value.length < 32) throw new Error(`${key4} must contain at least 32 characters.`);
+  if (PLACEHOLDER2.test(value)) throw new Error(`${key4} contains a development or placeholder value.`);
+  return value;
+}
+function databaseUrl(env) {
+  const value = required(env, "DATABASE_URL");
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
+  }
+  if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.pathname.slice(1)) {
+    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
+  }
+  return value;
+}
+function httpsOrigin(env, key4) {
+  const value = required(env, key4);
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${key4} must be a valid URL.`);
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/" || url.hostname.endsWith(".local")) {
+    throw new Error(`${key4} must be a canonical HTTPS origin without credentials, path, query, or fragment.`);
+  }
+  return url.origin;
+}
+var SITE_ORIGIN_KEYS = ["NEXT_PUBLIC_SITE_URL", "NEXTAUTH_URL"];
+function configuredSiteOrigin(env = process.env) {
+  return String(env.NEXT_PUBLIC_SITE_URL || env.NEXTAUTH_URL || "").trim();
+}
+function complete2(values) {
+  return values.every((value) => Boolean(String(value || "").trim()));
+}
+function validateProductionConfig(env = process.env) {
+  const capabilities2 = {
+    mailInfrastructureConfigured: complete2([env.SMTP_HOST, env.SMTP_PORT, env.SMTP_USER, env.SMTP_PASSWORD, env.SMTP_FROM]),
+    storageInfrastructureConfigured: complete2([env.S3_BUCKET_NAME, env.S3_REGION, env.S3_ACCESS_KEY_ID, env.S3_SECRET_ACCESS_KEY, env.S3_ENDPOINT])
+  };
+  if (env.NODE_ENV !== "production") return capabilities2;
+  databaseUrl(env);
+  strongDomainSecret(env, "SESSION_SECRET");
+  strongDomainSecret(env, "HOTEL_DATA_ENCRYPTION_KEY");
+  strongDomainSecret(env, "HOTEL_QUOTE_SECRET");
+  if (String(env.RESET_ACTION_SECRET || "").trim()) strongDomainSecret(env, "RESET_ACTION_SECRET");
+  const supplied = SITE_ORIGIN_KEYS.filter((key4) => String(env[key4] || "").trim());
+  if (!supplied.length) throw new Error("NEXT_PUBLIC_SITE_URL (or NEXTAUTH_URL) is required in production.");
+  const origins = new Set(supplied.map((key4) => httpsOrigin(env, key4)));
+  if (origins.size > 1) throw new Error("NEXT_PUBLIC_SITE_URL and NEXTAUTH_URL must use the same canonical origin.");
+  return capabilities2;
+}
+
+// features/keystone/lib/mail.ts
+function hotelMailInfrastructureConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASSWORD && process.env.SMTP_FROM);
+}
+function getBaseUrlForEmails() {
+  const configured = process.env.PASSWORD_RESET_ORIGIN || configuredSiteOrigin();
+  if (configured) return configured.replace(/\/$/, "");
+  if (process.env.NODE_ENV === "production") throw new Error("Email origin is not configured.");
+  const port = process.env.PORT?.trim();
+  return port && /^\d+$/.test(port) ? `http://localhost:${port}` : "http://localhost";
+}
+function mailFrom() {
+  if (process.env.SMTP_FROM) return process.env.SMTP_FROM;
+  if (process.env.NODE_ENV === "production") throw new Error("Email sender is not configured.");
+  return "stay@thealderhouse.example";
+}
+function getTransport() {
+  if (!hotelMailInfrastructureConfigured()) throw new Error("Email delivery infrastructure is unconfigured.");
+  const host = process.env.SMTP_HOST || (process.env.NODE_ENV === "production" ? "" : "smtp.ethereal.email");
+  if (!host) throw new Error("SMTP is not configured.");
+  return (0, import_nodemailer.createTransport)({
+    host,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_PORT === "465",
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    connectionTimeout: 15e3,
+    greetingTimeout: 15e3,
+    socketTimeout: 3e4
+  });
+}
+function passwordResetEmail({ url }) {
+  const backgroundColor = "#f9f9f9";
+  const textColor = "#444444";
+  const mainBackgroundColor = "#ffffff";
+  const buttonBackgroundColor = "#346df1";
+  const buttonBorderColor = "#346df1";
+  const buttonTextColor = "#ffffff";
+  return `
+    <body style="background: ${backgroundColor};">
+      <table width="100%" border="0" cellspacing="20" cellpadding="0" style="background: ${mainBackgroundColor}; max-width: 600px; margin: auto; border-radius: 10px;">
+        <tr>
+          <td align="center" style="padding: 10px 0px 0px 0px; font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
+            Please click below to reset your password
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding: 20px 0;">
+            <table border="0" cellspacing="0" cellpadding="0">
+              <tr>
+                <td align="center" style="border-radius: 5px;" bgcolor="${buttonBackgroundColor}"><a href="${url}" target="_blank" style="font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${buttonTextColor}; text-decoration: none; border-radius: 5px; padding: 10px 20px; border: 1px solid ${buttonBorderColor}; display: inline-block; font-weight: bold;">Reset Password</a></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding: 0px 0px 10px 0px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
+            If you did not request this email you can safely ignore it.
+          </td>
+        </tr>
+      </table>
+    </body>
+  `;
+}
+async function sendPasswordResetEmail(resetToken, to, baseUrl, audience = "staff") {
+  const frontendUrl = baseUrl || getBaseUrlForEmails();
+  const resetPath = audience === "guest" ? `/account/reset?token=${encodeURIComponent(resetToken)}&email=${encodeURIComponent(to)}` : `/dashboard/reset?token=${resetToken}`;
+  const info = await getTransport().sendMail({
+    to,
+    from: mailFrom(),
+    subject: "Your password reset token!",
+    html: passwordResetEmail({
+      url: `${frontendUrl}${resetPath}`
+    })
+  });
+  if (process.env.SMTP_USER?.includes("ethereal.email")) {
+    console.log(`\u{1F4E7} Message Sent!  Preview it at ${(0, import_nodemailer.getTestMessageUrl)(info)}`);
+  }
+}
+
+// features/keystone/lib/storefrontBooking.ts
+var STOREFRONT_BOOKING_QUERY = `
+  id
+  confirmationNumber
+  guestName
+  guestEmail
+  guestPhone
+  checkInDate
+  checkOutDate
+  numberOfNights
+  numberOfGuests
+  numberOfAdults
+  numberOfChildren
+  roomRate
+  taxAmount
+  feesAmount
+  totalAmount
+  depositAmount
+  balanceDue
+  roomRateMinor
+  taxAmountMinor
+  feesAmountMinor
+  totalAmountMinor
+  depositAmountMinor
+  balanceDueMinor
+  currencyCode
+  pricingSnapshot
+  status
+  paymentStatus
+  specialRequests
+  createdAt
+  confirmedAt
+  cancelledAt
+  roomAssignments {
+    id
+    ratePerNight
+    guestName
+    roomType {
+      id
+      name
+      thumbnail
+      roomImages(orderBy: { order: asc }) {
+        id
+        image { url }
+        imagePath
+        altText
+        caption
+        order
+        isPrimary
+      }
+    }
+    room {
+      roomNumber
+    }
+  }
+`;
+function guestBookedStayTerms(booking) {
+  const snapshot = booking?.pricingSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  const roomSubtotalMinor = snapshot.roomSubtotalMinor;
+  const taxAmountMinor = snapshot.taxMinor;
+  const feesAmountMinor = snapshot.feesMinor;
+  const totalAmountMinor = snapshot.totalMinor;
+  const securityDepositMinor = snapshot.securityDepositMinor;
+  const depositPercent = snapshot.depositPercent;
+  const nights = Number(booking.numberOfNights);
+  const currencyCode = String(snapshot.currencyCode || "").toUpperCase();
+  const bookingCurrencyCode = String(booking.currencyCode || "").toUpperCase();
+  const ratePlanName = String(snapshot.ratePlanName || "").trim();
+  const cancellationPolicy = snapshot.cancellationPolicy;
+  const mealPlan = snapshot.mealPlan;
+  if (![roomSubtotalMinor, taxAmountMinor, feesAmountMinor, totalAmountMinor, securityDepositMinor].every((value) => Number.isSafeInteger(value) && value >= 0)) return null;
+  const bookingAmounts = [booking.roomRateMinor, booking.taxAmountMinor, booking.feesAmountMinor, booking.totalAmountMinor];
+  if (!bookingAmounts.every((value) => Number.isSafeInteger(value) && value >= 0)) return null;
+  if (roomSubtotalMinor !== booking.roomRateMinor || taxAmountMinor !== booking.taxAmountMinor || feesAmountMinor !== booking.feesAmountMinor || totalAmountMinor !== booking.totalAmountMinor || currencyCode !== bookingCurrencyCode) return null;
+  const componentTotalMinor = roomSubtotalMinor + taxAmountMinor + feesAmountMinor;
+  if (!Number.isSafeInteger(componentTotalMinor) || componentTotalMinor !== totalAmountMinor) return null;
+  if (!Number.isSafeInteger(nights) || nights < 1 || !Number.isInteger(depositPercent) || depositPercent < 0 || depositPercent > 100) return null;
+  if (!/^[A-Z]{3}$/.test(currencyCode) || !ratePlanName || typeof cancellationPolicy !== "string" || typeof mealPlan !== "string") return null;
+  return {
+    ratePlanName,
+    nights,
+    roomSubtotalMinor,
+    taxAmountMinor,
+    feesAmountMinor,
+    totalAmountMinor,
+    currencyCode,
+    depositPercent,
+    securityDepositMinor,
+    cancellationPolicy,
+    mealPlan
+  };
+}
+async function findStorefrontBooking(context, bookingId) {
+  return context.sudo().query.Booking.findOne({
+    where: { id: bookingId },
+    query: STOREFRONT_BOOKING_QUERY
+  });
+}
+
+// features/keystone/mutations/guestAccounts.ts
+var guestAccountTypeDefs = String.raw`
+  type GuestAccount {
+    id: ID!
+    name: String!
+    email: String!
+    phone: String
+  }
+  type GuestAccountStatus {
+    account: GuestAccount
+    passwordResetAvailable: Boolean!
+  }
+  type GuestAccountResult {
+    account: GuestAccount
+    error: String
+  }
+  extend type Query {
+    guestAccountStatus: GuestAccountStatus!
+    guestAccountBookings(take: Int, skip: Int): [GuestBooking!]!
+    guestAccountBookingsCount: Int!
+  }
+  extend type Mutation {
+    registerGuestAccount(name: String!, email: String!, password: String!, phone: String): GuestAccountResult!
+    claimGuestAccountStays: Int!
+    updateGuestAccount(name: String!, phone: String): GuestAccountResult!
+    changeGuestAccountPassword(currentPassword: String!, newPassword: String!): GuestAccountResult!
+  }
+`;
+var EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+var GUEST_BOOKINGS_PAGE_SIZE = 50;
+var PHONE = /^[+\d\s().-]*$/;
+function guestAccountId(context) {
+  const session = context.session;
+  return session?.itemId && session.listKey === "User" && session.data?.isActive === true && !session.data?.role ? String(session.itemId) : null;
+}
+function clean(value, max) {
+  const text44 = String(value ?? "").trim();
+  return text44.length > max || /[\u0000-\u001f\u007f]/.test(text44) ? null : text44;
+}
+function projectAccount(user) {
+  return user ? { id: user.id, name: user.name, email: user.email, phone: user.phone || null } : null;
+}
+async function limited(context, scope, identity, limit, windowMs) {
+  try {
+    await enforceAbuseLimit(context, { scope, identity, limit, windowMs, includeNetwork: false });
+    return false;
+  } catch {
+    return true;
+  }
+}
+function createGuestAccountResolvers(mapGuestBooking2) {
+  return {
+    Query: {
+      guestAccountStatus: async (_root, _args, context) => {
+        const id = guestAccountId(context);
+        const [user, settings] = await Promise.all([
+          id ? context.prisma.user.findUnique({ where: { id }, select: { id: true, name: true, email: true, phone: true } }) : null,
+          context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { contactEmail: true } })
+        ]);
+        return {
+          account: projectAccount(user),
+          // Reset links are emailed; without mail delivery the storefront says so instead of claiming a send.
+          passwordResetAvailable: hotelMailInfrastructureConfigured() && Boolean(settings?.contactEmail)
+        };
+      },
+      guestAccountBookings: async (_root, args, context) => {
+        const id = guestAccountId(context);
+        if (!id) return [];
+        const take = Math.min(Math.max(Math.trunc(Number(args.take ?? GUEST_BOOKINGS_PAGE_SIZE)) || GUEST_BOOKINGS_PAGE_SIZE, 1), 100);
+        const skip = Math.min(Math.max(Math.trunc(Number(args.skip ?? 0)) || 0, 0), 1e5);
+        const bookings = await context.sudo().query.Booking.findMany({
+          where: { guest: { id: { equals: id } } },
+          orderBy: [{ checkInDate: "desc" }, { id: "desc" }],
+          take,
+          skip,
+          query: STOREFRONT_BOOKING_QUERY
+        });
+        return bookings.map(mapGuestBooking2);
+      },
+      guestAccountBookingsCount: async (_root, _args, context) => {
+        const id = guestAccountId(context);
+        return id ? context.prisma.booking.count({ where: { guestId: id } }) : 0;
+      }
+    },
+    Mutation: {
+      registerGuestAccount: async (_root, args, context) => {
+        const name = clean(args.name, 120);
+        const email = clean(args.email, 254)?.toLowerCase() || "";
+        const phone = clean(args.phone, 40);
+        const password2 = String(args.password || "");
+        if (!name) return { account: null, error: "Enter your name." };
+        if (!EMAIL.test(email)) return { account: null, error: "Enter a valid email address." };
+        if (phone === null || !PHONE.test(phone)) return { account: null, error: "Enter a valid phone number, or leave it blank." };
+        if (password2.length < 10 || password2.length > 1e3) return { account: null, error: "Choose a password of at least 10 characters." };
+        if (guessablePassword(password2, email)) return { account: null, error: "Choose a less common password of at least 10 characters." };
+        if (await limited(context, "guest-account-register", email, 5, 60 * 6e4)) return { account: null, error: "Too many attempts. Please wait and try again." };
+        const existing = await context.prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } });
+        if (existing) return { account: null, error: "An account already exists for this email. Sign in, or reset your password." };
+        try {
+          const user = await context.sudo().db.User.createOne({ data: { name, email, password: password2, phone } });
+          return { account: projectAccount(user), error: null };
+        } catch (error) {
+          const message = String(error?.message || "");
+          if (/password/i.test(message)) return { account: null, error: "Choose a less common password of at least 10 characters." };
+          if (/unique/i.test(message)) return { account: null, error: "An account already exists for this email. Sign in, or reset your password." };
+          return { account: null, error: "Your account could not be created. Please try again." };
+        }
+      },
+      claimGuestAccountStays: async (_root, _args, context) => {
+        const id = guestAccountId(context);
+        if (!id) return 0;
+        const user = await context.prisma.user.findUnique({ where: { id }, select: { email: true } });
+        const email = String(user?.email || "").trim().toLowerCase();
+        if (!email) return 0;
+        let claimed = 0;
+        for (const entry of listGuestBookingAccess(context)) {
+          const booking = await context.prisma.booking.findUnique({ where: { id: entry.bookingId }, select: { id: true, guestEmail: true, guestAccessTokenHash: true, guestId: true } });
+          if (!booking || booking.guestId || String(booking.guestEmail || "").trim().toLowerCase() !== email) continue;
+          if (!guestAccessTokenMatches(booking.guestAccessTokenHash, entry.token)) continue;
+          const result = await context.prisma.booking.updateMany({ where: { id: booking.id, guestId: null }, data: { guestId: id } });
+          claimed += result.count;
+        }
+        return claimed;
+      },
+      updateGuestAccount: async (_root, args, context) => {
+        const id = guestAccountId(context);
+        if (!id) return { account: null, error: "Sign in to update your details." };
+        const name = clean(args.name, 120);
+        const phone = clean(args.phone, 40);
+        if (!name) return { account: null, error: "Enter your name." };
+        if (phone === null || !PHONE.test(phone)) return { account: null, error: "Enter a valid phone number, or leave it blank." };
+        const user = await context.sudo().db.User.updateOne({ where: { id }, data: { name, phone } });
+        return { account: projectAccount(user), error: null };
+      },
+      changeGuestAccountPassword: async (_root, args, context) => {
+        const id = guestAccountId(context);
+        if (!id) return { account: null, error: "Sign in to change your password." };
+        if (await limited(context, "guest-account-password", id, 8, 15 * 6e4)) return { account: null, error: "Too many attempts. Please wait and try again." };
+        const next2 = String(args.newPassword || "");
+        if (next2.length < 10 || next2.length > 1e3) return { account: null, error: "Choose a new password of at least 10 characters." };
+        const user = await context.prisma.user.findUnique({ where: { id } });
+        if (guessablePassword(next2, user?.email)) return { account: null, error: "Choose a less common password of at least 10 characters." };
+        const field = context.graphql.schema.getType("User")?.getFields()?.password?.extensions?.keystoneSecretField;
+        const current = String(args.currentPassword || "");
+        if (!user || !field?.compare || current.length > 1e3 || !await field.compare(current, user.password)) return { account: null, error: "Your current password is incorrect." };
+        try {
+          const updated = await context.sudo().db.User.updateOne({ where: { id }, data: { password: next2 } });
+          return { account: projectAccount(updated), error: null };
+        } catch {
+          return { account: null, error: "Choose a less common password of at least 10 characters." };
+        }
+      }
+    }
+  };
+}
+
+// features/keystone/queries/hotelGuestMessages.ts
+init_access();
+var hotelGuestMessagesTypeDefs = String.raw`
+  extend type Query { hotelGuestMessages: JSON! }
+`;
+async function hotelGuestMessages(_root, _args, context) {
+  if (!permissions.canManageBookings({ session: context.session }) && !permissions.canManageGuests({ session: context.session })) {
+    throw new Error("Not authorized to read guest messages.");
+  }
+  const rows = await context.prisma.hotelContactMessage.findMany({
+    orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
+    take: 100
+  });
+  if (rows instanceof Error) throw rows;
+  return {
+    messages: rows.map((row) => ({
+      id: row.id,
+      reference: row.reference,
+      receivedAt: row.receivedAt,
+      guestName: row.guestName,
+      replyTo: row.replyTo,
+      phone: row.phone,
+      subject: row.subject,
+      message: row.message
+    }))
+  };
+}
+
+// features/keystone/finance/hotelDisputes.ts
+var import_client8 = require("@prisma/client");
 init_access();
 init_hotelLifecycle();
 init_serializableTransaction();
+function isRecord4(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function parseAnnotateHotelDisputeInput(value) {
+  const input = isRecord4(value) ? value : {};
+  const id = String(input.id || ""), note = String(input.note || "").trim(), idempotencyKey = String(input.idempotencyKey || "");
+  if (!id || id.length > 300 || !idempotencyKey || idempotencyKey.length > 200 || !note || note.length > 4e3) throw new Error("A bounded dispute ID, evidence note and idempotency key are required.");
+  return { id, note, idempotencyKey };
+}
 async function states2(prisma, id) {
-  const rows = await prisma.$queryRaw(import_client7.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent"
-    WHERE "propertyKey"=${HOTEL_PROPERTY_KEY} AND "aggregateType"='payment_dispute' ${id ? import_client7.Prisma.sql`AND "aggregateId"=${id}` : import_client7.Prisma.empty}
+  const rows = await prisma.$queryRaw(import_client8.Prisma.sql`SELECT DISTINCT ON ("aggregateId") "afterSnapshot" AS state FROM "HotelAuditEvent"
+    WHERE "propertyKey"=${HOTEL_PROPERTY_KEY} AND "aggregateType"='payment_dispute' ${id ? import_client8.Prisma.sql`AND "aggregateId"=${id}` : import_client8.Prisma.empty}
     ORDER BY "aggregateId", ("afterSnapshot"->>'sequence')::integer DESC`);
   return rows.map((row) => row.state);
 }
@@ -10359,12 +11582,9 @@ async function hotelDisputeOperations(_root, _args, context) {
   if (!permissions.canManagePayments({ session: context.session })) throw new Error("Dispute payment permission is required.");
   return { disputes: await states2(context.prisma) };
 }
-async function annotateHotelDispute(_root, { input }, context) {
+async function annotateHotelDispute(_root, args, context) {
   if (!permissions.canManagePayments({ session: context.session })) throw new Error("Dispute payment permission is required.");
-  const id = String(input?.id || "");
-  const note = String(input?.note || "").trim();
-  const key4 = String(input?.idempotencyKey || "");
-  if (!id || id.length > 300 || !key4 || key4.length > 200 || !note || note.length > 4e3) throw new Error("A bounded dispute ID, evidence note and idempotency key are required.");
+  const { id, note, idempotencyKey: key4 } = parseAnnotateHotelDisputeInput(args.input);
   const eventKey = `dispute-note:${key4}`;
   const identity = { request: { id, note, actorId: context.session.itemId }, aggregateType: "payment_dispute", aggregateId: id, action: "evidence_recorded" };
   return runSerializableTransaction(context, async (tx) => {
@@ -10380,11 +11600,11 @@ async function annotateHotelDispute(_root, { input }, context) {
 }
 
 // features/keystone/mutations/index.ts
-init_hotelGroupLifecycle();
+init_commands3();
 
 // features/keystone/lib/hotelFolioReceipt.ts
 init_access();
-init_folioLedger();
+init_ledger();
 function buildFolioReceipt(folio, settings) {
   if (folio.entries.some((entry) => entry.currencyCode !== folio.currencyCode)) throw new Error("Receipt contains mixed currencies. Reconcile the folio first.");
   const balance = calculateFolioBalance(folio.entries);
@@ -10424,9 +11644,9 @@ async function hotelFolioReceipt(_root, { folioId }, context) {
 }
 
 // features/keystone/mutations/index.ts
-init_hotelGuestGovernance();
+init_commands();
 
-// features/keystone/lib/hotelStayServices.ts
+// features/keystone/operations/stayServices.ts
 var import_node_crypto18 = require("node:crypto");
 init_access();
 init_hotelLifecycle();
@@ -10520,7 +11740,7 @@ async function assertNoOpenRoomDiscrepancy(prisma, roomId) {
 }
 
 // features/keystone/mutations/index.ts
-init_hotelCashier();
+init_commands4();
 init_roomOutages();
 var import_schema = require("@graphql-tools/schema");
 
@@ -10544,17 +11764,27 @@ var LEGACY_FUNCTION_FIELDS = {
   generatePaymentLinkFunction: "static-registry",
   handleWebhookFunction: "static-registry"
 };
-async function ensureProvider(context, code, data) {
+async function findProvider(context, code) {
   const existing = await context.sudo().query.PaymentProvider.findMany({
     where: { code: { equals: code } },
     query: "id name code isInstalled metadata",
     take: 1
   });
-  if (existing[0]) return existing[0];
-  return context.sudo().query.PaymentProvider.createOne({
-    data: { ...data, ...LEGACY_FUNCTION_FIELDS, credentials: {} },
-    query: "id name code isInstalled metadata"
-  });
+  return existing[0] || null;
+}
+async function ensureProvider(context, code, data) {
+  const existing = await findProvider(context, code);
+  if (existing) return existing;
+  try {
+    return await context.sudo().query.PaymentProvider.createOne({
+      data: { ...data, ...LEGACY_FUNCTION_FIELDS, credentials: {} },
+      query: "id name code isInstalled metadata"
+    });
+  } catch (error) {
+    const winner = await findProvider(context, code);
+    if (winner) return winner;
+    throw error;
+  }
 }
 async function ensureDefaultPaymentProviders(context) {
   await ensureProvider(context, "pp_manual_manual", {
@@ -10578,7 +11808,6 @@ async function ensureDefaultPaymentProviders(context) {
 
 // features/keystone/mutations/cancelBooking.ts
 init_guestBookingAccess();
-init_bookingCancellation();
 init_access();
 async function cancelBooking(_root, { bookingId, refundReason, idempotencyKey }, context) {
   const isStaff = permissions.canManageBookings({ session: context.session });
@@ -10597,25 +11826,99 @@ async function cancelBooking(_root, { bookingId, refundReason, idempotencyKey },
 // features/keystone/mutations/pushInventoryToChannel.ts
 init_access();
 
-// features/keystone/lib/channelSync.ts
+// features/keystone/channels/commands.ts
 init_channelCredentials();
 var import_crypto = __toESM(require("crypto"));
 init_guestProfiles();
 init_guestBookingAccess();
 init_reservationSnapshots();
 init_bookingFolio();
-init_bookingCancellation();
-init_bookingAmendment();
+init_amendment();
 init_hotelLifecycle();
-init_inventoryLock();
-init_hotelAvailability();
+init_roomNightLocks();
+init_roomAvailability();
 init_hotelBusinessTime();
 init_integrationConfig();
+init_safeOperationalError();
+
+// features/keystone/lib/workerLease.ts
+var import_node_crypto19 = require("node:crypto");
+var import_client9 = require("@prisma/client");
+function createWorkerLeaseOwnerId(worker) {
+  const prefix = String(worker || "").trim();
+  if (!/^[a-zA-Z0-9._:-]{1,100}$/.test(prefix)) throw new Error("Worker lease identity is invalid.");
+  return `${prefix}:${(0, import_node_crypto19.randomUUID)()}`;
+}
+async function acquireWorkerLease(prisma, options) {
+  if (!options.leaseKey || options.leaseKey.length > 160 || !options.ownerId || options.ownerId.length > 200 || !Number.isSafeInteger(options.ttlMs) || options.ttlMs < 1e3 || options.ttlMs > 30 * 6e4) {
+    throw new Error("Worker lease request is invalid.");
+  }
+  const rows = await prisma.$queryRaw(import_client9.Prisma.sql`
+    INSERT INTO "HotelWorkerLease" ("id", "leaseKey", "ownerId", "expiresAt", "heartbeatAt")
+    VALUES (${`lease_${options.leaseKey}`}, ${options.leaseKey}, ${options.ownerId},
+      CURRENT_TIMESTAMP + (${options.ttlMs} * INTERVAL '1 millisecond'), CURRENT_TIMESTAMP)
+    ON CONFLICT ("leaseKey") DO UPDATE SET
+      "ownerId" = EXCLUDED."ownerId", "expiresAt" = EXCLUDED."expiresAt", "heartbeatAt" = CURRENT_TIMESTAMP
+    WHERE ("HotelWorkerLease"."ownerId" = ${options.ownerId} AND "HotelWorkerLease"."expiresAt" > CURRENT_TIMESTAMP)
+       OR ("HotelWorkerLease"."ownerId" <> ${options.ownerId} AND "HotelWorkerLease"."expiresAt" <= CURRENT_TIMESTAMP)
+    RETURNING "ownerId"
+  `);
+  return rows[0]?.ownerId === options.ownerId;
+}
+async function releaseWorkerLease(prisma, options) {
+  if (!options.leaseKey || options.leaseKey.length > 160 || !options.ownerId || options.ownerId.length > 200) {
+    throw new Error("Worker lease release is invalid.");
+  }
+  const removed = await prisma.$executeRaw(import_client9.Prisma.sql`
+    DELETE FROM "HotelWorkerLease"
+    WHERE "leaseKey" = ${options.leaseKey} AND "ownerId" = ${options.ownerId}
+  `);
+  return removed === 1;
+}
+
+// features/keystone/channels/commands.ts
 var DEFAULT_RETRY_DELAY_MS = 2 * 60 * 1e3;
-async function serializableChannelTransaction(context, operation) {
+var CHANNEL_OPERATION_LEASE_TTL_MS = 12e4;
+var CHANNEL_OUTCOME_UNKNOWN_MESSAGE = "Remote outcome is unknown. Reconcile partner evidence before any replay; automatic retry is suppressed.";
+var workerChannelOperationLeaseProvider = {
+  async acquire(context, channelId, renewOuterLease) {
+    const leaseKey = `hotel-channel-operation:${channelId}`;
+    const ownerId = createWorkerLeaseOwnerId("hotel-channel-operation");
+    const options = { leaseKey, ownerId, ttlMs: CHANNEL_OPERATION_LEASE_TTL_MS };
+    let released = false;
+    const renew = async () => {
+      if (released || renewOuterLease && !await renewOuterLease()) return false;
+      return acquireWorkerLease(context.prisma, options);
+    };
+    if (!await renew()) return null;
+    return {
+      renew,
+      fence: (prisma) => !released ? acquireWorkerLease(prisma, options) : Promise.resolve(false),
+      release: async () => {
+        if (released) return;
+        released = true;
+        await releaseWorkerLease(context.prisma, { leaseKey, ownerId });
+      }
+    };
+  }
+};
+var ChannelLeaseLostError = class extends Error {
+  constructor() {
+    super("Channel operation ownership changed before its durable result was committed.");
+  }
+};
+var ChannelOutcomeUnknownError = class extends Error {
+  constructor(message) {
+    super(message);
+  }
+};
+async function serializableChannelTransaction(context, operation, lease) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      return await context.transaction(operation, { maxWait: 5e3, timeout: 3e4, isolationLevel: "Serializable" });
+      return await context.transaction(async (tx) => {
+        if (lease && !await lease.fence(tx.prisma)) throw new ChannelLeaseLostError();
+        return operation(tx);
+      }, { maxWait: 5e3, timeout: 3e4, isolationLevel: "Serializable" });
     } catch (error) {
       const detail = `${error?.message || ""} ${error?.extensions?.debug?.message || ""}`;
       const retryable = error?.code === "P2034" || error?.code === "40001" || error?.extensions?.prisma?.code === "P2034" || /could not serialize|write conflict|deadlock/i.test(detail);
@@ -10643,11 +11946,44 @@ function getDayWindow(date) {
   end.setUTCDate(end.getUTCDate() + 1);
   return { start, end };
 }
-function toCents(amount3) {
-  if (typeof amount3 !== "number" || Number.isNaN(amount3)) {
+var MAX_STORED_MINOR2 = 2147483647;
+var MAX_CHANNEL_RETRY_ATTEMPTS = 5;
+function channelMinorUnits(value, label, required3 = true) {
+  if (value === void 0 || value === null || value === "") {
+    if (required3) throw new Error(`Channel reservation ${label} is missing.`);
     return 0;
   }
-  return Math.round(amount3 * 100);
+  let minor3;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0) throw new Error(`Channel reservation ${label} is invalid.`);
+    minor3 = Math.round(value * 100);
+    if (Math.abs(value * 100 - minor3) > 1e-6) throw new Error(`Channel reservation ${label} has more than two decimal places.`);
+  } else if (typeof value === "string" && /^\d+(\.\d{1,2})?$/.test(value.trim())) {
+    const [whole, fraction = ""] = value.trim().split(".");
+    minor3 = Number(`${whole}${fraction.padEnd(2, "0")}`);
+  } else {
+    throw new Error(`Channel reservation ${label} is invalid.`);
+  }
+  if (!Number.isSafeInteger(minor3) || minor3 > MAX_STORED_MINOR2) throw new Error(`Channel reservation ${label} is too large.`);
+  return minor3;
+}
+async function channelStayTerms(context, payload, roomTypeId) {
+  const currencyCode = String(payload.currencyCode || "").trim().toUpperCase();
+  if (currencyCode !== "USD") throw new Error("Channel reservations must state their currency, and only USD is supported.");
+  const totalMinor = channelMinorUnits(payload.totalAmount, "total");
+  const commissionMinor = channelMinorUnits(payload.commission, "commission", false);
+  const guests = Number(payload.numberOfGuests);
+  if (!Number.isInteger(guests) || guests < 1) throw new Error("Channel reservation guest count is invalid.");
+  if (payload.adults !== void 0 || payload.children !== void 0) {
+    const adults = Number(payload.adults ?? 0), children = Number(payload.children ?? 0);
+    if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0 || adults + children !== guests) {
+      throw new Error("Channel reservation adult and child counts do not match the guest count.");
+    }
+  }
+  const roomType = await context.prisma.roomType.findUnique({ where: { id: roomTypeId }, select: { maxOccupancy: true, name: true } });
+  if (!roomType) throw new Error("Channel reservation room type was not found.");
+  if (guests > Number(roomType.maxOccupancy)) throw new Error(`${roomType.name} sleeps up to ${roomType.maxOccupancy} guests.`);
+  return { currencyCode, totalMinor, commissionMinor, guests };
 }
 function mapReservationPayload(raw) {
   const reservation = raw?.reservation ?? raw?.data ?? raw;
@@ -10662,14 +11998,18 @@ function mapReservationPayload(raw) {
     roomTypeName: reservation?.roomTypeName,
     totalAmount: reservation?.totalAmount ?? reservation?.amount,
     commission: reservation?.commission,
-    numberOfGuests: reservation?.numberOfGuests || reservation?.guests,
+    numberOfGuests: reservation?.numberOfGuests ?? reservation?.guests,
     specialRequests: reservation?.specialRequests,
     roomCount: reservation?.roomCount || reservation?.rooms || 1,
+    currencyCode: reservation?.currencyCode ?? reservation?.currency,
+    adults: reservation?.adults,
+    children: reservation?.children,
+    cancellationPolicy: reservation?.cancellationPolicy,
     rawData: reservation
   };
 }
 async function logChannelSyncEvent(context, data) {
-  await context.sudo().query.ChannelSyncEvent.createOne({
+  return context.sudo().query.ChannelSyncEvent.createOne({
     data: {
       channel: { connect: { id: data.channelId } },
       action: data.action,
@@ -10791,69 +12131,95 @@ async function adjustBookedRooms(context, roomTypeId, checkInDate, checkOutDate,
     }
   }
 }
+var CANCELLATION_POLICIES = /* @__PURE__ */ new Set(["flexible", "moderate", "strict", "non_refundable"]);
 async function upsertChannelReservation(context, channel, payload, eventType, verifiedEvent) {
   if (!payload.externalId) {
     throw new Error("Channel reservation payload missing externalId");
   }
   await lockHotelBusinessDate(context.prisma);
-  const { checkIn: boundedCheckIn, checkOut: boundedCheckOut } = hotelStayDates(payload.checkInDate, payload.checkOutDate);
   const channelKey = `${channel.id}:${payload.externalId}`;
   if (!verifiedEvent.eventKey || !/^[a-f0-9]{64}$/i.test(verifiedEvent.payloadHash)) throw new Error("Verified channel event identity is required");
+  await context.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-channel-reservation:${channelKey}`);
   const existing = await context.sudo().query.ChannelReservation.findMany({
     where: {
       externalId: { equals: payload.externalId },
       channel: { id: { equals: channel.id } }
     },
-    query: "id checkInDate checkOutDate roomType { id name } reservation { id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } } }",
+    query: "id checkInDate checkOutDate totalAmount channelStatus roomType { id name } reservation { id confirmationNumber numberOfGuests totalAmount numberOfNights roomAssignments { roomType { id name } } }",
     take: 1
   });
   const reservation = existing[0];
+  const tombstoneKey = `channel-tombstone:${channelKey}`;
+  const tombstone = await context.prisma.hotelAuditEvent.findUnique({ where: { eventKey: tombstoneKey }, select: { id: true } });
+  if (!reservation) {
+    if (eventType === "cancel") {
+      if (!tombstone) {
+        await recordHotelLifecycleEvent({
+          prisma: context.prisma,
+          eventKey: tombstoneKey,
+          actorId: null,
+          identity: { request: { channelKey }, aggregateType: "channel_reservation", aggregateId: channelKey, action: "cancelled_before_import" },
+          afterSnapshot: { channelKey, cancelledBy: verifiedEvent.eventKey },
+          metadata: { channelId: channel.id, externalId: payload.externalId }
+        });
+      }
+      return { action: "cancellation_recorded", booking: null };
+    }
+    if (tombstone) return { action: "ignored_cancelled_reservation", booking: null };
+    if (eventType === "modify") throw new Error("Channel change for a reservation that was never imported; reconcile it with the channel.");
+  }
+  const { checkIn: boundedCheckIn, checkOut: boundedCheckOut } = hotelStayDates(payload.checkInDate, payload.checkOutDate);
   const roomTypeId = await resolveRoomTypeId(context, channel, payload);
   const roomCount = payload.roomCount && payload.roomCount > 0 ? payload.roomCount : 1;
   if (!Number.isInteger(roomCount) || roomCount !== 1) throw new Error("Multi-room channel reservations require an explicit group allocation.");
   if (!reservation) {
+    if (!roomTypeId) throw new Error("Channel reservation room type is not mapped");
+    const terms2 = await channelStayTerms(context, payload, roomTypeId);
     const guestProfile = await ensureGuestProfile(context, {
       name: payload.guestName,
       email: payload.guestEmail || `channel-${channel.id}-${payload.externalId}@invalid.local`
     });
-    if (!roomTypeId) throw new Error("Channel reservation room type is not mapped");
     await lockRoomInventory(context.prisma, roomTypeId, boundedCheckIn, boundedCheckOut);
     await assertHotelAvailability(context, { roomTypeId, checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate });
+    const cancellationPolicy = CANCELLATION_POLICIES.has(String(payload.cancellationPolicy)) ? String(payload.cancellationPolicy) : null;
     const createdBooking = await context.prisma.booking.create({
       data: {
         confirmationNumber: `BK-OTA-${import_crypto.default.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
         guestName: payload.guestName,
         guestEmail: payload.guestEmail || guestProfile.email,
         guestProfileId: guestProfile.id,
-        checkInDate: new Date(payload.checkInDate),
-        checkOutDate: new Date(payload.checkOutDate),
-        numberOfGuests: payload.numberOfGuests || 1,
+        checkInDate: boundedCheckIn,
+        checkOutDate: boundedCheckOut,
+        numberOfGuests: terms2.guests,
+        numberOfAdults: payload.adults ?? terms2.guests,
+        numberOfChildren: payload.children ?? 0,
         status: "confirmed",
         source: "ota",
-        roomRateMinor: toCents(payload.totalAmount),
+        roomRateMinor: terms2.totalMinor,
         taxAmountMinor: 0,
         feesAmountMinor: 0,
-        totalAmountMinor: toCents(payload.totalAmount),
+        totalAmountMinor: terms2.totalMinor,
         depositAmountMinor: 0,
-        balanceDueMinor: toCents(payload.totalAmount),
-        currencyCode: "USD",
-        roomRate: payload.totalAmount || 0,
+        balanceDueMinor: terms2.totalMinor,
+        currencyCode: terms2.currencyCode,
+        roomRate: terms2.totalMinor / 100,
         taxAmount: 0,
         feesAmount: 0,
-        totalAmount: payload.totalAmount || 0,
+        totalAmount: terms2.totalMinor / 100,
         depositAmount: 0,
-        balanceDue: payload.totalAmount || 0,
+        balanceDue: terms2.totalMinor / 100,
         pricingVersion: "channel-create-v1",
         pricingRevision: 1,
-        pricingSnapshot: { snapshotKeyPrefix: "v1", source: "channel", roomSubtotalMinor: toCents(payload.totalAmount), taxMinor: 0, feesMinor: 0, totalMinor: toCents(payload.totalAmount), currencyCode: "USD" }
+        pricingSnapshot: { snapshotKeyPrefix: "v1", source: "channel", ...cancellationPolicy ? { cancellationPolicy } : {}, roomSubtotalMinor: terms2.totalMinor, taxMinor: 0, feesMinor: 0, totalMinor: terms2.totalMinor, currencyCode: terms2.currencyCode }
       }
     });
+    const nights = Math.max(1, Math.round((boundedCheckOut.getTime() - boundedCheckIn.getTime()) / 864e5));
     await context.prisma.roomAssignment.create({
       data: {
         bookingId: createdBooking.id,
         roomTypeId,
         guestName: payload.guestName,
-        ratePerNightMinor: Math.round(toCents(payload.totalAmount) / Math.max(1, Math.round((new Date(payload.checkOutDate).getTime() - new Date(payload.checkInDate).getTime()) / 864e5)))
+        ratePerNightMinor: Math.round(terms2.totalMinor / nights)
       }
     });
     await ensureBookingHasGuestAccess(context, createdBooking.id);
@@ -10870,28 +12236,26 @@ async function upsertChannelReservation(context, channel, payload, eventType, ve
         channelKey,
         externalId: payload.externalId,
         reservation: { connect: { id: booking.id } },
-        roomType: roomTypeId ? { connect: { id: roomTypeId } } : void 0,
-        checkInDate: new Date(payload.checkInDate).toISOString(),
-        checkOutDate: new Date(payload.checkOutDate).toISOString(),
+        roomType: { connect: { id: roomTypeId } },
+        checkInDate: boundedCheckIn.toISOString(),
+        checkOutDate: boundedCheckOut.toISOString(),
         guestName: payload.guestName,
         guestEmail: payload.guestEmail,
-        totalAmount: toCents(payload.totalAmount),
-        commission: toCents(payload.commission),
+        totalAmount: terms2.totalMinor,
+        commission: terms2.commissionMinor,
         channelStatus: payload.status,
         rawData: payload.rawData || {},
         lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString()
       },
       query: "id"
     });
-    if (roomTypeId) {
-      await adjustBookedRooms(context, roomTypeId, payload.checkInDate, payload.checkOutDate, roomCount);
-    }
+    await adjustBookedRooms(context, roomTypeId, payload.checkInDate, payload.checkOutDate, roomCount);
     await recordHotelLifecycleEvent({
       prisma: context.prisma,
       eventKey: `channel-booking:create:${channelKey}`,
       actorId: null,
-      identity: { request: { channelKey, checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate, totalAmountMinor: toCents(payload.totalAmount) }, aggregateType: "booking", aggregateId: booking.id, action: "created_from_channel" },
-      afterSnapshot: { status: "confirmed", checkInDate: payload.checkInDate, checkOutDate: payload.checkOutDate, totalAmountMinor: toCents(payload.totalAmount) },
+      identity: { request: { channelKey, checkInDate: boundedCheckIn.toISOString(), checkOutDate: boundedCheckOut.toISOString(), totalAmountMinor: terms2.totalMinor }, aggregateType: "booking", aggregateId: booking.id, action: "created_from_channel" },
+      afterSnapshot: { status: "confirmed", checkInDate: boundedCheckIn.toISOString(), checkOutDate: boundedCheckOut.toISOString(), totalAmountMinor: terms2.totalMinor, cancellationPolicy },
       metadata: { channelId: channel.id, externalId: payload.externalId }
     });
     return { action: "created", booking };
@@ -10920,23 +12284,27 @@ async function upsertChannelReservation(context, channel, payload, eventType, ve
     });
     return { action: "cancellation_requested", booking: reservation.reservation };
   }
-  if (eventType === "modify") {
+  if (!roomTypeId) throw new Error("Channel reservation room type is not mapped");
+  const terms = await channelStayTerms(context, payload, roomTypeId);
+  const changed = eventType === "modify" || (new Date(reservation.checkInDate).getTime() !== boundedCheckIn.getTime() || new Date(reservation.checkOutDate).getTime() !== boundedCheckOut.getTime() || reservation.roomType?.id !== roomTypeId || Number(reservation.totalAmount) !== terms.totalMinor || Number(reservation.reservation?.numberOfGuests) !== terms.guests);
+  if (changed) {
     const guestProfile = await ensureGuestProfile(context, {
       name: payload.guestName,
       email: payload.guestEmail || `channel-${channel.id}-${payload.externalId}@invalid.local`
     });
-    if (!reservation.reservation?.id || !roomTypeId) throw new Error("Channel modification lacks booking or room-type binding");
+    if (!reservation.reservation?.id) throw new Error("Channel modification lacks booking binding");
     await amendUnpaidBooking({
       context,
       bookingId: reservation.reservation.id,
-      checkInDate: payload.checkInDate,
-      checkOutDate: payload.checkOutDate,
+      checkInDate: boundedCheckIn.toISOString(),
+      checkOutDate: boundedCheckOut.toISOString(),
       roomTypeId,
       guestName: payload.guestName,
       guestEmail: payload.guestEmail || guestProfile.email,
       guestProfileId: guestProfile.id,
-      numberOfGuests: payload.numberOfGuests || 1,
-      totalAmountMinor: toCents(payload.totalAmount),
+      numberOfGuests: terms.guests,
+      totalAmountMinor: terms.totalMinor,
+      currencyCode: terms.currencyCode,
       idempotencyKey: `channel:${channelKey}:modify:${verifiedEvent.eventKey}`,
       source: "channel",
       withinTransaction: true
@@ -10948,13 +12316,13 @@ async function upsertChannelReservation(context, channel, payload, eventType, ve
     await context.sudo().query.ChannelReservation.updateOne({
       where: { id: reservation.id },
       data: {
-        roomType: roomTypeId ? { connect: { id: roomTypeId } } : void 0,
-        checkInDate: new Date(payload.checkInDate).toISOString(),
-        checkOutDate: new Date(payload.checkOutDate).toISOString(),
+        roomType: { connect: { id: roomTypeId } },
+        checkInDate: boundedCheckIn.toISOString(),
+        checkOutDate: boundedCheckOut.toISOString(),
         guestName: payload.guestName,
         guestEmail: payload.guestEmail,
-        totalAmount: toCents(payload.totalAmount),
-        commission: toCents(payload.commission),
+        totalAmount: terms.totalMinor,
+        commission: terms.commissionMinor,
         channelStatus: payload.status,
         rawData: payload.rawData || {},
         lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString()
@@ -10970,31 +12338,55 @@ async function upsertChannelReservation(context, channel, payload, eventType, ve
       lastSyncedAt: (/* @__PURE__ */ new Date()).toISOString()
     }
   });
-  return { action: "updated", booking: reservation.reservation };
+  return { action: "unchanged", booking: reservation.reservation };
 }
+var CREATE_EVENTS = /* @__PURE__ */ new Set(["reservation.created", "reservation.new", "create", "created", "new", "confirmed", "booked"]);
+var MODIFY_EVENTS = /* @__PURE__ */ new Set(["reservation.modified", "reservation.updated", "modify", "modified", "update", "updated"]);
+var CANCEL_EVENTS = /* @__PURE__ */ new Set(["reservation.cancelled", "reservation.canceled", "cancel", "cancelled", "canceled"]);
 function resolveEventType(eventType) {
-  const normalized = eventType.toLowerCase();
-  if (normalized.includes("cancel")) return "cancel";
-  if (normalized.includes("modif") || normalized.includes("update")) return "modify";
-  if (normalized.includes("create") || normalized.includes("new")) return "create";
-  return "create";
+  const normalized = String(eventType ?? "").trim().toLowerCase();
+  if (CREATE_EVENTS.has(normalized)) return "create";
+  if (MODIFY_EVENTS.has(normalized)) return "modify";
+  if (CANCEL_EVENTS.has(normalized)) return "cancel";
+  return null;
 }
-async function postToChannel(endpoint2, payload, headers) {
-  const response = await fetch(endpoint2, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...headers
-    },
-    body: JSON.stringify(payload)
-  });
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw new Error(`Channel request failed: ${response.status} ${responseText}`);
+async function postToChannel(endpoint2, payload, headers, fetchImpl = fetch, timeoutMs = 3e4) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 12e4) throw new Error("Channel transport timeout is invalid.");
+  let response;
+  try {
+    response = await fetchImpl(endpoint2, {
+      method: "POST",
+      redirect: "error",
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        "Content-Type": "application/json",
+        ...headers
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "transport failure";
+    throw new ChannelOutcomeUnknownError(`Channel request ended without a confirmed partner result: ${detail}`);
   }
-  return response.json().catch(() => ({}));
+  try {
+    if (!response.ok) {
+      throw new ChannelOutcomeUnknownError(`Channel endpoint returned HTTP ${response.status}; remote application is unconfirmed.`);
+    }
+    if (response.status === 204) return null;
+    const body = await response.text();
+    if (!body.trim()) return null;
+    try {
+      return JSON.parse(body);
+    } catch {
+      throw new ChannelOutcomeUnknownError("Channel endpoint returned an invalid response body after accepting the request.");
+    }
+  } catch (error) {
+    if (error instanceof ChannelOutcomeUnknownError) throw error;
+    throw new ChannelOutcomeUnknownError("Channel response could not be confirmed after the request was sent.");
+  }
 }
-async function pushInventoryToChannel(context, channelId, dateRange) {
+async function pushInventoryToChannel(context, channelId, dateRange, fetchImpl = fetch, renewLease, options = {}) {
   const channel = await context.sudo().query.Channel.findOne({
     where: { id: channelId },
     query: "id name isActive syncStatus credentials mappingRules"
@@ -11011,69 +12403,98 @@ async function pushInventoryToChannel(context, channelId, dateRange) {
       details: { message: `Channel inventory sync is explicitly ${mode}.`, mode }
     };
   }
-  const startDate = dateRange?.startDate ? new Date(dateRange.startDate) : /* @__PURE__ */ new Date();
-  const endDate = dateRange?.endDate ? new Date(dateRange.endDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1e3);
-  const inventoryRecords = await context.sudo().query.RoomInventory.findMany({
-    where: {
-      date: { gte: startDate.toISOString(), lte: endDate.toISOString() }
-    },
-    query: "id date totalRooms bookedRooms blockedRooms roomType { id name }"
-  });
-  const payload = {
-    channelId: channel.id,
-    channelName: channel.name,
-    startDate: startDate.toISOString(),
-    endDate: endDate.toISOString(),
-    inventory: inventoryRecords.map((record2) => ({
-      date: record2.date,
-      roomTypeId: record2.roomType?.id,
-      roomTypeName: record2.roomType?.name,
-      totalRooms: record2.totalRooms,
-      bookedRooms: record2.bookedRooms,
-      blockedRooms: record2.blockedRooms
-    }))
-  };
-  try {
-    const outbound = requireLiveChannelEndpoint(channel, "inventory");
-    await postToChannel(outbound.endpoint, payload, {
-      "X-OpenFront-Channel": channel.id,
-      ...outbound.headers
-    });
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: "inventory_push",
-      status: "success",
-      message: "Inventory pushed to channel",
-      payload
-    });
-    await updateChannelSyncStatus(context, channel.id, "active");
+  const lease = await workerChannelOperationLeaseProvider.acquire(context, channel.id, renewLease);
+  if (!lease) {
     return {
       channelId: channel.id,
-      status: "success",
+      status: "skipped",
       syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      details: { inventoryCount: inventoryRecords.length }
-    };
-  } catch (error) {
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: "inventory_push",
-      status: "failed",
-      message: "Inventory push failed",
-      payload,
-      errorMessage: error.message,
-      attempts: 1,
-      nextAttemptAt: new Date(Date.now() + DEFAULT_RETRY_DELAY_MS)
-    });
-    await appendChannelSyncError(context, channel.id, error.message);
-    return {
-      channelId: channel.id,
-      status: "failed",
-      syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      details: { error: error.message }
+      details: { message: "Another operation for this channel is running." }
     };
   }
+  try {
+    const startDate = dateRange?.startDate ? new Date(dateRange.startDate) : /* @__PURE__ */ new Date();
+    const endDate = dateRange?.endDate ? new Date(dateRange.endDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1e3);
+    const inventoryRecords = await context.sudo().query.RoomInventory.findMany({
+      where: {
+        date: { gte: startDate.toISOString(), lte: endDate.toISOString() }
+      },
+      query: "id date totalRooms bookedRooms blockedRooms roomType { id name }"
+    });
+    const payload = {
+      channelId: channel.id,
+      channelName: channel.name,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      inventory: inventoryRecords.map((record2) => ({
+        date: record2.date,
+        roomTypeId: record2.roomType?.id,
+        roomTypeName: record2.roomType?.name,
+        totalRooms: record2.totalRooms,
+        bookedRooms: record2.bookedRooms,
+        blockedRooms: record2.blockedRooms
+      }))
+    };
+    try {
+      const outbound = requireLiveChannelEndpoint(channel, "inventory");
+      if (!await lease.renew()) return {
+        channelId: channel.id,
+        status: "skipped",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { message: "Worker claim expired before channel delivery; no request was sent." }
+      };
+      await postToChannel(outbound.endpoint, payload, {
+        "X-OpenFront-Channel": channel.id,
+        ...outbound.headers
+      }, fetchImpl);
+      if (!await lease.renew()) return {
+        channelId: channel.id,
+        status: "skipped",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { message: "Worker claim changed after channel delivery; verify the durable sync event." }
+      };
+      await logChannelSyncEvent(context, {
+        channelId: channel.id,
+        action: "inventory_push",
+        status: "success",
+        message: "Inventory pushed to channel",
+        payload
+      });
+      await updateChannelSyncStatus(context, channel.id, "active");
+      return {
+        channelId: channel.id,
+        status: "success",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { inventoryCount: inventoryRecords.length }
+      };
+    } catch (error) {
+      const failure = safeOperationalErrorMessage("channel", error);
+      const outcomeUnknown = error instanceof ChannelOutcomeUnknownError;
+      if (!options.retryOfEventId) {
+        await logChannelSyncEvent(context, {
+          channelId: channel.id,
+          action: "inventory_push",
+          status: "failed",
+          message: outcomeUnknown ? CHANNEL_OUTCOME_UNKNOWN_MESSAGE : "Inventory push failed",
+          payload,
+          errorMessage: failure,
+          attempts: 1,
+          nextAttemptAt: outcomeUnknown ? null : new Date(Date.now() + DEFAULT_RETRY_DELAY_MS)
+        });
+      }
+      await appendChannelSyncError(context, channel.id, failure);
+      return {
+        channelId: channel.id,
+        status: "failed",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { error: failure, outcomeUnknown }
+      };
+    }
+  } finally {
+    await lease.release();
+  }
 }
-async function pullReservationsFromChannel(context, channelId) {
+async function pullReservationsFromChannel(context, channelId, fetchImpl = fetch, renewLease, options = {}) {
   const channel = await context.sudo().query.Channel.findOne({
     where: { id: channelId },
     query: "id name isActive syncStatus credentials mappingRules"
@@ -11090,114 +12511,168 @@ async function pullReservationsFromChannel(context, channelId) {
       details: { message: `Channel reservation pull is explicitly ${mode}.`, mode }
     };
   }
-  const payload = {
-    channelId: channel.id,
-    channelName: channel.name
-  };
-  try {
-    const outbound = requireLiveChannelEndpoint(channel, "reservations");
-    const reservationsResponse = await postToChannel(outbound.endpoint, payload, {
-      "X-OpenFront-Channel": channel.id,
-      ...outbound.headers
-    });
-    const reservations = Array.isArray(reservationsResponse?.reservations) ? reservationsResponse.reservations : [];
-    for (const reservation of reservations) {
-      const mapped = mapReservationPayload(reservation);
-      const eventType = resolveEventType(mapped.status);
-      const canonical = JSON.stringify(reservation);
-      const payloadHash = import_crypto.default.createHash("sha256").update(canonical).digest("hex");
-      const providerVersion = String(reservation?.eventId || reservation?.version || reservation?.updatedAt || payloadHash).slice(0, 255);
-      const verifiedEvent = { eventKey: `pull:${channel.id}:${mapped.externalId}:${providerVersion}`, payloadHash };
-      await serializableChannelTransaction(
-        context,
-        (transactionContext) => upsertChannelReservation(transactionContext, channel, mapped, eventType, verifiedEvent)
-      );
-    }
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: "reservation_pull",
-      status: "success",
-      message: "Reservations pulled from channel",
-      payload: { reservationCount: reservations.length }
-    });
-    await updateChannelSyncStatus(context, channel.id, "active");
+  const lease = await workerChannelOperationLeaseProvider.acquire(context, channel.id, renewLease);
+  if (!lease) {
     return {
       channelId: channel.id,
-      status: "success",
+      status: "skipped",
       syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      details: { reservationCount: reservations.length }
-    };
-  } catch (error) {
-    await logChannelSyncEvent(context, {
-      channelId: channel.id,
-      action: "reservation_pull",
-      status: "failed",
-      message: "Reservation pull failed",
-      payload,
-      errorMessage: error.message,
-      attempts: 1,
-      nextAttemptAt: new Date(Date.now() + DEFAULT_RETRY_DELAY_MS)
-    });
-    await appendChannelSyncError(context, channel.id, error.message);
-    return {
-      channelId: channel.id,
-      status: "failed",
-      syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      details: { error: error.message }
+      details: { message: "Another operation for this channel is running." }
     };
   }
+  try {
+    const payload = {
+      channelId: channel.id,
+      channelName: channel.name
+    };
+    try {
+      const outbound = requireLiveChannelEndpoint(channel, "reservations");
+      if (!await lease.renew()) return {
+        channelId: channel.id,
+        status: "skipped",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { message: "Worker claim expired before channel request; no request was sent." }
+      };
+      const reservationsResponse = await postToChannel(outbound.endpoint, payload, {
+        "X-OpenFront-Channel": channel.id,
+        ...outbound.headers
+      }, fetchImpl);
+      if (!Array.isArray(reservationsResponse?.reservations)) {
+        throw new Error("Channel reservation response did not contain a valid reservation array.");
+      }
+      const reservations = reservationsResponse.reservations;
+      for (const reservation of reservations) {
+        if (!await lease.renew()) return {
+          channelId: channel.id,
+          status: "skipped",
+          syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          details: { message: "Worker claim expired; remaining reservation rows were not applied." }
+        };
+        const mapped = mapReservationPayload(reservation);
+        const eventType = resolveEventType(mapped.status);
+        if (!eventType) continue;
+        const canonical = JSON.stringify(reservation);
+        const payloadHash = import_crypto.default.createHash("sha256").update(canonical).digest("hex");
+        const providerVersion = String(reservation?.eventId || reservation?.version || reservation?.updatedAt || payloadHash).slice(0, 255);
+        const verifiedEvent = { eventKey: `pull:${channel.id}:${mapped.externalId}:${providerVersion}`, payloadHash };
+        await serializableChannelTransaction(
+          context,
+          (transactionContext) => upsertChannelReservation(transactionContext, channel, mapped, eventType, verifiedEvent),
+          lease
+        );
+      }
+      if (!await lease.renew()) return {
+        channelId: channel.id,
+        status: "skipped",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { message: "Worker claim changed after channel response; verify the durable sync event." }
+      };
+      await logChannelSyncEvent(context, {
+        channelId: channel.id,
+        action: "reservation_pull",
+        status: "success",
+        message: "Reservations pulled from channel",
+        payload: { reservationCount: reservations.length }
+      });
+      await updateChannelSyncStatus(context, channel.id, "active");
+      return {
+        channelId: channel.id,
+        status: "success",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { reservationCount: reservations.length }
+      };
+    } catch (error) {
+      const failure = safeOperationalErrorMessage("channel", error);
+      const outcomeUnknown = error instanceof ChannelOutcomeUnknownError;
+      if (!options.retryOfEventId) {
+        await logChannelSyncEvent(context, {
+          channelId: channel.id,
+          action: "reservation_pull",
+          status: "failed",
+          message: outcomeUnknown ? CHANNEL_OUTCOME_UNKNOWN_MESSAGE : "Reservation pull failed",
+          payload,
+          errorMessage: failure,
+          attempts: 1,
+          nextAttemptAt: outcomeUnknown ? null : new Date(Date.now() + DEFAULT_RETRY_DELAY_MS)
+        });
+      }
+      await appendChannelSyncError(context, channel.id, failure);
+      return {
+        channelId: channel.id,
+        status: "failed",
+        syncedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        details: { error: failure, outcomeUnknown }
+      };
+    }
+  } finally {
+    await lease.release();
+  }
 }
-async function retryFailedChannelSyncs(context) {
+async function retryFailedChannelSyncs(context, renewLease, fetchImpl = fetch) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const failedEvents = await context.sudo().query.ChannelSyncEvent.findMany({
     where: {
       status: { equals: "failed" },
-      nextAttemptAt: { lte: now }
+      nextAttemptAt: { lte: now },
+      attempts: { lt: MAX_CHANNEL_RETRY_ATTEMPTS }
     },
+    orderBy: [{ nextAttemptAt: "asc" }],
     query: "id channel { id } action attempts payload",
     take: 25
   });
+  let processed = 0;
   let succeeded = 0;
   let failed = 0;
+  let leaseLost = false;
   for (const event of failedEvents) {
+    if (renewLease && !await renewLease()) {
+      leaseLost = true;
+      break;
+    }
     const attempts = (event.attempts || 0) + 1;
+    let result;
     try {
       if (event.action === "inventory_push") {
-        await pushInventoryToChannel(context, event.channel.id, event.payload?.dateRange);
+        result = await pushInventoryToChannel(context, event.channel.id, event.payload?.dateRange, fetchImpl, renewLease, { retryOfEventId: event.id });
       } else if (event.action === "reservation_pull") {
-        await pullReservationsFromChannel(context, event.channel.id);
+        result = await pullReservationsFromChannel(context, event.channel.id, fetchImpl, renewLease, { retryOfEventId: event.id });
+      } else {
+        throw new Error("Unsupported channel retry operation.");
       }
+    } catch (error) {
+      result = { channelId: event.channel.id, status: "failed", syncedAt: (/* @__PURE__ */ new Date()).toISOString(), details: { error: safeOperationalErrorMessage("channel", error) } };
+    }
+    if (renewLease && !await renewLease()) {
+      leaseLost = true;
+      break;
+    }
+    if (result.status === "skipped") continue;
+    if (result.status === "success") {
       await context.sudo().query.ChannelSyncEvent.updateOne({
         where: { id: event.id },
-        data: {
-          status: "success",
-          attempts,
-          nextAttemptAt: null,
-          message: "Retry succeeded"
-        }
+        data: { status: "success", attempts, nextAttemptAt: null, message: "Retry succeeded" }
       });
       succeeded += 1;
-    } catch (error) {
-      await context.sudo().query.ChannelSyncEvent.updateOne({
-        where: { id: event.id },
-        data: {
-          status: "failed",
-          attempts,
-          nextAttemptAt: new Date(Date.now() + Math.pow(2, attempts) * DEFAULT_RETRY_DELAY_MS).toISOString(),
-          errorMessage: error.message,
-          message: "Retry failed"
-        }
-      });
-      await appendChannelSyncError(context, event.channel.id, error.message);
-      failed += 1;
+      processed += 1;
+      continue;
     }
+    const outcomeUnknown = Boolean(result.details?.outcomeUnknown);
+    const exhausted = attempts >= MAX_CHANNEL_RETRY_ATTEMPTS;
+    const failure = String(result.details?.error || "Channel retry did not complete successfully.");
+    await context.sudo().query.ChannelSyncEvent.updateOne({
+      where: { id: event.id },
+      data: {
+        status: "failed",
+        attempts,
+        nextAttemptAt: outcomeUnknown || exhausted ? null : new Date(Date.now() + Math.pow(2, attempts) * DEFAULT_RETRY_DELAY_MS).toISOString(),
+        errorMessage: failure,
+        message: outcomeUnknown ? CHANNEL_OUTCOME_UNKNOWN_MESSAGE : exhausted ? "Retry limit reached; review the channel before sending again." : "Retry failed"
+      }
+    });
+    failed += 1;
+    processed += 1;
   }
-  return {
-    processed: failedEvents.length,
-    succeeded,
-    failed,
-    retriedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
+  return { processed, succeeded, failed, leaseLost, retriedAt: (/* @__PURE__ */ new Date()).toISOString() };
 }
 
 // features/keystone/mutations/pushInventoryToChannel.ts
@@ -11218,15 +12693,13 @@ async function pullReservationsFromChannelMutation(root, { channelId }, context)
 }
 
 // features/keystone/mutations/initiateBookingPaymentSession.ts
+var import_node_crypto20 = require("node:crypto");
 init_paymentProviderAdapter();
-init_bookingFolio();
-init_serializableTransaction();
-init_guestBookingAccess();
-init_paymentSecurity();
-var PAYABLE_BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed"]);
+
+// features/keystone/lib/paymentReturnUrl.ts
 function requestHeader(context, name) {
   const headers = context?.req?.headers;
-  const value = typeof headers?.get === "function" ? headers.get(name) : headers?.[name] ?? headers?.[name.toLowerCase()];
+  const value = typeof headers?.get === "function" ? headers.get(name) : headers?.[name];
   return Array.isArray(value) ? value[0] : typeof value === "string" ? value : "";
 }
 function canonicalHttpOrigin(value) {
@@ -11237,196 +12710,175 @@ function canonicalHttpOrigin(value) {
   return url.origin;
 }
 function paymentRequestOrigin(context, env = process.env) {
-  const configured = String(env.NEXT_PUBLIC_SITE_URL || env.NEXTAUTH_URL || "").trim();
-  if (configured) return canonicalHttpOrigin(configured);
+  const configured = configuredSiteOrigin(env);
   const browserOrigin = requestHeader(context, "origin");
-  if (browserOrigin) return canonicalHttpOrigin(browserOrigin);
+  if (browserOrigin) {
+    const origin = canonicalHttpOrigin(browserOrigin);
+    const url = new URL(origin);
+    if (url.host === requestHeader(context, "host") && (url.protocol === "https:" || env.NODE_ENV !== "production")) return origin;
+    if (configured && origin === canonicalHttpOrigin(configured)) return origin;
+    throw new Error("Payment return origin does not match this checkout request.");
+  }
+  if (configured) return canonicalHttpOrigin(configured);
   if (env.NODE_ENV !== "production") {
-    const host = requestHeader(context, "x-forwarded-host") || requestHeader(context, "host");
-    const protocol = requestHeader(context, "x-forwarded-proto") || "http";
-    if (host) return canonicalHttpOrigin(`${protocol}://${host}`);
+    const host = requestHeader(context, "host");
+    if (host) return canonicalHttpOrigin(`http://${host}`);
   }
   throw new Error("Payment return origin could not be verified from this checkout request.");
 }
 function safePaymentReturnUrl(value, context, allowedPath, env = process.env) {
   if (!value) throw new Error("Payment return URL is required.");
-  const url = new URL(value, paymentRequestOrigin(context, env));
-  if (url.origin !== paymentRequestOrigin(context, env) || url.pathname !== allowedPath || url.username || url.password || url.hash) {
+  const origin = paymentRequestOrigin(context, env);
+  const url = new URL(value, origin);
+  if (url.origin !== origin || url.pathname !== allowedPath || url.username || url.password || url.hash) {
     throw new Error("Payment return URL is not allowed.");
   }
   return url.toString();
 }
+
+// features/keystone/mutations/initiateBookingPaymentSession.ts
+init_bookingFolio();
+init_serializableTransaction();
+init_guestBookingAccess();
+init_paymentSecurity();
+var PAYABLE_BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed"]);
+var STAFF_PAYABLE_BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed", "checked_in"]);
+var MAX_PAYMENT_SESSION_MINOR = 2147483647;
+var SESSION_PROJECTION = `
+  id
+  amount
+  isSelected
+  isInitiated
+  data
+  paymentProvider {
+    id
+    code
+    name
+    metadata
+  }
+`;
+var RESERVATION_RESUME_MS = 2 * 6e4;
 async function initiateBookingPaymentSession(root, {
   bookingId,
   paymentProviderCode,
   returnUrl,
   cancelUrl
-}, context) {
+}, context, createPaymentAdapter = createPayment) {
   const sudoContext = context.sudo();
   await assertGuestBookingAccess(context, bookingId);
   assertCustomerPaymentProvider(paymentProviderCode);
   await ensureDefaultPaymentProviders(context);
-  const booking = await sudoContext.query.Booking.findOne({
-    where: { id: bookingId },
-    query: `
-      id
-      confirmationNumber
-      guestEmail
-      status
-      totalAmount
-      balanceDue
-      totalAmountMinor
-      balanceDueMinor
-      currencyCode
-      holdExpiresAt
-      paymentStatus
-      pricingRevision
-      pricingSnapshot
-      billingFolio { id }
-      paymentSessions {
-        id
-        amount
-        idempotencyKey
-        isSelected
-        isInitiated
-        paymentProvider {
-          id
-          code
-        }
-        payment {
-          id
-        }
-        data
-      }
-    `
-  });
-  if (!booking) {
-    throw new Error("Booking not found");
-  }
-  if (booking.billingFolio?.id && !canManageBookingRecords(context)) throw new Error("The group payer manages this master folio. Contact the property for your individual balance.");
-  if (!PAYABLE_BOOKING_STATUSES.has(booking.status)) {
-    throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
-  }
-  if (booking.status === "pending" && booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= /* @__PURE__ */ new Date()) {
-    throw new Error("This reservation hold has expired.");
-  }
-  const collectibleMinor = (await runSerializableTransaction(context, (tx) => getBookingCollectibleBalance(tx, bookingId))).balanceDueMinor;
-  const amountInCents = bookingPaymentDueNow(booking, collectibleMinor);
-  if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0) {
-    throw new Error("This booking has no outstanding balance.");
-  }
-  const provider = await context.prisma.paymentProvider.findUnique({ where: { code: paymentProviderCode } });
-  if (!provider || !isPaymentProviderConfigured(provider)) {
-    throw new Error("Payment provider is disabled or not completely configured.");
-  }
-  const currencyCode = String(booking.currencyCode || "USD").toUpperCase();
-  const obligationKey = `${booking.id}:${provider.code}:v${booking.pricingRevision || 1}:${amountInCents}:${currencyCode}`;
-  const retiredAttempts = (booking.paymentSessions || []).filter((session) => session.idempotencyKey?.startsWith(`${obligationKey}:attempt:`) && session.data?.retiredAt).length;
-  const idempotencyKey = `${obligationKey}:attempt:${retiredAttempts}`;
-  const existingSession = booking.paymentSessions?.find(
-    (session) => session.idempotencyKey === idempotencyKey
-  );
-  if (existingSession) {
-    if (existingSession.payment?.id) {
-      throw new Error("This booking balance has already been paid.");
-    }
-    if (existingSession.isInitiated) {
-      throw new Error("This payment session is already being processed.");
-    }
-    for (const session of booking.paymentSessions || []) {
-      if (session.id !== existingSession.id && session.isSelected) {
-        await retireBookingPaymentSession(context, session.id, booking.id);
-      }
-    }
-    await sudoContext.query.BookingPaymentSession.updateOne({
-      where: { id: existingSession.id },
-      data: { isSelected: true }
+  const verifiedReturnUrl = safePaymentReturnUrl(returnUrl, context, paymentProviderCode === "pp_paypal_paypal" ? "/paypal/return" : "/stripe/return");
+  const verifiedCancelUrl = safePaymentReturnUrl(cancelUrl, context, "/book");
+  const managesBookings = canManageBookingRecords(context);
+  const reservation = await runSerializableTransaction(context, async (tx) => {
+    const prisma = tx.prisma;
+    await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { paymentSessions: { include: { payment: { select: { id: true } }, paymentProvider: { select: { code: true } } } } }
     });
-    return await sudoContext.query.BookingPaymentSession.findOne({
-      where: { id: existingSession.id },
-      query: `
-        id
-        amount
-        isSelected
-        isInitiated
-        data
-        paymentProvider {
-          id
-          code
-          name
-          metadata
-        }
-      `
-    });
-  }
-  const sessionData = await createPayment({
-    provider,
-    amount: amountInCents,
-    currency: currencyCode,
-    idempotencyKey,
-    metadata: {
-      bookingId: booking.id,
-      confirmationNumber: booking.confirmationNumber,
-      guestEmail: booking.guestEmail,
-      returnUrl: safePaymentReturnUrl(
-        returnUrl,
-        context,
-        paymentProviderCode === "pp_paypal_paypal" ? "/paypal/return" : "/stripe/return"
-      ),
-      cancelUrl: safePaymentReturnUrl(cancelUrl, context, "/book"),
-      idempotencyKey
+    if (!booking) throw new Error("Booking not found");
+    if (booking.billingFolioId && !managesBookings) throw new Error("The group payer manages this master folio. Contact the property for your individual balance.");
+    if (!(managesBookings ? STAFF_PAYABLE_BOOKING_STATUSES : PAYABLE_BOOKING_STATUSES).has(booking.status)) throw new Error(`Payments cannot be started for a ${booking.status} booking.`);
+    if (booking.status === "pending" && booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= /* @__PURE__ */ new Date()) {
+      throw new Error("This reservation hold has expired.");
     }
-  });
-  for (const session of booking.paymentSessions || []) {
-    if (session.isSelected) {
-      await retireBookingPaymentSession(context, session.id, booking.id);
+    const collectibleMinor = (await getBookingCollectibleBalance(tx, bookingId)).balanceDueMinor;
+    const amountInCents = bookingPaymentDueNow(booking, collectibleMinor);
+    if (!Number.isSafeInteger(amountInCents) || amountInCents <= 0) throw new Error("This booking has no outstanding balance.");
+    if (amountInCents > MAX_PAYMENT_SESSION_MINOR) throw new Error("Payment session amount exceeds the PostgreSQL Int32 minor-unit limit.");
+    const provider = await prisma.paymentProvider.findUnique({ where: { code: paymentProviderCode } });
+    if (!provider || !isPaymentProviderConfigured(provider)) throw new Error("Payment provider is disabled or not completely configured.");
+    const currencyCode = String(booking.currencyCode || "USD").toUpperCase();
+    const obligationKey = `${booking.id}:${provider.code}:v${booking.pricingRevision || 1}:${amountInCents}:${currencyCode}`;
+    const sessions = booking.paymentSessions || [];
+    const retiredAttempts = sessions.filter((session) => session.idempotencyKey?.startsWith(`${obligationKey}:attempt:`) && session.data?.retiredAt).length;
+    const idempotencyKey = `${obligationKey}:attempt:${retiredAttempts}`;
+    const existing = sessions.find((session) => session.idempotencyKey === idempotencyKey);
+    if (existing?.payment?.id) throw new Error("This booking balance has already been paid.");
+    if (existing?.isInitiated) throw new Error("This payment session is already being processed.");
+    const now = /* @__PURE__ */ new Date();
+    for (const session of sessions) {
+      if (session.id === existing?.id || !session.isSelected) continue;
+      const data = session.data || {};
+      const retirement = session.payment ? { status: "captured" } : data.retirement || { status: session.paymentProvider?.code === "pp_stripe_stripe" ? "pending" : "provider_expiry_required", attempts: 0 };
+      await prisma.bookingPaymentSession.update({ where: { id: session.id }, data: {
+        isSelected: false,
+        data: { ...data, ...session.payment ? {} : { retiredAt: data.retiredAt || now.toISOString() }, retirement }
+      } });
     }
-  }
-  try {
-    return await sudoContext.query.BookingPaymentSession.createOne({
+    const claimToken = (0, import_node_crypto20.randomUUID)();
+    if (existing) {
+      const data = existing.data || {};
+      const claim = data.claim;
+      const providerRecorded = !claim || claim.status === "created";
+      if (providerRecorded) {
+        if (!existing.isSelected) await prisma.bookingPaymentSession.update({ where: { id: existing.id }, data: { isSelected: true } });
+        return { sessionId: existing.id, needsProvider: false };
+      }
+      const reservedAt = Date.parse(claim.reservedAt || "");
+      if (claim.status === "reserved" && Number.isFinite(reservedAt) && now.getTime() - reservedAt < RESERVATION_RESUME_MS) {
+        throw new Error("This payment is being prepared. Try again in a moment.");
+      }
+      await prisma.bookingPaymentSession.update({ where: { id: existing.id }, data: {
+        isSelected: true,
+        data: { ...data, claim: { ...claim, status: "reserved", token: claimToken, reservedAt: now.toISOString(), resumedFrom: claim.status } }
+      } });
+      return { sessionId: existing.id, needsProvider: true, claimToken, provider, idempotencyKey, amountInCents, currencyCode, booking };
+    }
+    const created = await prisma.bookingPaymentSession.create({
       data: {
-        booking: { connect: { id: booking.id } },
-        paymentProvider: { connect: { id: provider.id } },
+        bookingId: booking.id,
+        paymentProviderId: provider.id,
         amount: amountInCents,
         isSelected: true,
         isInitiated: false,
-        data: { ...sessionData, obligation: { depositPercent: booking.pricingSnapshot?.depositPercent ?? 100, pricingRevision: booking.pricingRevision || 1, amountMinor: amountInCents, currencyCode } },
-        idempotencyKey
-      },
-      query: `
-        id
-        amount
-        isSelected
-        isInitiated
-        data
-        paymentProvider {
-          id
-          code
-          name
-          metadata
+        idempotencyKey,
+        data: {
+          claim: { status: "reserved", token: claimToken, reservedAt: now.toISOString() },
+          obligation: { depositPercent: booking.pricingSnapshot?.depositPercent ?? 100, pricingRevision: booking.pricingRevision || 1, amountMinor: amountInCents, currencyCode }
         }
-      `
+      }
     });
-  } catch (error) {
-    const concurrentSession = await sudoContext.query.BookingPaymentSession.findOne({
-      where: { idempotencyKey },
-      query: `
-        id
-        amount
-        isSelected
-        isInitiated
-        data
-        paymentProvider {
-          id
-          code
-          name
-          metadata
+    return { sessionId: created.id, needsProvider: true, claimToken, provider, idempotencyKey, amountInCents, currencyCode, booking };
+  });
+  if (reservation.needsProvider) {
+    const attemptReturnUrl = new URL(verifiedReturnUrl);
+    attemptReturnUrl.searchParams.set("paymentSessionId", reservation.sessionId);
+    let sessionData;
+    try {
+      sessionData = await createPaymentAdapter({
+        provider: reservation.provider,
+        amount: reservation.amountInCents,
+        currency: reservation.currencyCode,
+        idempotencyKey: reservation.idempotencyKey,
+        metadata: {
+          bookingId: reservation.booking.id,
+          confirmationNumber: reservation.booking.confirmationNumber,
+          guestEmail: reservation.booking.guestEmail,
+          returnUrl: attemptReturnUrl.toString(),
+          cancelUrl: verifiedCancelUrl,
+          idempotencyKey: reservation.idempotencyKey
         }
-      `
-    });
-    if (concurrentSession) return concurrentSession;
-    throw error;
+      });
+    } catch (error) {
+      await recordClaim(context, bookingId, reservation.sessionId, reservation.claimToken, { status: "unknown", failedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      throw error;
+    }
+    await recordClaim(context, bookingId, reservation.sessionId, reservation.claimToken, { status: "created", createdAt: (/* @__PURE__ */ new Date()).toISOString() }, sessionData);
   }
+  return sudoContext.query.BookingPaymentSession.findOne({ where: { id: reservation.sessionId }, query: SESSION_PROJECTION });
+}
+async function recordClaim(context, bookingId, sessionId, token, claim, providerData) {
+  await runSerializableTransaction(context, async (tx) => {
+    const prisma = tx.prisma;
+    await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
+    const current = await prisma.bookingPaymentSession.findUnique({ where: { id: sessionId } });
+    const data = current?.data || {};
+    if (!current || data.claim?.token !== token) return;
+    await prisma.bookingPaymentSession.update({ where: { id: sessionId }, data: { data: { ...data, ...providerData || {}, claim: { ...data.claim, ...claim } } } });
+  });
 }
 var initiateBookingPaymentSession_default = initiateBookingPaymentSession;
 
@@ -11478,7 +12930,7 @@ async function completeBookingPayment(root, {
     throw new Error("Provider payment identifier is required to complete payment.");
   }
   const collectible = await runSerializableTransaction(context, (tx) => getBookingCollectibleBalance(tx, bookingId));
-  const stale = Boolean(session.data?.retiredAt) || !["pending", "confirmed"].includes(session.booking.status) || bookingPaymentDueNow(session.booking, collectible.balanceDueMinor) !== session.amount || session.data?.obligation && session.data.obligation.pricingRevision !== (session.booking.pricingRevision || 1) || session.booking.status === "pending" && session.booking.holdExpiresAt && new Date(session.booking.holdExpiresAt) <= /* @__PURE__ */ new Date();
+  const stale = Boolean(session.data?.retiredAt) || !["pending", "confirmed", ...canManageBookingRecords(context) ? ["checked_in"] : []].includes(session.booking.status) || bookingPaymentDueNow(session.booking, collectible.balanceDueMinor) !== session.amount || session.data?.obligation && session.data.obligation.pricingRevision !== (session.booking.pricingRevision || 1) || session.booking.status === "pending" && session.booking.holdExpiresAt && new Date(session.booking.holdExpiresAt) <= /* @__PURE__ */ new Date();
   const result = await (stale ? getPaymentStatus : completePayment)({
     provider,
     paymentId: paymentIdentifier,
@@ -11509,11 +12961,11 @@ async function completeBookingPayment(root, {
 }
 var completeBookingPayment_default = completeBookingPayment;
 
-// features/keystone/lib/stayRegister.ts
-var import_node_crypto19 = require("node:crypto");
+// features/keystone/operations/stayRegister.ts
+var import_node_crypto21 = require("node:crypto");
+init_access();
 init_hotelLifecycle();
 init_serializableTransaction();
-init_access();
 function applyStayRegisterCommand(state, input, booking, eventKey, now = /* @__PURE__ */ new Date()) {
   const next2 = JSON.parse(JSON.stringify(state));
   next2.revision = Number(state.revision || 0) + 1;
@@ -11522,7 +12974,7 @@ function applyStayRegisterCommand(state, input, booking, eventKey, now = /* @__P
     const name = String(input.name || "").trim();
     if (!name || name.length > 200) throw new Error("Occupant name must contain 1\u2013200 characters.");
     if (next2.occupants.filter((item) => !item.departedAt).length >= booking.numberOfGuests) throw new Error("Registered occupants cannot exceed the booked guest count.");
-    next2.occupants.push({ id: (0, import_node_crypto19.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24), name, registeredAt: at });
+    next2.occupants.push({ id: (0, import_node_crypto21.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24), name, registeredAt: at });
   } else if (input.action === "remove_occupant") {
     const occupant = next2.occupants.find((item) => item.id === input.occupantId && !item.departedAt);
     if (!occupant) throw new Error("Active occupant does not belong to this stay.");
@@ -11593,19 +13045,19 @@ async function updateHotelStayRegister(_root, input, context) {
   });
 }
 
-// features/keystone/mutations/createStorefrontBooking.ts
-var import_node_crypto20 = require("node:crypto");
+// features/keystone/bookings/createStorefrontBooking.ts
+var import_node_crypto22 = require("node:crypto");
 init_hotelLifecycle();
 init_serializableTransaction();
 init_guestBookingAccess();
 init_reservationSnapshots();
-init_inventoryLock();
+init_roomNightLocks();
 init_bookingFolio();
 init_guestProfiles();
-init_hotelAvailability();
-init_hotelPricing();
+init_roomAvailability();
+init_pricing();
 init_hotelBusinessTime();
-function required(value, label) {
+function required2(value, label) {
   const normalized = String(value || "").trim();
   if (!normalized || normalized.length > 255) throw new Error(`${label} is required.`);
   return normalized;
@@ -11617,12 +13069,13 @@ async function getStorefrontBookingQuote(input, context) {
 }
 async function createStorefrontBooking(_root, { data }, context) {
   await enforceAbuseLimit(context, { scope: "storefront-booking-create", identity: data.guestEmail, limit: 5, windowMs: 60 * 6e4 });
-  const guestName = required(data.guestName, "Guest name");
-  const guestEmail = required(data.guestEmail, "Guest email").toLowerCase();
+  const guestName = required2(data.guestName, "Guest name");
+  const guestEmail = required2(data.guestEmail, "Guest email").toLowerCase();
   const { checkIn, checkOut } = hotelStayDates(data.checkInDate, data.checkOutDate);
   const guestAccessToken = createGuestAccessToken();
+  const accountId = guestAccountId(context);
   if (!/^[a-zA-Z0-9_-]{32,128}$/.test(String(data.idempotencyKey || ""))) throw new Error("A random stable booking attempt key is required.");
-  const attemptId = (0, import_node_crypto20.createHash)("sha256").update(data.idempotencyKey).digest("hex");
+  const attemptId = (0, import_node_crypto22.createHash)("sha256").update(data.idempotencyKey).digest("hex");
   const eventKey = `guest-booking:${attemptId}`;
   const { quoteToken: _quote, idempotencyKey: _key, ...request } = data;
   const identity = { request: { ...request, guestName, guestEmail }, aggregateType: "booking_attempt", aggregateId: attemptId, action: "created" };
@@ -11634,20 +13087,22 @@ async function createStorefrontBooking(_root, { data }, context) {
       const id = replay.afterSnapshot?.bookingId;
       if (!id) throw new Error("Booking attempt recovery evidence is missing.");
       await tx.prisma.booking.update({ where: { id }, data: { guestAccessTokenHash: hashGuestAccessToken(guestAccessToken), guestAccessTokenIssuedAt: /* @__PURE__ */ new Date() } });
-      return tx.sudo().query.Booking.findOne({ where: { id }, query: "id confirmationNumber status paymentStatus guestName guestEmail checkInDate checkOutDate roomAssignments { id roomType { id name } }" });
+      return tx.sudo().query.Booking.findOne({ where: { id }, query: STOREFRONT_BOOKING_QUERY });
     }
     await lockRoomInventory(tx.prisma, data.roomTypeId, checkIn, checkOut);
     const quote = await calculateHotelPrice(tx, data);
-    await assertHotelAvailability(tx, data);
     verifyHotelQuoteToken(String(data.quoteToken || ""), quote);
+    await assertHotelAvailability(tx, data);
     const guest = await ensureGuestProfile(tx, { name: guestName, email: guestEmail, phone: data.guestPhone });
     const created = await tx.prisma.booking.create({
       data: {
-        confirmationNumber: `BK-${(0, import_node_crypto20.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
+        confirmationNumber: `BK-${(0, import_node_crypto22.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
         guestName,
         guestEmail,
         guestPhone: data.guestPhone?.trim() || "",
         guestProfileId: guest.id,
+        // A stay booked while signed in belongs to that guest account.
+        ...accountId ? { guestId: accountId } : {},
         checkInDate: quote.checkIn,
         checkOutDate: quote.checkOut,
         numberOfGuests: quote.numberOfGuests,
@@ -11712,18 +13167,7 @@ async function createStorefrontBooking(_root, { data }, context) {
     await recordHotelLifecycleEvent({ prisma: tx.prisma, eventKey, identity, afterSnapshot: { bookingId: created.id }, metadata: { source: "website" } });
     return tx.sudo().query.Booking.findOne({
       where: { id: created.id },
-      query: `
-        id confirmationNumber guestName guestEmail guestPhone checkInDate checkOutDate numberOfNights
-        numberOfGuests numberOfAdults numberOfChildren roomRate taxAmount feesAmount totalAmount
-        depositAmount balanceDue roomRateMinor taxAmountMinor feesAmountMinor totalAmountMinor
-        depositAmountMinor balanceDueMinor currencyCode status paymentStatus specialRequests createdAt
-        ratePlan { id name cancellationPolicy mealPlan }
-        roomAssignments {
-          id ratePerNight ratePerNightMinor guestName
-          roomType { id name thumbnail roomImages(orderBy: { order: asc }) { id image { url } imagePath altText caption order isPrimary } }
-          room { roomNumber }
-        }
-      `
+      query: STOREFRONT_BOOKING_QUERY
     });
   });
   setGuestBookingAccess(context, booking.id, guestAccessToken);
@@ -11731,17 +13175,16 @@ async function createStorefrontBooking(_root, { data }, context) {
 }
 var createStorefrontBooking_default = createStorefrontBooking;
 
-// features/keystone/mutations/createStaffBooking.ts
-var import_node_crypto21 = require("node:crypto");
+// features/keystone/bookings/createStaffBooking.ts
+var import_node_crypto23 = require("node:crypto");
 init_access();
 init_bookingFolio();
 init_guestBookingAccess();
 init_guestProfiles();
-init_hotelAvailability();
-init_hotelCommunications();
-init_hotelPricing();
+init_roomAvailability();
+init_pricing();
 init_hotelLifecycle();
-init_inventoryLock();
+init_roomNightLocks();
 init_hotelBusinessTime();
 init_reservationSnapshots();
 init_serializableTransaction();
@@ -11764,7 +13207,7 @@ async function runStaffBookingTransaction(context, operation) {
     throw error;
   }
 }
-function bounded2(value, label, max, required3 = true) {
+function bounded(value, label, max, required3 = true) {
   const normalized = String(value || "").trim();
   if (required3 && !normalized || normalized.length > max) {
     throw new Error(`${label} ${required3 ? "is required and " : ""}must be at most ${max} characters.`);
@@ -11775,18 +13218,19 @@ async function createStaffBooking(_root, { data }, context) {
   if (!permissions.canManageBookings({ session: context.session })) {
     throw new Error("Not authorized to create staff reservations.");
   }
-  const idempotencyKey = bounded2(data.idempotencyKey, "idempotencyKey", 200);
+  const idempotencyKey = bounded(data.idempotencyKey, "idempotencyKey", 200);
   const eventKey = `staff-booking:create:${idempotencyKey}`;
-  const guestName = bounded2(data.guestName, "Guest name", 255);
-  const guestEmail = bounded2(data.guestEmail, "Guest email", 320).toLowerCase();
-  const guestPhone = bounded2(data.guestPhone, "Guest phone", 80, false);
-  const specialRequests = bounded2(data.specialRequests, "Special requests", 2e3, false);
-  const internalNotes = bounded2(data.internalNotes, "Internal notes", 4e3, false);
+  const guestName = bounded(data.guestName, "Guest name", 255);
+  const guestEmail = bounded(data.guestEmail, "Guest email", 320).toLowerCase();
+  const guestPhone = bounded(data.guestPhone, "Guest phone", 80, false);
+  const specialRequests = bounded(data.specialRequests, "Special requests", 2e3, false);
+  const internalNotes = bounded(data.internalNotes, "Internal notes", 4e3, false);
   const source = String(data.source || "phone").trim();
   const status = String(data.status || "confirmed").trim();
   if (!STAFF_SOURCES.has(source)) throw new Error("Staff reservation source must be direct, phone, or walk in.");
   if (!STAFF_CREATE_STATUSES.has(status)) throw new Error("Staff reservations must start pending or confirmed.");
   const { checkIn, checkOut } = hotelStayDates(data.checkInDate, data.checkOutDate);
+  const quoteToken = bounded(data.quoteToken, "quoteToken", 4096);
   const request = {
     roomTypeId: data.roomTypeId,
     ratePlanId: data.ratePlanId,
@@ -11804,7 +13248,7 @@ async function createStaffBooking(_root, { data }, context) {
     status
   };
   const identity = {
-    request,
+    request: { ...request, quoteToken },
     aggregateType: "booking",
     aggregateId: idempotencyKey,
     action: "staff_created"
@@ -11831,6 +13275,7 @@ async function createStaffBooking(_root, { data }, context) {
       }
       throw error;
     }
+    verifyHotelQuoteToken(quoteToken, currentQuote);
     const currentQuoteHash = hotelQuoteCommercialTermsHash(currentQuote);
     if (pinnedQuote) {
       if (!pinnedQuoteHash || currentQuoteHash !== pinnedQuoteHash) {
@@ -11846,7 +13291,7 @@ async function createStaffBooking(_root, { data }, context) {
     const now = /* @__PURE__ */ new Date();
     const created = requirePrismaResult4(await tx.prisma.booking.create({
       data: {
-        confirmationNumber: `BK-${(0, import_node_crypto21.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
+        confirmationNumber: `BK-${(0, import_node_crypto23.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`,
         guestName,
         guestEmail,
         guestPhone,
@@ -11929,35 +13374,29 @@ async function createStaffBooking(_root, { data }, context) {
         currencyCode: quote.currencyCode
       }
     });
-    if (status === "confirmed") {
-      await queueBookingCommunication(tx.prisma, {
-        bookingId: created.id,
-        kind: "booking_confirmation",
-        eventKey: `booking:${created.id}:confirmation:v1`
-      });
-    }
     return created.id;
   });
   return context.prisma.booking.findUnique({ where: { id: bookingId } });
 }
 
-// features/keystone/lib/inHouseStayAmendment.ts
-init_hotelGuestGovernance();
+// features/keystone/bookings/inHouseStay.ts
+init_commands();
 init_roomOutages();
-init_hotelPricing();
+init_pricing();
 init_reservationSnapshots();
-init_folioLedger();
+init_ledger();
 init_bookingFolio();
-init_inventoryLock();
-init_hotelAvailability();
+init_roomNightLocks();
+init_roomAvailability();
 init_hotelLifecycle();
 init_hotelBusinessTime();
 init_serializableTransaction();
-init_hotelCommunications();
+init_moneyText();
 function assertInHouseDateChange(booking, checkIn, checkOut, businessDate, roomTypeId, ratePlanId, allowCommercialMove = false) {
   if (booking.status !== "checked_in") throw new Error("Only an in-house stay can use this amendment.");
   if (checkIn.getTime() !== new Date(booking.checkInDate).getTime()) throw new Error("An in-house arrival date is immutable.");
-  if (checkOut < businessDate || checkOut <= checkIn) throw new Error("Departure cannot precede the open business date or arrival.");
+  if (checkOut <= checkIn) throw new Error("Departure must be at least one night after arrival. For a guest leaving on arrival day, check them out directly; that night stays charged.");
+  if (checkOut < businessDate) throw new Error("Departure cannot be before the current business date.");
   if (!allowCommercialMove && (roomTypeId !== booking.roomAssignments[0]?.roomTypeId || ratePlanId !== booking.ratePlanId)) throw new Error("In-house amendments preserve the booked room type and rate plan; use a room move for physical-room changes.");
 }
 function planInHouseSnapshotAmendment(booking, quote, openDay, revision) {
@@ -12012,7 +13451,7 @@ async function amendInHouseStay(context, input) {
     const waivedMinor = Math.max(0, Number(booking.totalAmountMinor || 0) - repricedTotal);
     if (waivedMinor > 0 && (!input.earlyDepartureReason?.trim() || input.earlyDepartureReason.trim().length > 1e3)) throw new Error("An explicit reason of 1\u20131000 characters is required for the operator waiver of booked charges.");
     if (waivedMinor > 0 && waivedMinor >= Number(quote.settings?.writeOffApprovalThresholdMinor ?? 0)) {
-      if (!input.earlyDepartureApprovalId) throw new Error(`An independent write-off approval for booking ${booking.id}, ${waivedMinor} minor units, is required to waive booked charges on early departure or a lower-priced amendment.`);
+      if (!input.earlyDepartureApprovalId) throw new Error(`An independent write-off approval for booking ${booking.id}, ${moneyText(waivedMinor)}, is required to waive booked charges on early departure or a lower-priced amendment.`);
       await requireHotelApproval(p, { approvalId: input.earlyDepartureApprovalId, action: "write_off", aggregateId: booking.id, amountMinor: waivedMinor, actorId: context.session.itemId, operationKey: eventKey });
     }
     const ensured = await ensureBookingFolio(tx, booking.id);
@@ -12044,15 +13483,17 @@ async function amendInHouseStay(context, input) {
     const collectible = await getBookingCollectibleBalance(tx, booking.id);
     Object.assign(updated, await p.booking.update({ where: { id: booking.id }, data: { balanceDueMinor: collectible.balanceDueMinor, balanceDue: collectible.balanceDueMinor / 100, paymentStatus: collectible.balanceDueMinor <= 0 ? "paid" : netPaid > 0 ? "partial" : "unpaid" } }));
     await recordHotelLifecycleEvent({ prisma: p, eventKey, actorId: context.session.itemId, identity, beforeSnapshot: { checkOutDate: booking.checkOutDate, totalAmountMinor: booking.totalAmountMinor }, afterSnapshot: { checkOutDate: end, totalAmountMinor: total, pricingRevision: revision, preservedHistoricalLines: historical.length, guestCreditMinor: collectible.creditMinor, waivedMinor, waiverReason: waivedMinor ? input.earlyDepartureReason?.trim() : null, waiverApprovalId: input.earlyDepartureApprovalId || null } });
-    await queueBookingCommunication(p, { bookingId: booking.id, kind: "booking_updated", eventKey });
     return updated;
   });
 }
 
 // features/keystone/mutations/amendStaffBooking.ts
 init_access();
-init_bookingAmendment();
-init_hotelPricing();
+init_amendment();
+init_pricing();
+init_hotelLifecycle();
+init_hotelBusinessTime();
+init_serializableTransaction();
 async function amendStaffBooking(_root, {
   bookingId,
   checkInDate,
@@ -12087,51 +13528,67 @@ async function amendStaffBooking(_root, {
   if (!selectedRatePlan) throw new Error("Selected rate plan was not found.");
   const effectivePromoCode = promoCode || (selectedRatePlan.isPromotional ? selectedRatePlan.promoCode : null);
   if (booking.status === "checked_in") return amendInHouseStay(context, { bookingId, checkInDate, checkOutDate, roomTypeId: selectedRoomTypeId, ratePlanId: selectedRatePlanId, targetRoomId, promoCode: effectivePromoCode, earlyDepartureApprovalId, earlyDepartureReason, idempotencyKey });
-  const quote = await calculateHotelPrice(context, {
-    roomTypeId: selectedRoomTypeId,
-    ratePlanId: selectedRatePlanId,
-    checkInDate,
-    checkOutDate,
-    numberOfAdults: Number(booking.numberOfAdults || booking.numberOfGuests || 1),
-    numberOfChildren: Number(booking.numberOfChildren || 0),
-    promoCode: effectivePromoCode
-  });
-  return amendUnpaidBooking({
-    context,
-    bookingId,
-    checkInDate: quote.checkIn.toISOString(),
-    checkOutDate: quote.checkOut.toISOString(),
-    roomTypeId: selectedRoomTypeId,
-    guestName: booking.guestName,
-    guestEmail: booking.guestEmail,
-    guestProfileId: booking.guestProfileId,
-    numberOfGuests: quote.numberOfGuests,
-    totalAmountMinor: quote.totalMinor,
-    currencyCode: quote.currencyCode,
-    idempotencyKey,
-    source: "staff-modification",
-    actorId: context.session.itemId,
-    commercialPricing: {
-      arrivalInstant: quote.arrivalInstant,
-      propertyTimeZone: quote.propertyTimeZone,
-      cancellationPolicy: quote.ratePlan.cancellationPolicy,
-      ratePlanId: quote.ratePlan.id,
-      pricingVersion: quote.pricingVersion,
-      roomSubtotalMinor: quote.roomSubtotalMinor,
-      taxMinor: quote.taxMinor,
-      feesMinor: quote.feesMinor,
-      totalMinor: quote.totalMinor,
-      taxRateBasisPoints: quote.taxRateBasisPoints,
-      nightlyRates: quote.nightlyRates
-    }
+  return runSerializableTransaction(context, async (tx) => {
+    const prisma = tx.prisma;
+    await lockHotelLifecycle(prisma, String(idempotencyKey || "").trim());
+    await lockHotelBusinessDate(prisma);
+    await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
+    const current = await prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!current || !["pending", "confirmed"].includes(current.status)) throw new Error("Only open, pre-arrival bookings can be amended.");
+    const quote = await calculateHotelPrice(tx, {
+      roomTypeId: selectedRoomTypeId,
+      ratePlanId: selectedRatePlanId,
+      checkInDate,
+      checkOutDate,
+      numberOfAdults: Number(current.numberOfAdults || current.numberOfGuests || 1),
+      numberOfChildren: Number(current.numberOfChildren || 0),
+      promoCode: effectivePromoCode
+    });
+    return amendUnpaidBooking({
+      context: tx,
+      withinTransaction: true,
+      bookingId,
+      checkInDate: quote.checkIn.toISOString(),
+      checkOutDate: quote.checkOut.toISOString(),
+      roomTypeId: selectedRoomTypeId,
+      guestName: current.guestName,
+      guestEmail: current.guestEmail,
+      guestProfileId: current.guestProfileId,
+      numberOfGuests: quote.numberOfGuests,
+      totalAmountMinor: quote.totalMinor,
+      currencyCode: quote.currencyCode,
+      idempotencyKey,
+      source: "staff-modification",
+      actorId: context.session.itemId,
+      commercialPricing: {
+        arrivalInstant: quote.arrivalInstant,
+        propertyTimeZone: quote.propertyTimeZone,
+        cancellationPolicy: quote.ratePlan.cancellationPolicy,
+        ratePlanId: quote.ratePlan.id,
+        ratePlanName: quote.ratePlan.name,
+        mealPlan: quote.ratePlan.mealPlan,
+        pricingVersion: quote.pricingVersion,
+        roomSubtotalMinor: quote.roomSubtotalMinor,
+        taxMinor: quote.taxMinor,
+        feesMinor: quote.feesMinor,
+        totalMinor: quote.totalMinor,
+        taxRateBasisPoints: quote.taxRateBasisPoints,
+        nightlyRates: quote.nightlyRates
+      }
+    });
   });
 }
 
 // features/keystone/mutations/submitHotelContactMessage.ts
-init_hotelCommunications();
+var import_node_crypto24 = require("node:crypto");
+function bounded2(value, label, max) {
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized.length > max) throw new Error(`${label} is required and must be at most ${max} characters.`);
+  return normalized;
+}
 async function submitHotelContactMessage(_root, {
   name,
-  email: email2,
+  email,
   phone,
   subject,
   message,
@@ -12139,18 +13596,34 @@ async function submitHotelContactMessage(_root, {
 }, context) {
   await enforceAbuseLimit(context, {
     scope: "hotel-contact-message",
-    identity: String(email2 || "").trim().toLowerCase(),
+    identity: String(email || "").trim().toLowerCase(),
     limit: 5,
     windowMs: 60 * 6e4
   });
-  return queueContactCommunication(context.prisma, {
-    name,
-    email: email2,
-    phone,
-    subject,
-    message,
-    idempotencyKey
-  });
+  const replyTo = String(email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyTo) || replyTo.length > 320) throw new Error("Contact email must be a valid email address.");
+  const reference = String(idempotencyKey || (0, import_node_crypto24.randomUUID)()).trim();
+  if (!reference || reference.length > 200) throw new Error("Contact message reference is invalid.");
+  const data = {
+    reference,
+    guestName: bounded2(name, "Name", 160),
+    replyTo,
+    phone: phone ? bounded2(phone, "Phone", 80) : "",
+    subject: bounded2(subject, "Subject", 160),
+    message: bounded2(message, "Message", 4e3)
+  };
+  const prisma = context.prisma;
+  const existing = await prisma.hotelContactMessage.findUnique({ where: { reference } });
+  if (existing instanceof Error) throw existing;
+  if (existing) {
+    if (existing.replyTo !== data.replyTo || existing.subject !== data.subject || existing.message !== data.message) {
+      throw new Error("Contact message reference is already bound to different content.");
+    }
+    return { reference, status: "received", replayed: true };
+  }
+  const created = await prisma.hotelContactMessage.create({ data });
+  if (created instanceof Error) throw created;
+  return { reference, status: "received", replayed: false };
 }
 
 // features/keystone/mutations/requestBookingPaymentRefund.ts
@@ -12178,7 +13651,7 @@ async function requestBookingPaymentRefund2(_root, {
 }
 
 // features/keystone/mutations/updateHotelPropertySettings.ts
-var import_node_crypto22 = require("node:crypto");
+var import_node_crypto25 = require("node:crypto");
 init_hotelBusinessTime();
 init_roomOutages();
 init_access();
@@ -12194,6 +13667,7 @@ var DEFAULT_STOREFRONT_ACCENT_PRESET = "brass";
 var STOREFRONT_ACCENT_PRESETS = [
   {
     key: "brass",
+    primary: "#75451d",
     label: "Aged brass",
     description: "Warm and editorial",
     swatch: "#9a7046",
@@ -12206,6 +13680,7 @@ var STOREFRONT_ACCENT_PRESETS = [
   },
   {
     key: "forest",
+    primary: "#23502f",
     label: "Forest",
     description: "Grounded and restorative",
     swatch: "#397354",
@@ -12218,6 +13693,7 @@ var STOREFRONT_ACCENT_PRESETS = [
   },
   {
     key: "harbor",
+    primary: "#144e66",
     label: "Harbor",
     description: "Calm and coastal",
     swatch: "#44748b",
@@ -12230,6 +13706,7 @@ var STOREFRONT_ACCENT_PRESETS = [
   },
   {
     key: "claret",
+    primary: "#6b3036",
     label: "Claret",
     description: "Rich and intimate",
     swatch: "#8a4a55",
@@ -12257,20 +13734,34 @@ function resolveStorefrontAccentPreset(value) {
 }
 
 // features/keystone/mutations/updateHotelPropertySettings.ts
-function text45(value, label, max, required3 = false) {
+function text43(value, label, max, required3 = false) {
   const normalized = String(value || "").trim();
   if (required3 && !normalized || normalized.length > max) throw new Error(`${label} is invalid.`);
   return normalized;
 }
 function stayTime(value, label) {
-  const normalized = text45(value, label, 20, true);
+  const normalized = text43(value, label, 20, true);
   if (!/^(?:(?:[01]\d|2[0-3]):[0-5]\d|(?:0?[1-9]|1[0-2]):[0-5]\d\s?(?:AM|PM))$/i.test(normalized)) {
     throw new Error(`${label} must use 24-hour HH:mm or h:mm AM/PM format.`);
   }
   return normalized;
 }
+function logoBranding(data) {
+  const branding = {};
+  if (data.logoIcon !== void 0 && data.logoIcon !== null) {
+    const submitted = String(data.logoIcon).trim();
+    const logoIcon = submitted ? sanitizeStoreLogoSvg(submitted) : "";
+    if (submitted && !logoIcon) throw new Error("Logo must be a valid, safe SVG document.");
+    branding.logoIcon = logoIcon;
+  }
+  if (data.logoColor !== void 0 && data.logoColor !== null) branding.logoColor = normalizeStoreLogoColor(data.logoColor);
+  return branding;
+}
+function logoDigest(logoIcon) {
+  return logoIcon ? (0, import_node_crypto25.createHash)("sha256").update(String(logoIcon)).digest("hex") : null;
+}
 function imagePath(value, label) {
-  const normalized = text45(value, label, 500);
+  const normalized = text43(value, label, 500);
   if (!normalized) return "";
   if (normalized.startsWith("/images/") && !normalized.includes("..") && !normalized.includes("\\")) return normalized;
   throw new Error(`${label} must be a canonical local /images/ path.`);
@@ -12280,22 +13771,19 @@ async function updateHotelPropertySettings(_root, { data, idempotencyKey }, cont
   const key4 = String(idempotencyKey || "").trim();
   if (!key4 || key4.length > 180) throw new Error("A bounded idempotency key is required.");
   const eventKey = `hotel-settings:${key4}`;
-  const currencyCode = text45(data.currencyCode, "Currency code", 3, true).toUpperCase();
-  if (currencyCode !== "USD") throw new Error("The bounded initial release supports USD settlement only.");
+  const currencyCode = text43(data.currencyCode, "Currency code", 3, true).toUpperCase();
+  if (currencyCode !== "USD") throw new Error("Currency must be USD.");
   const taxRateBasisPoints = Number(data.taxRateBasisPoints);
   const serviceFeeMinor = Number(data.serviceFeeMinor);
   if (!Number.isSafeInteger(taxRateBasisPoints) || taxRateBasisPoints < 0 || taxRateBasisPoints > 1e4) throw new Error("Tax rate basis points must be between 0 and 10000.");
   if (!Number.isSafeInteger(serviceFeeMinor) || serviceFeeMinor < 0) throw new Error("Service fee must be a non-negative integer amount.");
-  const contactEmail = text45(data.contactEmail, "Contact email", 320, true).toLowerCase();
+  const contactEmail = text43(data.contactEmail, "Contact email", 320, true).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) throw new Error("Contact email is invalid.");
-  const propertyName = text45(data.propertyName, "Property name", 200, true);
-  if (/\b(?:grand hotel|openfront(?: hotel)?|acme|demo)\b/i.test(propertyName)) throw new Error("Property name must use the real public hotel brand.");
+  const propertyName = text43(data.propertyName, "Property name", 200, true);
   const normalized = {
     refundApprovalThresholdMinor: Number(data.refundApprovalThresholdMinor ?? 0),
     writeOffApprovalThresholdMinor: Number(data.writeOffApprovalThresholdMinor ?? 0),
     cashVarianceApprovalThresholdMinor: Number(data.cashVarianceApprovalThresholdMinor ?? 0),
-    prearrivalEmailEnabled: data.prearrivalEmailEnabled === true,
-    prearrivalDays: Number(data.prearrivalDays ?? 1),
     loyaltyEnabled: data.loyaltyEnabled === true,
     loyaltyEarnMinorPerPoint: Number(data.loyaltyEarnMinorPerPoint ?? 100),
     loyaltyRedeemMinorPerPoint: Number(data.loyaltyRedeemMinorPerPoint ?? 1),
@@ -12305,12 +13793,12 @@ async function updateHotelPropertySettings(_root, { data, idempotencyKey }, cont
     groupsEnabled: data.groupsEnabled === true,
     ratePublicationRequiresApproval: data.ratePublicationRequiresApproval !== false,
     propertyName,
-    tagline: text45(data.tagline, "Tagline", 300),
+    tagline: text43(data.tagline, "Tagline", 300),
     contactEmail,
-    contactPhone: text45(data.contactPhone, "Contact phone", 80, true),
-    addressLine1: text45(data.addressLine1, "Address line 1", 250, true),
-    addressLine2: text45(data.addressLine2, "Address line 2", 250),
-    frontDeskCopy: text45(data.frontDeskCopy, "Front desk copy", 250),
+    contactPhone: text43(data.contactPhone, "Contact phone", 80, true),
+    addressLine1: text43(data.addressLine1, "Address line 1", 250, true),
+    addressLine2: text43(data.addressLine2, "Address line 2", 250),
+    frontDeskCopy: text43(data.frontDeskCopy, "Front desk copy", 250),
     timeZone: validatePropertyTimeZone(data.timeZone),
     checkInTime: stayTime(data.checkInTime, "Check-in time"),
     checkOutTime: stayTime(data.checkOutTime, "Check-out time"),
@@ -12319,18 +13807,18 @@ async function updateHotelPropertySettings(_root, { data, idempotencyKey }, cont
     serviceFeeMinor,
     storefrontAccentPreset: parseStorefrontAccentPreset(data.storefrontAccentPreset),
     heroImagePath: imagePath(data.heroImagePath, "Hero image path"),
-    heroImageAltText: text45(data.heroImageAltText, "Hero image alt text", 300),
-    heroImageCaption: text45(data.heroImageCaption, "Hero image caption", 500),
+    heroImageAltText: text43(data.heroImageAltText, "Hero image alt text", 300),
+    heroImageCaption: text43(data.heroImageCaption, "Hero image caption", 500),
     amenityImagePath: imagePath(data.amenityImagePath, "Amenity image path"),
-    amenityImageAltText: text45(data.amenityImageAltText, "Amenity image alt text", 300),
-    amenityImageCaption: text45(data.amenityImageCaption, "Amenity image caption", 500),
+    amenityImageAltText: text43(data.amenityImageAltText, "Amenity image alt text", 300),
+    amenityImageCaption: text43(data.amenityImageCaption, "Amenity image caption", 500),
     locationImagePath: imagePath(data.locationImagePath, "Location image path"),
-    locationImageAltText: text45(data.locationImageAltText, "Location image alt text", 300),
-    locationImageCaption: text45(data.locationImageCaption, "Location image caption", 500)
+    locationImageAltText: text43(data.locationImageAltText, "Location image alt text", 300),
+    locationImageCaption: text43(data.locationImageCaption, "Location image caption", 500),
+    ...logoBranding(data)
   };
   for (const key5 of ["loyaltyEarnMinorPerPoint", "loyaltyRedeemMinorPerPoint", "loyaltyMinimumRedemptionPoints"]) if (!Number.isInteger(normalized[key5]) || normalized[key5] < 1 || normalized[key5] > 1e6) throw new Error("Loyalty amounts must be whole units between 1 and 1000000.");
   if (!Number.isInteger(normalized.depositPercent) || normalized.depositPercent < 1 || normalized.depositPercent > 100) throw new Error("Deposit percentage must be 1\u2013100.");
-  if (!Number.isInteger(normalized.prearrivalDays) || normalized.prearrivalDays < 1 || normalized.prearrivalDays > 14) throw new Error("Pre-arrival lead time must be 1\u201314 days.");
   for (const field of ["refundApprovalThresholdMinor", "writeOffApprovalThresholdMinor", "cashVarianceApprovalThresholdMinor", "securityDepositMinor"]) {
     if (!Number.isInteger(normalized[field]) || normalized[field] < 0 || normalized[field] > 2147483647) throw new Error("Approval thresholds must be non-negative 32-bit minor amounts.");
   }
@@ -12372,7 +13860,7 @@ async function updateHotelPropertySettings(_root, { data, idempotencyKey }, cont
       }
     }
     const pricingChanged = haveHotelPricingInputsChanged(before, normalized);
-    const pricingVersion = pricingChanged ? `hotel-pricing-${(0, import_node_crypto22.createHash)("sha256").update(eventKey).digest("hex").slice(0, 16)}` : before.pricingVersion;
+    const pricingVersion = pricingChanged ? `hotel-pricing-${(0, import_node_crypto25.createHash)("sha256").update(eventKey).digest("hex").slice(0, 16)}` : before.pricingVersion;
     const updated = await tx.prisma.hotelSettings.upsert({
       where: { id: 1 },
       create: { id: 1, pricingVersion, ...normalized },
@@ -12387,7 +13875,7 @@ async function updateHotelPropertySettings(_root, { data, idempotencyKey }, cont
     if (!clock) {
       await tx.prisma.hotelBusinessDate.create({ data: { id: 1, propertyKey: HOTEL_PROPERTY_KEY, currentBusinessDate: propertyToday } });
       businessDateAfter = propertyToday;
-    } else if (!before && !nightAuditCount && !bookingCount && clock.currentBusinessDate.getTime() !== propertyToday.getTime()) {
+    } else if ((!before || (before.timeZone ?? "UTC") !== normalized.timeZone) && !nightAuditCount && !bookingCount && clock.currentBusinessDate.getTime() !== propertyToday.getTime()) {
       const aligned = await tx.prisma.hotelBusinessDate.updateMany({
         where: { id: clock.id, propertyKey: HOTEL_PROPERTY_KEY, currentBusinessDate: clock.currentBusinessDate },
         data: { currentBusinessDate: propertyToday }
@@ -12405,23 +13893,22 @@ async function updateHotelPropertySettings(_root, { data, idempotencyKey }, cont
       eventKey,
       actorId: context.session.itemId,
       identity,
-      beforeSnapshot: before && { securityDepositMinor: before.securityDepositMinor, depositPercent: before.depositPercent, loyaltyEnabled: before.loyaltyEnabled, loyaltyEarnMinorPerPoint: before.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: before.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: before.loyaltyMinimumRedemptionPoints, prearrivalEmailEnabled: before.prearrivalEmailEnabled, prearrivalDays: before.prearrivalDays, groupsEnabled: before.groupsEnabled, refundApprovalThresholdMinor: before.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: before.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: before.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: before.ratePublicationRequiresApproval, propertyName: before.propertyName, contactEmail: before.contactEmail, timeZone: before.timeZone, currencyCode: before.currencyCode, taxRateBasisPoints: before.taxRateBasisPoints, serviceFeeMinor: before.serviceFeeMinor, storefrontAccentPreset: before.storefrontAccentPreset },
-      afterSnapshot: { securityDepositMinor: updated.securityDepositMinor, depositPercent: updated.depositPercent, loyaltyEnabled: updated.loyaltyEnabled, loyaltyEarnMinorPerPoint: updated.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: updated.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: updated.loyaltyMinimumRedemptionPoints, prearrivalEmailEnabled: updated.prearrivalEmailEnabled, prearrivalDays: updated.prearrivalDays, groupsEnabled: updated.groupsEnabled, refundApprovalThresholdMinor: updated.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: updated.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: updated.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: updated.ratePublicationRequiresApproval, propertyName: updated.propertyName, contactEmail: updated.contactEmail, timeZone: updated.timeZone, currencyCode: updated.currencyCode, taxRateBasisPoints: updated.taxRateBasisPoints, serviceFeeMinor: updated.serviceFeeMinor, storefrontAccentPreset: updated.storefrontAccentPreset, pricingVersion: updated.pricingVersion, businessDateBefore: clock?.currentBusinessDate || null, businessDateAfter }
+      beforeSnapshot: before && { securityDepositMinor: before.securityDepositMinor, depositPercent: before.depositPercent, loyaltyEnabled: before.loyaltyEnabled, loyaltyEarnMinorPerPoint: before.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: before.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: before.loyaltyMinimumRedemptionPoints, groupsEnabled: before.groupsEnabled, refundApprovalThresholdMinor: before.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: before.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: before.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: before.ratePublicationRequiresApproval, propertyName: before.propertyName, contactEmail: before.contactEmail, timeZone: before.timeZone, currencyCode: before.currencyCode, taxRateBasisPoints: before.taxRateBasisPoints, serviceFeeMinor: before.serviceFeeMinor, storefrontAccentPreset: before.storefrontAccentPreset, logoColor: before.logoColor, logoIconSha256: logoDigest(before.logoIcon) },
+      afterSnapshot: { securityDepositMinor: updated.securityDepositMinor, depositPercent: updated.depositPercent, loyaltyEnabled: updated.loyaltyEnabled, loyaltyEarnMinorPerPoint: updated.loyaltyEarnMinorPerPoint, loyaltyRedeemMinorPerPoint: updated.loyaltyRedeemMinorPerPoint, loyaltyMinimumRedemptionPoints: updated.loyaltyMinimumRedemptionPoints, groupsEnabled: updated.groupsEnabled, refundApprovalThresholdMinor: updated.refundApprovalThresholdMinor, writeOffApprovalThresholdMinor: updated.writeOffApprovalThresholdMinor, cashVarianceApprovalThresholdMinor: updated.cashVarianceApprovalThresholdMinor, ratePublicationRequiresApproval: updated.ratePublicationRequiresApproval, propertyName: updated.propertyName, contactEmail: updated.contactEmail, timeZone: updated.timeZone, currencyCode: updated.currencyCode, taxRateBasisPoints: updated.taxRateBasisPoints, serviceFeeMinor: updated.serviceFeeMinor, storefrontAccentPreset: updated.storefrontAccentPreset, logoColor: updated.logoColor, logoIconSha256: logoDigest(updated.logoIcon), pricingVersion: updated.pricingVersion, businessDateBefore: clock?.currentBusinessDate || null, businessDateAfter }
     });
   }, { maxWait: 5e3, timeout: 3e4, isolationLevel: "ReadCommitted" });
   return context.prisma.hotelSettings.findUnique({ where: { id: 1 } });
 }
 
-// features/keystone/mutations/updateBookingStatus.ts
-init_hotelLoyalty();
+// features/keystone/bookings/status.ts
+init_commands2();
 init_access();
 init_roomOutages();
 init_bookingFolio();
-init_bookingCancellation();
-init_folioLedger();
+init_ledger();
 init_hotelLifecycle();
-init_hotelCommunications();
-init_bookingConfirmation();
+init_confirmation();
+init_hotelBusinessTime();
 init_serializableTransaction();
 var BLOCKED_CHECK_IN_ROOM_STATUSES = /* @__PURE__ */ new Set(["occupied", "cleaning", "maintenance", "out_of_order"]);
 var TRANSITIONS2 = {
@@ -12463,11 +13950,16 @@ async function updateBookingStatus(root, {
   await runSerializableTransaction(context, async (transactionContext) => {
     const prisma = transactionContext.prisma;
     await lockHotelLifecycle(prisma, eventKey);
+    if (status === "checked_in" || status === "checked_out") await lockHotelBusinessDate(prisma);
     await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
     if (await findHotelLifecycleReplay(prisma, eventKey, identity)) return;
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { roomAssignments: { include: { room: true } }, billingFolio: true }
+      include: {
+        roomAssignments: { include: { room: true } },
+        billingFolio: true,
+        lineItems: { where: { snapshotStatus: "active" }, select: { date: true, totalPrice: true } }
+      }
     });
     if (!booking?.guestProfileId) throw new Error("Booking or required guest profile not found.");
     if (booking.status === status) throw new Error(`Booking is already ${status}.`);
@@ -12491,9 +13983,8 @@ async function updateBookingStatus(root, {
       const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
       if (!clock) throw new Error("Property business date is not configured.");
       const businessDay = clock.currentBusinessDate.toISOString().slice(0, 10);
-      const arrivalDay = booking.checkInDate.toISOString().slice(0, 10);
       const departureDay = booking.checkOutDate.toISOString().slice(0, 10);
-      if (arrivalDay > businessDay) throw new Error(`This reservation arrives on ${arrivalDay}; the current business date is ${businessDay}.`);
+      assertCheckInOnOpenBusinessDate(booking.checkInDate, clock.currentBusinessDate);
       if (departureDay <= businessDay) throw new Error("This reservation has reached its departure business date.");
       const blocked = rooms.find((room) => BLOCKED_CHECK_IN_ROOM_STATUSES.has(room.status));
       if (blocked) throw new Error(`Room ${blocked.roomNumber} is ${blocked.status.replaceAll("_", " ")} and cannot be checked in.`);
@@ -12503,14 +13994,22 @@ async function updateBookingStatus(root, {
     }
     const now = /* @__PURE__ */ new Date();
     let folioId = null;
+    let earlyDeparture = false;
     if (status === "checked_out") {
+      const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
+      if (!clock) throw new Error("Property business date is not configured.");
+      earlyDeparture = assertCheckoutDateReached(booking.checkOutDate, clock.currentBusinessDate);
+      if (booking.lineItems.some((line) => line.totalPrice > 0 && new Date(line.date) > clock.currentBusinessDate)) {
+        throw new Error("Future reservation snapshots must be superseded or reconciled through the in-house stay amendment before check-out.");
+      }
       await assertNoOutstandingStayKeys(prisma, bookingId);
       const ensured = await ensureBookingFolio(transactionContext, bookingId, { postSnapshotEntries: true });
       folioId = ensured.folioId;
       const entries = await prisma.folioEntry.findMany({
         where: { folioId },
-        select: { direction: true, amountMinor: true, currencyCode: true }
+        select: { direction: true, amountMinor: true, currencyCode: true, serviceDate: true }
       });
+      assertNoFutureDatedFolioEntries(entries, clock.currentBusinessDate);
       if (!booking.billingFolioId) assertFolioCanClose(entries);
     }
     const timestamps = {};
@@ -12575,20 +14074,13 @@ async function updateBookingStatus(root, {
       identity,
       beforeSnapshot: { status: booking.status, roomStatuses: rooms.map((room) => ({ id: room.id, status: room.status })) },
       afterSnapshot: { status: updated.status, roomStatus: status === "checked_in" ? "occupied" : status === "checked_out" ? "cleaning" : null, folioId },
-      metadata: { confirmationNumber: booking.confirmationNumber, guestProfileId: booking.guestProfileId }
+      metadata: { confirmationNumber: booking.confirmationNumber, guestProfileId: booking.guestProfileId, ...earlyDeparture ? { earlyDeparture: true, bookedDeparture: booking.checkOutDate, lastNightRetained: true } : {} }
     });
-    if (status === "confirmed") {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: "booking_confirmation",
-        eventKey: `booking:${bookingId}:confirmation:v${booking.pricingRevision || 1}`
-      });
-    }
   });
   return context.prisma.booking.findUnique({ where: { id: bookingId } });
 }
 
-// features/keystone/mutations/updateRoomOperationalStatus.ts
+// features/keystone/operations/roomLifecycle.ts
 init_serializableTransaction();
 init_access();
 init_hotelLifecycle();
@@ -12667,10 +14159,10 @@ async function updateRoomOperationalStatus(root, {
   return context.prisma.room.findUnique({ where: { id: roomId } });
 }
 
-// features/keystone/mutations/reportRoomMaintenanceIssue.ts
+// features/keystone/operations/maintenanceIssue.ts
 init_serializableTransaction();
 
-// features/keystone/lib/roomOperationalSafety.ts
+// features/keystone/operations/roomSafety.ts
 function preserveRoomOccupancy(currentStatus, proposedStatus, checkedInCount) {
   if (currentStatus === "out_of_order") return "out_of_order";
   if (checkedInCount > 0) return "occupied";
@@ -12680,9 +14172,13 @@ async function safeRoomCondition(prisma, roomId, currentStatus, proposedStatus) 
   const checkedInCount = await prisma.roomAssignment.count({ where: { roomId, booking: { status: "checked_in" } } });
   return preserveRoomOccupancy(currentStatus, proposedStatus, checkedInCount);
 }
+function roomConditionAfterMaintenanceClosed(otherOpenStatuses, openHousekeepingTasks) {
+  if (otherOpenStatuses.some((status) => ["reported", "assigned", "in_progress"].includes(status))) return "maintenance";
+  return otherOpenStatuses.length || openHousekeepingTasks ? "cleaning" : "vacant";
+}
 
-// features/keystone/mutations/reportRoomMaintenanceIssue.ts
-var import_node_crypto23 = require("node:crypto");
+// features/keystone/operations/maintenanceIssue.ts
+var import_node_crypto26 = require("node:crypto");
 init_access();
 init_hotelLifecycle();
 var CATEGORIES2 = /* @__PURE__ */ new Set(["plumbing", "electrical", "hvac", "furniture", "appliance", "structural", "cleaning", "other"]);
@@ -12704,7 +14200,7 @@ async function reportRoomMaintenanceIssue(root, {
   if (!PRIORITIES.has(priority)) throw new Error("Unsupported maintenance priority.");
   const eventKey = idempotencyKey.trim();
   if (!eventKey || eventKey.length > 200) throw new Error("A stable idempotencyKey is required.");
-  const requestId = `maintenance_${(0, import_node_crypto23.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24)}`;
+  const requestId = `maintenance_${(0, import_node_crypto26.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24)}`;
   const request = { roomId, title: normalizedTitle, description: normalizedDescription, category, priority };
   const identity = {
     request,
@@ -12759,7 +14255,7 @@ async function reportRoomMaintenanceIssue(root, {
   return context.prisma.maintenanceRequest.findUnique({ where: { id: requestId } });
 }
 
-// features/keystone/mutations/assignRoomToBooking.ts
+// features/keystone/bookings/roomAssignment.ts
 init_roomOutages();
 init_access();
 init_serializableTransaction();
@@ -12874,15 +14370,20 @@ async function assignRoomToBooking(root, {
 init_access();
 init_hotelLifecycle();
 
-// features/keystone/lib/bookingStayDates.ts
+// features/keystone/bookings/stayDates.ts
 init_hotelBusinessTime();
+init_roomAvailability();
+init_roomOutages();
+init_roomNightLocks();
 var ACTIVE_BOOKING_STATUSES = ["pending", "confirmed", "checked_in"];
+var DATE_CHANGEABLE_STATUSES = ["pending", "confirmed"];
 async function changeUnpricedBookingStayDatesInTransaction({
   prisma,
   bookingId,
-  checkIn,
-  checkOut
+  checkIn: requestedCheckIn,
+  checkOut: requestedCheckOut
 }) {
+  const { checkIn, checkOut } = hotelStayDates(requestedCheckIn, requestedCheckOut);
   await lockHotelBusinessDate(prisma);
   await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
   const booking = await prisma.booking.findUnique({
@@ -12890,8 +14391,23 @@ async function changeUnpricedBookingStayDatesInTransaction({
     include: { roomAssignments: true, lineItems: { select: { id: true }, take: 1 } }
   });
   if (!booking) throw new Error("Booking not found.");
-  if (!ACTIVE_BOOKING_STATUSES.includes(booking.status)) throw new Error("Cannot change dates for closed or cancelled bookings.");
+  if (booking.status === "checked_in") throw new Error("An in-house stay cannot change its arrival date here. Use the in-house stay controls on Front Desk.");
+  if (!DATE_CHANGEABLE_STATUSES.includes(booking.status)) throw new Error("Cannot change dates for closed or cancelled bookings.");
   if (booking.lineItems.length) throw new Error("Priced reservations require a controlled amendment; immutable commercial snapshots cannot be rewritten.");
+  const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { currentBusinessDate: true } });
+  if (!clock) throw new Error("Property business date is not configured.");
+  const businessDate = new Date(clock.currentBusinessDate);
+  businessDate.setUTCHours(0, 0, 0, 0);
+  if (checkIn < businessDate) throw new Error("Arrival cannot be before the current business date.");
+  const roomsPerType = /* @__PURE__ */ new Map();
+  for (const assignment of booking.roomAssignments) if (assignment.roomTypeId) roomsPerType.set(assignment.roomTypeId, (roomsPerType.get(assignment.roomTypeId) || 0) + 1);
+  if (!roomsPerType.size) throw new Error("This reservation has no room type, so its new dates cannot be checked against availability.");
+  for (const [roomTypeId, rooms] of [...roomsPerType.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    await lockRoomInventory(prisma, roomTypeId, checkIn, checkOut);
+    const [availability] = await getHotelAvailability({ prisma }, { roomTypeId, checkInDate: checkIn, checkOutDate: checkOut, excludeBookingId: bookingId });
+    const soldOut = availability?.availabilityByDay.find((day2) => day2.available < rooms);
+    if (!availability || soldOut) throw new Error(`Room type is sold out${soldOut ? ` on ${soldOut.date}` : ""}.`);
+  }
   const roomIds = booking.roomAssignments.map((assignment) => assignment.roomId).filter(Boolean).sort();
   for (const roomId of roomIds) {
     await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-room:${roomId}`);
@@ -12904,6 +14420,7 @@ async function changeUnpricedBookingStayDatesInTransaction({
       include: { booking: true, room: true }
     });
     if (conflict?.booking) throw new Error(`Room ${conflict.room?.roomNumber || roomId} conflicts with ${conflict.booking.confirmationNumber} for the new stay dates.`);
+    await assertRoomNotOutOfOrder(prisma, roomId, checkIn, checkOut);
   }
   const updated = await prisma.booking.update({ where: { id: bookingId }, data: { checkInDate: checkIn, checkOutDate: checkOut } });
   return { booking, updated, roomIds };
@@ -12959,7 +14476,7 @@ async function retryFailedChannelSyncsMutation(root, args, context) {
   return retryFailedChannelSyncs(context);
 }
 
-// features/keystone/mutations/updateMaintenanceRequestStatus.ts
+// features/keystone/operations/maintenanceRequests.ts
 init_serializableTransaction();
 init_access();
 init_hotelBusinessTime();
@@ -13055,7 +14572,7 @@ ${marker}`.trim() }
     let roomStatus = maintenance.room.status;
     if (["assigned", "in_progress"].includes(status)) roomStatus = "maintenance";
     if (status === "completed") roomStatus = "cleaning";
-    if (status === "verified") {
+    if (status === "verified" || status === "cancelled" && maintenance.room.status === "maintenance") {
       const [otherMaintenance, openTasks] = await Promise.all([
         prisma.maintenanceRequest.findMany({
           where: { roomId: maintenance.roomId, id: { not: maintenance.id }, status: { notIn: ["verified", "cancelled"] } },
@@ -13063,8 +14580,7 @@ ${marker}`.trim() }
         }),
         prisma.housekeepingTask.count({ where: { roomId: maintenance.roomId, status: { not: "completed" } } })
       ]);
-      const maintenanceInProgress = otherMaintenance.some((item) => ["reported", "assigned", "in_progress"].includes(item.status));
-      roomStatus = maintenanceInProgress ? "maintenance" : otherMaintenance.length || openTasks ? "cleaning" : "vacant";
+      roomStatus = roomConditionAfterMaintenanceClosed(otherMaintenance.map((item) => item.status), openTasks);
     }
     roomStatus = await safeRoomCondition(prisma, maintenance.roomId, maintenance.room.status, roomStatus);
     if (roomStatus !== maintenance.room.status || status === "verified") {
@@ -13126,6 +14642,7 @@ init_access();
 init_hotelLifecycle();
 init_serializableTransaction();
 init_hotelBusinessTime();
+init_roomAvailability();
 function getInventoryDay(dateInput) {
   const date = new Date(dateInput);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid inventory date.");
@@ -13141,6 +14658,7 @@ async function updateRoomInventoryControls(root, {
   totalRooms,
   bookedRooms,
   blockedRooms,
+  blockedRoomsDelta,
   idempotencyKey
 }, context) {
   const canManageInventory = permissions.canManageRooms({ session: context.session }) || permissions.canManageBookings({ session: context.session });
@@ -13152,9 +14670,13 @@ async function updateRoomInventoryControls(root, {
       throw new Error(`${name} must be a non-negative integer.`);
     }
   }
+  if (blockedRoomsDelta != null) {
+    if (!Number.isSafeInteger(blockedRoomsDelta) || blockedRoomsDelta === 0 || Math.abs(blockedRoomsDelta) > 1e4) throw new Error("blockedRoomsDelta must be a non-zero whole number.");
+    if (totalRooms != null || bookedRooms != null || blockedRooms != null) throw new Error("Send either a block change or absolute counts, not both.");
+  }
   const day2 = getInventoryDay(date);
   const inventoryKey = buildInventoryKey(roomTypeId, day2);
-  const request = { roomTypeId, date: day2.toISOString(), totalRooms, bookedRooms, blockedRooms };
+  const request = { roomTypeId, date: day2.toISOString(), totalRooms, bookedRooms, blockedRooms, blockedRoomsDelta };
   const identity = {
     request,
     aggregateType: "room_inventory",
@@ -13181,11 +14703,19 @@ async function updateRoomInventoryControls(root, {
     if (!roomType) throw new Error("Room type not found.");
     const physicalRoomCount = await prisma.room.count({ where: { roomTypeId } });
     const existing = await prisma.roomInventory.findUnique({ where: { inventoryKey } });
+    const currentBlocked = existing?.blockedRooms ?? 0;
     const next2 = {
       totalRooms: totalRooms ?? existing?.totalRooms ?? physicalRoomCount,
       bookedRooms: bookedRooms ?? existing?.bookedRooms ?? 0,
-      blockedRooms: blockedRooms ?? existing?.blockedRooms ?? 0
+      blockedRooms: blockedRoomsDelta != null ? currentBlocked + blockedRoomsDelta : blockedRooms ?? currentBlocked
     };
+    if (next2.blockedRooms < 0) throw new Error("There are no blocked rooms to release on this date.");
+    if (blockedRoomsDelta != null && blockedRoomsDelta > 0) {
+      const nextDay = new Date(day2.getTime() + 864e5);
+      const [availability] = await getHotelAvailability(transactionContext, { roomTypeId, checkInDate: day2, checkOutDate: nextDay });
+      const today = availability?.availabilityByDay?.[0];
+      if (!today || today.available < blockedRoomsDelta) throw new Error("Every remaining room is already booked, held or blocked on this date.");
+    }
     if (next2.totalRooms > physicalRoomCount) {
       throw new Error("Inventory total cannot exceed the physical room count.");
     }
@@ -13213,8 +14743,8 @@ async function updateRoomInventoryControls(root, {
   return context.prisma.roomInventory.findUnique({ where: { id: inventoryId } });
 }
 
-// features/keystone/mutations/requestBookingModification.ts
-var import_node_crypto24 = require("node:crypto");
+// features/keystone/bookings/requestModification.ts
+var import_node_crypto27 = require("node:crypto");
 init_guestBookingAccess();
 var MAX_MESSAGE_LENGTH = 2e3;
 var MAX_STAY_DAYS = 365;
@@ -13250,18 +14780,20 @@ async function requestBookingModification(root, { bookingId, guestEmail, request
       where: { bookingId, status: "pending" },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }]
     });
+    const storedIn = requestedIn || requestedOut ? nextIn : null;
+    const storedOut = requestedIn || requestedOut ? nextOut : null;
     if (existing) {
-      if (existing.requestedCheckInDate?.getTime() === nextIn.getTime() && existing.requestedCheckOutDate?.getTime() === nextOut.getTime() && String(existing.guestMessage || "") === guestMessage) return booking;
-      throw new Error("This booking already has a pending modification request.");
+      if ((existing.requestedCheckInDate?.getTime() ?? null) === (storedIn?.getTime() ?? null) && (existing.requestedCheckOutDate?.getTime() ?? null) === (storedOut?.getTime() ?? null) && String(existing.guestMessage || "") === guestMessage) return { booking, request: existing };
+      throw new Error("This reservation already has a change request waiting for the property to review.");
     }
     const createdAt = /* @__PURE__ */ new Date();
     const request = await tx.prisma.bookingModificationRequest.create({ data: {
-      requestKey: `guest-modification:${(0, import_node_crypto24.randomUUID)()}`,
+      requestKey: `guest-modification:${(0, import_node_crypto27.randomUUID)()}`,
       bookingId,
-      requestedCheckInDate: nextIn,
-      requestedCheckOutDate: nextOut,
+      requestedCheckInDate: storedIn,
+      requestedCheckOutDate: storedOut,
       guestMessage: guestMessage || null,
-      requestedByEmailHash: (0, import_node_crypto24.createHash)("sha256").update(normalizedEmail).digest("hex"),
+      requestedByEmailHash: (0, import_node_crypto27.createHash)("sha256").update(normalizedEmail).digest("hex"),
       status: "pending",
       createdAt,
       updatedAt: createdAt
@@ -13269,16 +14801,15 @@ async function requestBookingModification(root, { bookingId, guestEmail, request
     await tx.prisma.booking.update({ where: { id: bookingId }, data: {
       internalNotes: [booking.internalNotes, `Guest modification request ${request.id} is pending staff review.`].filter(Boolean).join("\n\n")
     } });
-    return booking;
+    return { booking, request };
   }, { maxWait: 5e3, timeout: 3e4, isolationLevel: "Serializable" });
 }
 
-// features/keystone/mutations/resolveBookingModificationRequest.ts
+// features/keystone/bookings/resolveModificationRequest.ts
 init_access();
-init_bookingAmendment();
-init_hotelPricing();
+init_amendment();
+init_pricing();
 init_hotelLifecycle();
-init_hotelCommunications();
 init_hotelBusinessTime();
 var MAX_STAY_DAYS2 = 365;
 var MAX_NOTE_LENGTH = 2e3;
@@ -13393,7 +14924,13 @@ async function resolveBookingModificationRequest(root, { bookingId, decision, ch
           actorId: context.session.itemId,
           queueCommunication: false,
           commercialPricing: {
+            // Booked policy facts stay; the arrival instant follows the approved dates so the
+            // cancellation deadline matches the stay the guest now sees.
+            arrivalInstant: quote.arrivalInstant,
+            propertyTimeZone: quote.propertyTimeZone,
             ratePlanId: quote.ratePlan.id,
+            ratePlanName: quote.ratePlan.name,
+            mealPlan: quote.ratePlan.mealPlan,
             pricingVersion: quote.pricingVersion,
             roomSubtotalMinor: quote.roomSubtotalMinor,
             taxMinor: quote.taxMinor,
@@ -13436,12 +14973,6 @@ async function resolveBookingModificationRequest(root, { bookingId, decision, ch
       afterSnapshot: snapshot,
       metadata: { commercialAmendmentEventKey: decision === "approved" && booking.lineItems.length ? `${eventKey}:commercial-amendment` : null }
     });
-    await queueBookingCommunication(prisma, {
-      bookingId,
-      kind: "booking_modification_response",
-      eventKey,
-      modification: { decision, staffNote: note || null }
-    });
     return resultFromSnapshot(snapshot, false);
   });
 }
@@ -13451,7 +14982,7 @@ init_integrationConfig();
 async function bookingPaymentProviders(_root, _args, context) {
   await ensureDefaultPaymentProviders(context);
   const providers = await context.prisma.paymentProvider.findMany({
-    where: { code: { in: ["pp_stripe_stripe", "pp_paypal_paypal"] }, isInstalled: true },
+    where: { code: { in: ["pp_stripe_stripe", "pp_paypal_paypal"] } },
     orderBy: { name: "asc" }
   });
   return providers.filter(paymentIntegrationConfigured);
@@ -13460,22 +14991,38 @@ var bookingPaymentProviders_default = bookingPaymentProviders;
 
 // features/keystone/queries/activeBookingPaymentSession.ts
 init_guestBookingAccess();
-async function activeBookingPaymentSession(root, { bookingId }, context) {
+var SESSION_QUERY = `
+  id
+  isSelected
+  isInitiated
+  createdAt
+  paymentProvider {
+    id
+    code
+    name
+  }
+`;
+async function activeBookingPaymentSession(root, { bookingId, providerPaymentId }, context) {
   await assertGuestBookingAccess(context, bookingId);
+  const providerId = String(providerPaymentId || "").trim().slice(0, 200);
+  if (providerId) {
+    const matches = await context.prisma.bookingPaymentSession.findMany({
+      where: { bookingId, OR: [
+        { data: { path: ["paymentIntentId"], equals: providerId } },
+        { data: { path: ["orderId"], equals: providerId } }
+      ] },
+      select: { id: true },
+      take: 2
+    });
+    if (matches.length !== 1) return null;
+    return context.sudo().query.BookingPaymentSession.findOne({ where: { id: matches[0].id }, query: SESSION_QUERY });
+  }
   const booking = await context.sudo().query.Booking.findOne({
     where: { id: bookingId },
     query: `
       id
       paymentSessions(where: { isInitiated: { equals: false } }) {
-        id
-        isSelected
-        isInitiated
-        createdAt
-        paymentProvider {
-          id
-          code
-          name
-        }
+        ${SESSION_QUERY}
       }
     `
   });
@@ -13488,93 +15035,37 @@ var activeBookingPaymentSession_default = activeBookingPaymentSession;
 
 // features/keystone/queries/guestBooking.ts
 init_guestBookingAccess();
-
-// features/keystone/lib/storefrontBooking.ts
-var STOREFRONT_BOOKING_QUERY = `
-  id
-  confirmationNumber
-  guestName
-  guestEmail
-  guestPhone
-  checkInDate
-  checkOutDate
-  numberOfNights
-  numberOfGuests
-  numberOfAdults
-  numberOfChildren
-  roomRate
-  taxAmount
-  feesAmount
-  totalAmount
-  depositAmount
-  balanceDue
-  status
-  paymentStatus
-  specialRequests
-  createdAt
-  confirmedAt
-  cancelledAt
-  roomAssignments {
-    id
-    ratePerNight
-    guestName
-    roomType {
-      id
-      name
-      thumbnail
-      roomImages(orderBy: { order: asc }) {
-        id
-        image { url }
-        imagePath
-        altText
-        caption
-        order
-        isPrimary
-      }
-    }
-    room {
-      roomNumber
-    }
-  }
-`;
-async function findStorefrontBooking(context, bookingId) {
-  return context.sudo().query.Booking.findOne({
-    where: { id: bookingId },
-    query: STOREFRONT_BOOKING_QUERY
-  });
-}
-
-// features/keystone/queries/guestBooking.ts
-init_hotelCommunications();
 async function guestBooking(root, { bookingId }, context) {
   await assertGuestBookingAccess(context, bookingId);
-  const [booking, communication] = await Promise.all([
-    findStorefrontBooking(context, bookingId),
-    bookingCommunicationStatus(context.prisma, bookingId)
-  ]);
+  const booking = await findStorefrontBooking(context, bookingId);
   if (!booking) return null;
-  const pending = await context.prisma.refundIntent.aggregate({ where: { bookingId, status: { in: ["pending", "processing", "failed", "dead_letter"] } }, _sum: { amountMinor: true } });
+  const [pending, changeRequest] = await Promise.all([
+    context.prisma.refundIntent.aggregate({ where: { bookingId, status: { in: ["pending", "processing", "failed", "dead_letter"] } }, _sum: { amountMinor: true } }),
+    // The guest's latest change request and the property's decision, so it survives a refresh.
+    context.prisma.bookingModificationRequest.findFirst({
+      where: { bookingId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { id: true, status: true, requestedCheckInDate: true, requestedCheckOutDate: true, guestMessage: true, staffNote: true, createdAt: true, resolvedAt: true }
+    })
+  ]);
   return {
     ...booking,
-    refundPendingMinor: Number(pending._sum.amountMinor || 0),
-    confirmationDeliveryStatus: communication.confirmation?.status || null,
-    updateDeliveryStatus: communication.modification?.status || communication.update?.status || null,
-    cancellationDeliveryStatus: communication.cancellation?.status || null
+    changeRequest,
+    refundPendingMinor: Number(pending._sum.amountMinor || 0)
   };
 }
 var guestBooking_default = guestBooking;
 
 // features/keystone/queries/guestBookings.ts
 init_guestBookingAccess();
-init_hotelCommunications();
-async function guestBookings(root, { email: email2 }, context) {
+async function guestBookings(root, { email }, context) {
   const bookingIds = getGuestAccessBookingIds(context);
-  if (!bookingIds.length || !email2.trim()) return [];
+  if (!bookingIds.length || !email.trim()) return [];
   const verifiedIds = [];
   for (const bookingId of bookingIds) {
     try {
       const booking = await assertGuestBookingAccess(context, bookingId);
-      if ((booking.guestEmail || "").trim().toLowerCase() === email2.trim().toLowerCase()) {
+      if ((booking.guestEmail || "").trim().toLowerCase() === email.trim().toLowerCase()) {
         verifiedIds.push(bookingId);
       }
     } catch {
@@ -13584,20 +15075,12 @@ async function guestBookings(root, { email: email2 }, context) {
   const bookings = await context.sudo().query.Booking.findMany({
     where: {
       id: { in: verifiedIds },
-      guestEmail: { equals: email2.trim(), mode: "insensitive" }
+      guestEmail: { equals: email.trim(), mode: "insensitive" }
     },
     orderBy: [{ createdAt: "desc" }],
     query: STOREFRONT_BOOKING_QUERY
   });
-  return Promise.all(bookings.map(async (booking) => {
-    const communication = await bookingCommunicationStatus(context.prisma, booking.id);
-    return {
-      ...booking,
-      confirmationDeliveryStatus: communication.confirmation?.status || null,
-      updateDeliveryStatus: communication.modification?.status || communication.update?.status || null,
-      cancellationDeliveryStatus: communication.cancellation?.status || null
-    };
-  }));
+  return bookings;
 }
 var guestBookings_default = guestBookings;
 
@@ -13605,7 +15088,7 @@ var guestBookings_default = guestBookings;
 init_guestBookingAccess();
 async function verifyGuestBooking(root, {
   confirmationNumber: confirmationNumber2,
-  email: email2
+  email
 }, context) {
   const normalizedConfirmation = confirmationNumber2.trim().toUpperCase();
   await enforceAbuseLimit(context, {
@@ -13614,7 +15097,7 @@ async function verifyGuestBooking(root, {
     limit: 8,
     windowMs: 15 * 6e4
   });
-  if (!normalizedConfirmation || !email2.trim()) return null;
+  if (!normalizedConfirmation || !email.trim()) return null;
   const bookings = await context.sudo().query.Booking.findMany({
     where: { confirmationNumber: { equals: normalizedConfirmation } },
     take: 1,
@@ -13623,12 +15106,16 @@ async function verifyGuestBooking(root, {
   const booking = bookings[0];
   if (!booking) return null;
   try {
-    await verifyBookingEmailOwnership(context, booking, email2);
+    await verifyBookingEmailOwnership(context, booking, email);
   } catch (error) {
     if (error instanceof Error && error.message === BOOKING_ACCESS_DENIED_MESSAGE) return null;
     throw error;
   }
-  return booking;
+  const pending = await context.prisma.refundIntent.aggregate({
+    where: { bookingId: booking.id, status: { in: ["pending", "processing", "failed", "dead_letter"] } },
+    _sum: { amountMinor: true }
+  });
+  return { ...booking, refundPendingMinor: Number(pending._sum.amountMinor || 0) };
 }
 var verifyGuestBooking_default = verifyGuestBooking;
 
@@ -13664,13 +15151,17 @@ var ROOM_TYPE_QUERY = `
     baseRateMinor
     currencyCode
     minimumStay
+    maximumStay
+    advanceBookingMax
     cancellationPolicy
     mealPlan
     isPromotional
   }
 `;
+var BOOKABLE_ROOM_TYPE = { ratePlans: { some: { status: { equals: "active" }, isPublic: { equals: true } } } };
 async function storefrontRoomTypes(root, args, context) {
   return context.sudo().query.RoomType.findMany({
+    where: BOOKABLE_ROOM_TYPE,
     orderBy: [{ baseRateMinor: "asc" }, { id: "asc" }],
     take: 100,
     query: ROOM_TYPE_QUERY
@@ -13680,18 +15171,24 @@ var storefrontRoomTypes_default = storefrontRoomTypes;
 
 // features/keystone/queries/storefrontRoomType.ts
 async function storefrontRoomType(root, { id }, context) {
-  return context.sudo().query.RoomType.findOne({
-    where: { id },
+  const [roomType] = await context.sudo().query.RoomType.findMany({
+    where: { id: { equals: id }, ...BOOKABLE_ROOM_TYPE },
+    take: 1,
     query: ROOM_TYPE_QUERY
   });
+  return roomType || null;
 }
 var storefrontRoomType_default = storefrontRoomType;
 
 // features/keystone/queries/storefrontAvailability.ts
-init_hotelAvailability();
+init_roomAvailability();
 async function storefrontAvailability(_root, { checkInDate, checkOutDate }, context) {
-  const rows = await getHotelAvailability(context, { checkInDate, checkOutDate });
-  return rows.map((roomType) => ({
+  const [rows, bookablePlans] = await Promise.all([
+    getHotelAvailability(context, { checkInDate, checkOutDate }),
+    context.prisma.ratePlan.findMany({ where: { status: "active", isPublic: true }, select: { roomTypeId: true } })
+  ]);
+  const bookable = new Set(bookablePlans.map((plan) => plan.roomTypeId));
+  return rows.filter((roomType) => bookable.has(roomType.id)).map((roomType) => ({
     id: roomType.id,
     name: roomType.name,
     shortDescription: roomType.shortDescription,
@@ -13710,6 +15207,19 @@ async function storefrontAvailability(_root, { checkInDate, checkOutDate }, cont
 }
 var storefrontAvailability_default = storefrontAvailability;
 
+// features/keystone/queries/storefrontStayCalendar.ts
+init_roomAvailability();
+async function storefrontStayCalendar(_root, { roomTypeId, fromDate, toDate }, context) {
+  await enforceAbuseLimit(context, { scope: "storefront-stay-calendar", identity: roomTypeId || "any", limit: 60, windowMs: 6e4 });
+  const rows = await getHotelAvailability(context, { roomTypeId: roomTypeId || void 0, checkInDate: fromDate, checkOutDate: toDate });
+  const nights = /* @__PURE__ */ new Map();
+  for (const roomType of rows) {
+    for (const night of roomType.availabilityByDay) nights.set(night.date, Boolean(nights.get(night.date)) || night.available > 0);
+  }
+  return [...nights].map(([date, available]) => ({ date, available }));
+}
+var storefrontStayCalendar_default = storefrontStayCalendar;
+
 // features/keystone/queries/publicHotelSettings.ts
 var PUBLIC_HOTEL_SETTINGS_QUERY = `
   propertyName
@@ -13721,6 +15231,7 @@ var PUBLIC_HOTEL_SETTINGS_QUERY = `
   frontDeskCopy
   checkInTime
   checkOutTime
+  timeZone
   storefrontAccentPreset
   heroImagePath
   heroImageAltText
@@ -13731,6 +15242,8 @@ var PUBLIC_HOTEL_SETTINGS_QUERY = `
   locationImagePath
   locationImageAltText
   locationImageCaption
+  logoIcon
+  logoColor
 `;
 async function publicHotelSettings(_root, _args, context) {
   const settings = await context.sudo().query.HotelSettings.findOne({
@@ -13743,18 +15256,119 @@ async function publicHotelSettings(_root, _args, context) {
       accentPreset: DEFAULT_STOREFRONT_ACCENT_PRESET
     };
   }
-  const { storefrontAccentPreset, ...publicSettings } = settings;
+  const { storefrontAccentPreset, logoIcon, logoColor, ...publicSettings } = settings;
   return {
     state: "configured",
     accentPreset: resolveStorefrontAccentPreset(storefrontAccentPreset).key,
-    ...publicSettings
+    ...publicSettings,
+    // Re-sanitize on the public boundary; an empty logo keeps the accent mark.
+    logoIcon: logoIcon ? sanitizeStoreLogoSvg(logoIcon) || null : null,
+    logoColor: normalizeStoreLogoColor(logoColor)
   };
 }
 
+// features/keystone/queries/hotelReadiness.ts
+init_hotelBusinessTime();
+
+// features/keystone/lib/workerProgress.ts
+var WORKER_PROGRESS_MAX_AGE_MS = 18e4;
+function workerIsFresh(rows, worker, now) {
+  return rows.some(
+    (row) => row.leaseKey === `progress:${worker}` && now.getTime() - new Date(row.heartbeatAt).getTime() <= WORKER_PROGRESS_MAX_AGE_MS
+  );
+}
+function getWorkerReadiness(rows, now = /* @__PURE__ */ new Date()) {
+  const holds = workerIsFresh(rows, "holds", now);
+  const refunds = workerIsFresh(rows, "refunds", now);
+  return { holds, refunds, ready: holds && refunds };
+}
+
+// features/keystone/queries/hotelReadiness.ts
+init_integrationConfig();
+function realPropertyName(value) {
+  return Boolean(String(value || "").trim());
+}
+var RESERVED_DOMAINS = ["example.com", "example.net", "example.org"];
+var RESERVED_SUFFIX = /\.(?:example|test|invalid)$/;
+function stripeTestModeStore(env = process.env) {
+  return String(env.STRIPE_SECRET_KEY || "").startsWith("sk_test_");
+}
+function realContactEmail(value, allowExampleDomains = stripeTestModeStore()) {
+  const address = String(value || "").trim().toLowerCase();
+  const domain = address.split("@")[1] || "";
+  if (!address || !domain) return false;
+  const reserved = RESERVED_DOMAINS.includes(domain) || RESERVED_SUFFIX.test(domain);
+  return allowExampleDomains || !reserved;
+}
+async function hotelReadiness(_root, _args, context) {
+  const prisma = context.prisma;
+  const smtpConfigured = hotelMailInfrastructureConfigured();
+  try {
+    const [settings, clock, providers, sellableRate, activeChannel, enabledRateSync, enabledInventorySync, activeGroupBlock, openGroupFolio, activeGroupBooking] = await Promise.all([
+      prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { groupsEnabled: true, timeZone: true, id: true, propertyName: true, contactEmail: true, contactPhone: true, addressLine1: true } }),
+      prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { id: true, currentBusinessDate: true } }),
+      // Every supported online provider, judged by the same predicate checkout uses: an empty
+      // Stripe record can be configured from the deployment environment without isInstalled.
+      prisma.paymentProvider.findMany({ where: { code: { in: ["pp_stripe_stripe", "pp_paypal_paypal"] } } }),
+      prisma.ratePlan.findFirst({
+        where: { status: "active", isPublic: true, currencyCode: "USD", roomType: { rooms: { some: { status: { notIn: ["maintenance", "out_of_order"] } } } } },
+        select: { id: true }
+      }),
+      prisma.channel.findFirst({ where: { isActive: true }, select: { id: true } }),
+      prisma.channel.findFirst({ where: { syncRates: true }, select: { id: true } }),
+      prisma.channel.findFirst({ where: { syncInventory: true }, select: { id: true } }),
+      prisma.groupBlock.findFirst({ where: { status: { in: ["tentative", "definite"] } }, select: { id: true } }),
+      prisma.folio.findFirst({ where: { groupBlockId: { not: null }, status: "open" }, select: { id: true } }),
+      prisma.booking.findFirst({ where: { groupBlockId: { not: null }, status: { in: ["pending", "confirmed", "checked_in"] } }, select: { id: true } })
+    ]);
+    const [overdueStay, orphanOccupiedRoom] = clock ? await Promise.all([
+      prisma.booking.findFirst({ where: { status: "checked_in", checkOutDate: { lt: clock.currentBusinessDate } }, select: { id: true } }),
+      prisma.room.findFirst({ where: { status: "occupied", roomAssignments: { none: { booking: { status: "checked_in" } } } }, select: { id: true } })
+    ]) : [null, null];
+    const mailEnabled = Boolean(settings?.contactEmail) && smtpConfigured;
+    const paymentEnabled = providers.some(paymentIntegrationConfigured);
+    const today = /* @__PURE__ */ new Date();
+    const utcToday = propertyCalendarDate(today, settings?.timeZone || "UTC").getTime();
+    const businessDateCurrent = Boolean(clock && Math.abs(clock.currentBusinessDate.getTime() - utcToday) <= 864e5);
+    const propertyConfigured = Boolean(
+      realPropertyName(settings?.propertyName) && realContactEmail(settings?.contactEmail) && settings?.contactPhone?.trim() && settings.addressLine1?.trim()
+    );
+    const groupsDisabled = !activeGroupBlock && !openGroupFolio && !activeGroupBooking;
+    const brokenGroupBilling = await prisma.booking.findFirst({ where: { groupBlock: { billingType: "master_folio" }, billingFolioId: null, status: { in: ["pending", "confirmed", "checked_in"] } }, select: { id: true } });
+    const groupsHealthy = settings?.groupsEnabled === true ? !brokenGroupBilling : groupsDisabled;
+    const frontDeskClear = !overdueStay && !orphanOccupiedRoom;
+    const progress = await prisma.hotelWorkerLease.findMany({ where: { leaseKey: { in: ["progress:holds", "progress:refunds"] } } });
+    const workers = getWorkerReadiness(progress);
+    const staleBefore = new Date(Date.now() - 15 * 6e4);
+    const [stuckHold, stuckRefund] = await Promise.all([
+      prisma.booking.findFirst({ where: { status: "pending", holdExpiresAt: { lt: staleBefore } }, select: { id: true } }),
+      prisma.refundIntent.findFirst({ where: { status: "dead_letter" }, select: { id: true } })
+    ]);
+    const recoveryClear = !stuckHold && !stuckRefund;
+    const configured = Boolean(
+      workers.ready && recoveryClear && propertyConfigured && businessDateCurrent && sellableRate && !activeChannel && !enabledRateSync && !enabledInventorySync && groupsHealthy && frontDeskClear && mailEnabled && paymentEnabled
+    );
+    if (!configured) {
+      return { status: "not_ready", checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: "not_checked" } };
+    }
+    return { status: "ready", checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: "not_checked" } };
+  } catch {
+    return { status: "not_ready", checks: { database: false, workers: { holds: false, refunds: false }, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } };
+  }
+}
+
 // features/keystone/queries/storefrontQuote.ts
+var import_graphql = require("graphql");
+init_guestRuleError();
 async function storefrontQuote(_root, args, context) {
   await enforceAbuseLimit(context, { scope: "storefront-quote", identity: args.roomTypeId, limit: 60, windowMs: 6e4 });
-  const quote = await getStorefrontBookingQuote(args, context);
+  let quote;
+  try {
+    quote = await getStorefrontBookingQuote(args, context);
+  } catch (error) {
+    if (isGuestRuleError(error)) throw new import_graphql.GraphQLError(error.message, { extensions: { code: "HOTEL_BOOKING_RULE" } });
+    throw error;
+  }
   return {
     roomTypeId: quote.roomType.id,
     roomTypeName: quote.roomType.name,
@@ -13779,13 +15393,16 @@ async function storefrontQuote(_root, args, context) {
     securityDepositMinor: quote.securityDepositMinor,
     depositPercent: quote.depositPercent,
     pricingVersion: quote.pricingVersion,
-    quoteToken: quote.quoteToken
+    quoteToken: quote.quoteToken,
+    // A code only changes promotional rates; say so instead of silently ignoring it.
+    promoCodeApplied: String(args.promoCode || "").trim() ? Boolean(quote.ratePlan.isPromotional) : null,
+    // Same nights the signed quote binds; seasonal rule names stay internal.
+    nightlyRates: quote.nightlyRates.map(({ date, amountMinor }) => ({ date, amountMinor }))
   };
 }
 var storefrontQuote_default = storefrontQuote;
 
 // features/keystone/queries/guestCancellationQuote.ts
-init_cancellationPolicy();
 init_bookingRefund();
 init_guestBookingAccess();
 async function guestCancellationQuote(_root, { bookingId }, context) {
@@ -13814,6 +15431,18 @@ async function guestCancellationQuote(_root, { bookingId }, context) {
   const stayNights = Math.max(1, Math.round((booking.checkOutDate.getTime() - booking.checkInDate.getTime()) / 864e5));
   const bookingTotalMinor = Number(booking.totalAmountMinor || Math.round(Number(booking.totalAmount || 0) * 100));
   const firstNightMinor = Number(firstRoomNight?.totalPrice || 0) || Math.ceil(bookingTotalMinor / stayNights);
+  if (!policy && booking.source === "ota") {
+    return {
+      policy: "flexible",
+      refundableMinor: 0,
+      cancellationFeeMinor: 0,
+      capturedMinor,
+      summary: "This reservation was booked through a channel. Cancel it with the channel; its own terms apply.",
+      fullRefundDeadline: null,
+      canCancel: false,
+      currencyCode: booking.currencyCode || "USD"
+    };
+  }
   const terms = calculateCancellationTerms({
     policy,
     checkInDate: booking.pricingSnapshot?.arrivalInstant || booking.checkInDate,
@@ -13836,11 +15465,14 @@ init_guestBookingAccess();
 init_access();
 init_reservationSnapshots();
 init_bookingFolio();
+init_hotelBusinessTime();
 async function ensureReservationSnapshots2(root, { bookingId }, context) {
   if (!permissions.canManageBookings({ session: context.session })) {
     throw new Error("Not authorized to manage reservation snapshots.");
   }
   return context.transaction(async (transactionContext) => {
+    await lockHotelBusinessDate(transactionContext.prisma);
+    await transactionContext.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${bookingId}`);
     const result = await ensureReservationSnapshots(transactionContext, bookingId);
     await ensureBookingFolio(transactionContext, bookingId, { postSnapshotEntries: true });
     return result;
@@ -13852,7 +15484,7 @@ async function ensureReservationSnapshots2(root, { bookingId }, context) {
 }
 
 // features/keystone/mutations/runHotelOnboarding.ts
-var import_node_crypto25 = require("node:crypto");
+var import_node_crypto28 = require("node:crypto");
 
 // features/platform/onboarding/lib/seed.json
 var seed_default = {
@@ -13862,7 +15494,7 @@ var seed_default = {
     contactEmail: "stay@thealderhouse.example",
     contactPhone: "+1 (212) 555-0148",
     addressLine1: "18 Alder Street",
-    addressLine2: "Metropolitan City",
+    addressLine2: "New York, NY 10013",
     frontDeskCopy: "Front desk \xB7 24 hours",
     checkInTime: "3:00 PM",
     checkOutTime: "11:00 AM",
@@ -13871,15 +15503,17 @@ var seed_default = {
     taxRateBasisPoints: 1e3,
     serviceFeeMinor: 0,
     storefrontAccentPreset: "brass",
-    heroImagePath: "/images/hotel/the-alder-house-lobby-hero.webp",
-    heroImageAltText: "Warm wood reception and lounge at The Alder House",
-    heroImageCaption: "The lobby at The Alder House",
+    heroImagePath: "/images/hotel/the-alder-house-dusk-facade-hero.webp",
+    heroImageAltText: "Limestone facade of The Alder House at dusk, its arched windows lit warm gold",
+    heroImageCaption: "The Alder House at dusk",
     amenityImagePath: "/images/hotel/the-alder-house-breakfast-lounge-amenity.webp",
     amenityImageAltText: "Breakfast buffet and lounge seating at The Alder House",
     amenityImageCaption: "Breakfast in The Alder House lounge",
-    locationImagePath: "/images/hotel/the-alder-house-exterior-neighborhood-location.webp",
-    locationImageAltText: "Brick city hotel exterior on the tree-lined Alder Street neighborhood",
-    locationImageCaption: "The Alder House neighborhood"
+    locationImagePath: "/images/hotel/the-alder-house-dusk-entrance-location.webp",
+    locationImageAltText: "Limestone entrance of The Alder House on tree-lined Alder Street at dusk, its bronze canopy and lanterns lit",
+    locationImageCaption: "The Alder House neighborhood",
+    logoIcon: '<svg fill="none" height="100%" viewBox="0 0 40 48" width="100%" xmlns="http://www.w3.org/2000/svg"><path d="m29.5411 6.41772c2.6913 5.27688 4.209 11.25228 4.209 17.58218s-1.5177 12.3054-4.2091 17.5823c6.2304-3.3881 10.4593-9.9914 10.4593-17.5823s-4.2289-14.19404-10.4592-17.58218z" fill="#d4af37"/><path d="m20.5481 5.99826c-.9047-1.28153-2.4457-1.9717-3.9913-1.70349-9.40496 1.63214-16.5568 9.83343-16.5568 19.70503 0 9.8717 7.1518 18.0729 16.5567 19.7051 1.5456.2682 3.0867-.4219 3.9913-1.7035 3.5923-5.0889 5.7025-11.2988 5.7025-18.0016 0-6.7027-2.1101-12.9126-5.7024-18.00154z" fill="#c9a24a"/></svg>',
+    logoColor: "0"
   },
   roomTypes: [
     {
@@ -13896,7 +15530,7 @@ var seed_default = {
       roomImages: [
         {
           imagePath: "/images/hotel/the-alder-house-room-classic-queen.webp",
-          altText: "Classic Queen room with a queen bed, writing desk, and city-facing window",
+          altText: "Classic Queen room with a queen bed, writing desk, and a window onto the green courtyard",
           caption: "Classic Queen guest room",
           order: 0,
           isPrimary: true
@@ -14442,6 +16076,7 @@ var seed_default = {
 init_guestBookingAccess();
 init_reservationSnapshots();
 init_bookingFolio();
+init_guestProfiles();
 
 // features/platform/onboarding/lib/hotelOnboardingSchema.ts
 var HOTEL_ONBOARDING_ARRAY_SECTIONS = [
@@ -14498,7 +16133,7 @@ var ALLOWED_AMENITIES = /* @__PURE__ */ new Set([
 var BED_CONFIGURATIONS = /* @__PURE__ */ new Set(["king", "queen", "double_queen", "twin", "double_twin", "king_sofa", "queen_sofa", "suite"]);
 var ROOM_STATUSES2 = /* @__PURE__ */ new Set(["vacant", "occupied", "cleaning", "maintenance", "out_of_order"]);
 var RATE_STATUSES = /* @__PURE__ */ new Set(["active", "inactive", "draft"]);
-var CANCELLATION_POLICIES = /* @__PURE__ */ new Set(["flexible", "moderate", "strict", "non_refundable"]);
+var CANCELLATION_POLICIES2 = /* @__PURE__ */ new Set(["flexible", "moderate", "strict", "non_refundable"]);
 var MEAL_PLANS = /* @__PURE__ */ new Set(["room_only", "breakfast", "half_board", "full_board", "all_inclusive"]);
 var BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed", "checked_in", "checked_out", "cancellation_pending", "cancelled", "no_show"]);
 var PAYMENT_STATUSES = /* @__PURE__ */ new Set(["unpaid", "partial", "paid", "refunded"]);
@@ -14515,6 +16150,22 @@ function requiredText(value, path, errors, max = 320) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > max) {
     errors.push(`${path} must be a non-empty string no longer than ${max} characters.`);
   }
+}
+var MAX_MINOR_UNITS = 2147483647;
+var OCCUPYING_BOOKING_STATUSES = /* @__PURE__ */ new Set(["pending", "confirmed", "checked_in", "cancellation_pending"]);
+function exactMinorUnits(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  const minor3 = Math.round(value * 100);
+  return Math.abs(value * 100 - minor3) < 1e-6 && minor3 <= MAX_MINOR_UNITS ? minor3 : null;
+}
+function wholeCents(value, path, errors) {
+  const minor3 = exactMinorUnits(value);
+  if (minor3 === null) errors.push(`${path} must be an amount in whole cents, no more than 21474836.47.`);
+  return minor3;
+}
+function calendarDay(value) {
+  const time = Date.parse(String(value));
+  return Number.isFinite(time) ? new Date(time).toISOString().slice(0, 10) : "";
 }
 function finiteNumber(value, path, errors, options = {}) {
   if (typeof value !== "number" || !Number.isFinite(value) || options.integer && !Number.isInteger(value) || options.min !== void 0 && value < options.min) {
@@ -14567,7 +16218,9 @@ function validateHotelOnboardingData(value) {
   if (errors.length) return { success: false, errors };
   const data = value;
   const settings = data.hotelSettings;
-  rejectUnknownKeys(settings, ["propertyName", "tagline", "contactEmail", "contactPhone", "addressLine1", "addressLine2", "frontDeskCopy", "checkInTime", "checkOutTime", "timeZone", "currencyCode", "taxRateBasisPoints", "serviceFeeMinor", "storefrontAccentPreset", "heroImagePath", "heroImageAltText", "heroImageCaption", "amenityImagePath", "amenityImageAltText", "amenityImageCaption", "locationImagePath", "locationImageAltText", "locationImageCaption"], "hotelSettings", errors);
+  rejectUnknownKeys(settings, ["propertyName", "tagline", "contactEmail", "contactPhone", "addressLine1", "addressLine2", "frontDeskCopy", "checkInTime", "checkOutTime", "timeZone", "currencyCode", "taxRateBasisPoints", "serviceFeeMinor", "storefrontAccentPreset", "heroImagePath", "heroImageAltText", "heroImageCaption", "amenityImagePath", "amenityImageAltText", "amenityImageCaption", "locationImagePath", "locationImageAltText", "locationImageCaption", "logoIcon", "logoColor"], "hotelSettings", errors);
+  if (settings.logoIcon !== void 0 && (typeof settings.logoIcon !== "string" || settings.logoIcon.length > 1e5)) errors.push("hotelSettings.logoIcon must be a logo library id or SVG document.");
+  if (settings.logoColor !== void 0 && !Number.isFinite(Number.parseFloat(String(settings.logoColor)))) errors.push("hotelSettings.logoColor must be a hue in degrees.");
   requiredText(settings.propertyName, "hotelSettings.propertyName", errors, 200);
   requiredText(settings.contactEmail, "hotelSettings.contactEmail", errors, 320);
   if (typeof settings.contactEmail === "string" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(settings.contactEmail)) errors.push("hotelSettings.contactEmail must be a valid email address.");
@@ -14603,7 +16256,8 @@ function validateHotelOnboardingData(value) {
   data.roomTypes.forEach((row, index) => {
     rejectUnknownKeys(row, ["name", "description", "shortDescription", "eyebrow", "viewDescription", "baseRate", "currencyCode", "maxOccupancy", "bedConfiguration", "amenities", "squareFeet", "roomImages"], `roomTypes[${index}]`, errors);
     requiredText(row.name, `roomTypes[${index}].name`, errors, 200);
-    finiteNumber(row.baseRate, `roomTypes[${index}].baseRate`, errors, { min: 0 });
+    if (row.description !== void 0 && (typeof row.description !== "string" || row.description.length > 5e3)) errors.push(`roomTypes[${index}].description must be plain text of at most 5000 characters.`);
+    wholeCents(row.baseRate, `roomTypes[${index}].baseRate`, errors);
     finiteNumber(row.maxOccupancy, `roomTypes[${index}].maxOccupancy`, errors, { min: 1, integer: true });
     enumValue(row.bedConfiguration, `roomTypes[${index}].bedConfiguration`, BED_CONFIGURATIONS, errors);
     if (!Array.isArray(row.amenities) || row.amenities.some((amenity) => typeof amenity !== "string" || !ALLOWED_AMENITIES.has(amenity))) errors.push(`roomTypes[${index}].amenities contains an unsupported amenity.`);
@@ -14625,10 +16279,10 @@ function validateHotelOnboardingData(value) {
     rejectUnknownKeys(row, ["key", "name", "description", "roomType", "baseRate", "currencyCode", "seasonalAdjustments", "minimumStay", "maximumStay", "advanceBookingMin", "advanceBookingMax", "cancellationPolicy", "mealPlan", "validFrom", "validTo", "applicableDays", "status", "isPublic", "isPromotional", "promoCode", "priority"], `ratePlans[${index}]`, errors);
     requiredText(row.name, `ratePlans[${index}].name`, errors, 200);
     assertReference(row.roomType, roomTypes, `ratePlans[${index}].roomType`, errors);
-    finiteNumber(row.baseRate, `ratePlans[${index}].baseRate`, errors, { min: 0 });
+    wholeCents(row.baseRate, `ratePlans[${index}].baseRate`, errors);
     finiteNumber(row.minimumStay, `ratePlans[${index}].minimumStay`, errors, { min: 1, integer: true });
     if (row.maximumStay !== void 0) finiteNumber(row.maximumStay, `ratePlans[${index}].maximumStay`, errors, { min: row.minimumStay || 1, integer: true });
-    enumValue(row.cancellationPolicy, `ratePlans[${index}].cancellationPolicy`, CANCELLATION_POLICIES, errors);
+    enumValue(row.cancellationPolicy, `ratePlans[${index}].cancellationPolicy`, CANCELLATION_POLICIES2, errors);
     enumValue(row.mealPlan, `ratePlans[${index}].mealPlan`, MEAL_PLANS, errors);
     enumValue(row.status, `ratePlans[${index}].status`, RATE_STATUSES, errors);
     if (row.currencyCode !== void 0 && row.currencyCode !== "USD") errors.push(`ratePlans[${index}].currencyCode must be USD.`);
@@ -14661,17 +16315,21 @@ function validateHotelOnboardingData(value) {
     enumValue(row.status, `bookings[${index}].status`, BOOKING_STATUSES, errors);
     enumValue(row.paymentStatus, `bookings[${index}].paymentStatus`, PAYMENT_STATUSES, errors);
     enumValue(row.source, `bookings[${index}].source`, BOOKING_SOURCES, errors);
-    for (const amount3 of ["roomRate", "taxAmount", "feesAmount", "totalAmount", "depositAmount", "balanceDue"]) finiteNumber(row[amount3], `bookings[${index}].${amount3}`, errors, { min: 0 });
-    if (Math.abs(Number(row.totalAmount) - Number(row.roomRate) - Number(row.taxAmount) - Number(row.feesAmount)) > 1e-3) errors.push(`bookings[${index}] total does not equal room rate, tax, and fees.`);
-    if (Math.abs(Number(row.balanceDue) - (Number(row.totalAmount) - Number(row.depositAmount))) > 1e-3) errors.push(`bookings[${index}] balance does not equal total less deposit.`);
+    const [room, tax, fees, total, deposit, balance] = ["roomRate", "taxAmount", "feesAmount", "totalAmount", "depositAmount", "balanceDue"].map((amount3) => wholeCents(row[amount3], `bookings[${index}].${amount3}`, errors));
+    if (room !== null && tax !== null && fees !== null && total !== null && room + tax + fees !== total) errors.push(`bookings[${index}] total does not equal room rate, tax, and fees.`);
+    if (total !== null && deposit !== null && balance !== null && (deposit > total || total - deposit !== balance)) errors.push(`bookings[${index}] balance does not equal total less deposit.`);
+    finiteNumber(row.numberOfAdults, `bookings[${index}].numberOfAdults`, errors, { min: 1, integer: true });
+    finiteNumber(row.numberOfChildren, `bookings[${index}].numberOfChildren`, errors, { min: 0, integer: true });
     if (Number(row.numberOfGuests) !== Number(row.numberOfAdults) + Number(row.numberOfChildren)) errors.push(`bookings[${index}] guest counts are inconsistent.`);
+    const roomType = data.roomTypes.find((type) => type.name === row.roomType);
+    if (roomType && Number(row.numberOfGuests) > Number(roomType.maxOccupancy)) errors.push(`bookings[${index}] has more guests than ${row.roomType} sleeps.`);
   });
   data.bookingPayments.forEach((row, index) => {
     rejectUnknownKeys(row, ["key", "label", "bookingKey", "providerCode", "amount", "currency", "paymentType", "paymentMethod", "status", "description"], `bookingPayments[${index}]`, errors);
     assertReference(row.bookingKey, bookings, `bookingPayments[${index}].bookingKey`, errors);
     requiredText(row.providerCode, `bookingPayments[${index}].providerCode`, errors, 100);
     if (row.providerCode !== "pp_manual_manual") errors.push(`bookingPayments[${index}].providerCode must use the operator-recorded demo provider.`);
-    finiteNumber(row.amount, `bookingPayments[${index}].amount`, errors, { min: 0 });
+    wholeCents(row.amount, `bookingPayments[${index}].amount`, errors);
     if (row.currency !== "USD") errors.push(`bookingPayments[${index}].currency must be USD.`);
   });
   data.housekeepingTasks.forEach((row, index) => {
@@ -14716,6 +16374,25 @@ function validateHotelOnboardingData(value) {
     if (Number(row.bookedRooms) + Number(row.blockedRooms) > Number(row.totalRooms)) errors.push(`inventory[${index}] books or blocks more rooms than exist.`);
   });
   if (data.dailyMetrics.length) errors.push("dailyMetrics is derived operational reporting and must remain empty.");
+  const occupying = data.bookings.filter((row) => OCCUPYING_BOOKING_STATUSES.has(row.status));
+  occupying.forEach((row, index) => {
+    for (const other of occupying.slice(index + 1)) {
+      if (other.roomNumber !== row.roomNumber) continue;
+      if (calendarDay(row.checkInDate) < calendarDay(other.checkOutDate) && calendarDay(other.checkInDate) < calendarDay(row.checkOutDate)) {
+        errors.push(`Bookings ${row.key} and ${other.key} overlap in room ${row.roomNumber}.`);
+      }
+    }
+    const room = data.rooms.find((candidate) => candidate.roomNumber === row.roomNumber);
+    if (room?.status === "out_of_order") errors.push(`Booking ${row.key} is assigned to room ${row.roomNumber}, which is out of order.`);
+  });
+  const sellable = data.ratePlans.some((rate) => {
+    if (rate.status !== "active") return false;
+    const type = data.roomTypes.find((candidate) => candidate.name === rate.roomType);
+    const hasPhoto = Array.isArray(type?.roomImages) && type.roomImages.some((image2) => typeof image2?.imagePath === "string" && image2.imagePath.trim());
+    const hasRoom = data.rooms.some((room) => room.roomType === rate.roomType && room.status !== "out_of_order");
+    return hasPhoto && hasRoom;
+  });
+  if (!sellable) errors.push("Add at least one room type with a photo, a room that is not out of order, and an active rate plan.");
   return errors.length ? { success: false, errors } : { success: true, data };
 }
 function assertHotelOnboardingData(value) {
@@ -14857,11 +16534,23 @@ function canonicalSeedForTemplate(template, customData) {
   }
   return assertHotelOnboardingData(result);
 }
+function plainTextDocument(text44) {
+  const paragraphs = String(text44).split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  return (paragraphs.length ? paragraphs : [""]).map((block) => ({ type: "paragraph", children: [{ text: block }] }));
+}
+function seedLogoBranding(settings) {
+  const submitted = String(settings?.logoIcon || "").trim();
+  const library = submitted ? LOGO_ICONS.find((icon) => icon.id === submitted) : void 0;
+  const logoIcon = sanitizeStoreLogoSvg(submitted ? library ? library.lightSvg : submitted : DEFAULT_STORE_LOGO_ICON);
+  if (!logoIcon) throw new Error("Onboarding logo must be a logo library icon or a valid, safe SVG document.");
+  const logoColor = normalizeStoreLogoColor(submitted && settings?.logoColor !== void 0 ? settings.logoColor : DEFAULT_LIBRARY_LOGO_COLOR);
+  return { logoIcon, logoColor };
+}
 function confirmationNumber() {
-  return `BK-SEED-${(0, import_node_crypto25.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+  return `BK-SEED-${(0, import_node_crypto28.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
 }
 function paymentReference() {
-  return `PAY-SEED-${(0, import_node_crypto25.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+  return `PAY-SEED-${(0, import_node_crypto28.randomUUID)().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
 }
 function canonicalSeedValue(value) {
   if (value instanceof Date) return value.toISOString();
@@ -14882,7 +16571,7 @@ function seedRowKey(section, row, index) {
   return `${section}:${String(natural).trim().toLowerCase()}`;
 }
 function seedContentHash(row) {
-  return (0, import_node_crypto25.createHash)("sha256").update(JSON.stringify(row)).digest("hex");
+  return (0, import_node_crypto28.createHash)("sha256").update(JSON.stringify(row)).digest("hex");
 }
 async function bindSeedRecord(prisma, seedKey, section, entityId, row) {
   await prisma.hotelSeedRecord.upsert({
@@ -14910,14 +16599,21 @@ async function runHotelOnboarding(_root, { template, data }, context) {
     }
     const clock = await prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
     if (!clock) throw new Error("Property business date is not configured. Complete the reviewed installation before hotel setup.");
-    const seed = prepareHotelSeed(inputSeed, clock.currentBusinessDate, normalizedTemplate !== "custom");
+    const propertyToday = propertyCalendarDate(/* @__PURE__ */ new Date(), String(inputSeed.hotelSettings?.timeZone || "UTC"));
+    let businessDate = new Date(clock.currentBusinessDate);
+    if (businessDate.getTime() !== propertyToday.getTime()) {
+      await prisma.hotelBusinessDate.update({ where: { id: 1 }, data: { currentBusinessDate: propertyToday } });
+      businessDate = propertyToday;
+    }
+    const seed = prepareHotelSeed(inputSeed, businessDate, normalizedTemplate !== "custom");
     await prisma.user.update({ where: { id: context.session.itemId }, data: { onboardingStatus: "in_progress" } });
     const results = [];
     const settings = {
       ...seed.hotelSettings,
       storefrontAccentPreset: parseStorefrontAccentPreset(
         seed.hotelSettings?.storefrontAccentPreset || DEFAULT_STOREFRONT_ACCENT_PRESET
-      )
+      ),
+      ...seedLogoBranding(seed.hotelSettings)
     };
     const existingSettings = await prisma.hotelSettings.findUnique({ where: { id: 1 } });
     if (!existingSettings) {
@@ -14930,12 +16626,14 @@ async function runHotelOnboarding(_root, { template, data }, context) {
       results.push("skipped");
     }
     await bindSeedRecord(prisma, "hotelSettings:the-alder-house", "hotelSettings", "1", settings);
+    const depositPolicy = await prisma.hotelSettings.findUniqueOrThrow({ where: { id: 1 }, select: { securityDepositMinor: true, depositPercent: true } });
     const roomTypeIds = {};
     for (const [index, roomType] of (seed.roomTypes || []).entries()) {
       const seedKey = seedRowKey("roomTypes", roomType, index);
       const binding = await prisma.hotelSeedRecord.findUnique({ where: { seedKey } });
       const existing = (binding ? await prisma.roomType.findUnique({ where: { id: binding.entityId } }) : null) || await prisma.roomType.findUnique({ where: { name: roomType.name } });
       const data2 = {
+        ...roomType.description ? { description: plainTextDocument(roomType.description) } : {},
         shortDescription: roomType.shortDescription || roomType.description,
         eyebrow: roomType.eyebrow,
         viewDescription: roomType.viewDescription,
@@ -15036,7 +16734,10 @@ async function runHotelOnboarding(_root, { template, data }, context) {
       let record2 = existing;
       const safeData = Object.fromEntries(Object.entries(guest).filter(([key4]) => !["key", "totalStays", "totalSpent", "lastStayAt", "loyaltyPoints", "loyaltyTier"].includes(key4)));
       if (!existing) {
-        record2 = await prisma.guest.create({ data: safeData });
+        record2 = await prisma.guest.create({ data: {
+          ...safeData,
+          communicationPreferences: guestCommunicationPreferencesForCreate(safeData.communicationPreferences)
+        } });
         results.push("created");
       } else {
         if (!seedValuesMatch(existing, safeData)) {
@@ -15087,6 +16788,8 @@ async function runHotelOnboarding(_root, { template, data }, context) {
             pricingVersion: SEED_VERSION,
             pricingRevision: 1,
             pricingSnapshot: {
+              securityDepositMinor: depositPolicy.securityDepositMinor,
+              depositPercent: depositPolicy.depositPercent,
               snapshotKeyPrefix: "v1",
               ratePlanId: ratePlanIds[booking.ratePlan],
               ratePlanName: ratePlan.name,
@@ -15115,6 +16818,9 @@ async function runHotelOnboarding(_root, { template, data }, context) {
             confirmedAt: ["confirmed", "checked_in", "checked_out"].includes(booking.status) ? /* @__PURE__ */ new Date() : null
           }
         });
+        if (!guestBookedStayTerms({ ...record2, numberOfNights: nights })) {
+          throw new Error(`Booking ${booking.key} has inconsistent booked terms.`);
+        }
         await prisma.roomAssignment.create({
           data: {
             bookingId: record2.id,
@@ -15143,7 +16849,7 @@ async function runHotelOnboarding(_root, { template, data }, context) {
       results.push(...Array(snapshotResult.existing).fill("skipped"));
       const folioResult2 = await ensureBookingFolio(transactionContext, booking.id, {
         postSnapshotEntries: booking.status === "checked_in",
-        serviceDate: clock.currentBusinessDate
+        serviceDate: businessDate
       });
       results.push(...Array(folioResult2.created).fill("created"));
       results.push(...Array(folioResult2.existing).fill("skipped"));
@@ -15366,9 +17072,9 @@ var runHotelOnboarding_default = runHotelOnboarding;
 // features/keystone/mutations/postFolioEntry.ts
 init_access();
 
-// features/keystone/lib/folioPosting.ts
-init_hotelGuestGovernance();
-var import_node_crypto26 = require("node:crypto");
+// features/keystone/folios/commands.ts
+init_commands();
+var import_node_crypto29 = require("node:crypto");
 init_bookingFolio();
 
 // features/keystone/lib/folioPostingPolicy.ts
@@ -15378,11 +17084,11 @@ function assertNewOperatorPostingAllowed(folioStatus) {
   }
 }
 
-// features/keystone/lib/folioPosting.ts
+// features/keystone/folios/commands.ts
 init_serializableTransaction();
-init_hotelCashier();
+init_commands4();
 init_hotelBusinessTime();
-init_folioLedger();
+init_ledger();
 function must4(value) {
   if (value instanceof Error || value?.extensions?.code === "KS_PRISMA_ERROR") throw value;
   return value;
@@ -15602,7 +17308,7 @@ async function recordOperatorBookingPayment({
   if (validated.currencyCode !== "USD") {
     throw new Error("Operator payments currently support USD only.");
   }
-  const paymentId = `manual_${(0, import_node_crypto26.createHash)("sha256").update(`${bookingId}:${normalizedKey}`).digest("hex").slice(0, 24)}`;
+  const paymentId = `manual_${(0, import_node_crypto29.createHash)("sha256").update(`${bookingId}:${normalizedKey}`).digest("hex").slice(0, 24)}`;
   return runSerializableTransaction(context, async (transactionContext) => {
     const prisma = transactionContext.prisma;
     await lock3(prisma, `hotel-booking:${bookingId}`);
@@ -15630,7 +17336,7 @@ async function recordOperatorBookingPayment({
     const payment = must4(await prisma.bookingPayment.create({
       data: {
         id: paymentId,
-        paymentReference: `PAY-${(0, import_node_crypto26.randomUUID)().replaceAll("-", "").slice(0, 16).toUpperCase()}`,
+        paymentReference: `PAY-${(0, import_node_crypto29.randomUUID)().replaceAll("-", "").slice(0, 16).toUpperCase()}`,
         bookingId,
         paymentProviderId: provider.id,
         amountMinor,
@@ -15739,9 +17445,10 @@ async function recordBookingPayment(root, {
 
 // features/keystone/mutations/closeReconciledFolio.ts
 init_access();
-init_folioLedger();
+init_ledger();
 init_hotelLifecycle();
 init_serializableTransaction();
+init_moneyText();
 var TERMINAL_BOOKING_STATUSES = /* @__PURE__ */ new Set(["checked_out", "cancelled", "no_show"]);
 async function closeReconciledFolio(_root, {
   bookingId,
@@ -15782,7 +17489,7 @@ async function closeReconciledFolio(_root, {
     }
     const balance = calculateFolioBalance(booking.folio.entries);
     if (balance.balanceMinor !== 0) {
-      throw new Error(`Folio cannot close with an outstanding balance of ${balance.balanceMinor} minor units.`);
+      throw new Error(`Folio cannot close with an outstanding balance of ${moneyText(balance.balanceMinor)}.`);
     }
     const closedAt = /* @__PURE__ */ new Date();
     await prisma.folio.update({
@@ -15808,7 +17515,13 @@ async function closeReconciledFolio(_root, {
   });
 }
 
-// features/keystone/mutations/updateHousekeepingTaskStatus.ts
+// features/keystone/workforce/inspectionChecklist.ts
+var INSPECTION_CHECKLIST_NOTE = "Inspection: cleanliness, room safety and repair completion checked.";
+function requiresInspectionChecklist(task) {
+  return task.taskType === "inspection";
+}
+
+// features/keystone/workforce/housekeepingTasks.ts
 init_access();
 init_hotelLifecycle();
 init_serializableTransaction();
@@ -15861,7 +17574,7 @@ async function updateHousekeepingTaskStatus(root, {
     if (task.status !== status && !TRANSITIONS4[task.status]?.has(status)) {
       throw new Error(`Housekeeping status cannot transition from ${task.status} to ${status}.`);
     }
-    if (task.taskType === "inspection" && status === "completed" && !normalizedNotes?.includes("Inspection: cleanliness, room safety and repair completion checked.")) throw new Error("Record the inspection checklist in the dispatch panel before completing inspection.");
+    if (requiresInspectionChecklist(task) && status === "completed" && !normalizedNotes?.includes(INSPECTION_CHECKLIST_NOTE)) throw new Error("Confirm the inspection checklist before completing inspection.");
     const now = /* @__PURE__ */ new Date();
     const nextNotes = normalizedNotes ? [task.notes, `[${now.toISOString()}] ${normalizedNotes}`].filter(Boolean).join("\n") : task.notes;
     const updated = await prisma.housekeepingTask.update({
@@ -15921,10 +17634,61 @@ async function updateHousekeepingTaskStatus(root, {
   });
   return context.prisma.housekeepingTask.findUnique({ where: { id: taskId } });
 }
+var SCHEDULABLE_HOUSEKEEPING_TASK_TYPES = ["deep_clean", "turn_down"];
+async function scheduleHousekeepingTask(_root, { roomId, taskType, priority, assignedToId, notes, idempotencyKey }, context) {
+  if (!permissions.canManageHousekeeping({ session: context.session })) {
+    throw new Error("Not authorized to schedule housekeeping tasks.");
+  }
+  const eventKey = String(idempotencyKey || "").trim();
+  if (!eventKey || eventKey.length > 200) throw new Error("A stable idempotencyKey is required.");
+  if (!SCHEDULABLE_HOUSEKEEPING_TASK_TYPES.includes(taskType)) throw new Error("Choose a deep clean or turn-down.");
+  const taskPriority = priority ?? 2;
+  if (!Number.isInteger(taskPriority) || taskPriority < 1 || taskPriority > 5) throw new Error("Priority must be from 1 (highest) to 5.");
+  const normalizedNotes = String(notes || "").trim();
+  if (normalizedNotes.length > 2e3) throw new Error("Notes must be 2000 characters or fewer.");
+  const request = { roomId, taskType, priority: taskPriority, assignedToId: assignedToId || null, notes: normalizedNotes };
+  const identity = { request, aggregateType: "housekeeping_task", aggregateId: `room:${roomId}`, action: "scheduled" };
+  let taskId = "";
+  await runSerializableTransaction(context, async (transactionContext) => {
+    const prisma = transactionContext.prisma;
+    await lockHotelLifecycle(prisma, eventKey);
+    await prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-room:${roomId}`);
+    const replay = await findHotelLifecycleReplay(prisma, eventKey, identity);
+    if (replay) {
+      taskId = replay.afterSnapshot.taskId;
+      return;
+    }
+    const room = await prisma.room.findUnique({ where: { id: roomId }, select: { id: true, floor: true } });
+    if (!room) throw new Error("Room not found.");
+    const open = await prisma.housekeepingTask.findFirst({ where: { roomId, taskType, status: { not: "completed" } }, select: { id: true } });
+    if (open) throw new Error("This room already has an open task of this type.");
+    if (assignedToId) await assertHousekeepingStaffEligible(prisma, assignedToId, { taskType, roomId, room });
+    const created = await prisma.housekeepingTask.create({
+      data: {
+        roomId,
+        taskType,
+        priority: taskPriority,
+        status: "pending",
+        assignedToId: assignedToId || null,
+        notes: normalizedNotes ? `[${(/* @__PURE__ */ new Date()).toISOString()}] ${normalizedNotes}` : ""
+      }
+    });
+    taskId = created.id;
+    await recordHotelLifecycleEvent({
+      prisma,
+      eventKey,
+      actorId: context.session.itemId,
+      identity,
+      beforeSnapshot: null,
+      afterSnapshot: { taskId: created.id, roomId, taskType, priority: taskPriority, assignedToId: created.assignedToId, status: "pending" }
+    });
+  });
+  return context.prisma.housekeepingTask.findUnique({ where: { id: taskId } });
+}
 
 // features/keystone/mutations/updateRatePlanPublication.ts
-init_rateEconomics();
-init_hotelGuestGovernance();
+init_economics();
+init_commands();
 init_access();
 init_hotelLifecycle();
 init_serializableTransaction();
@@ -15990,7 +17754,7 @@ async function updateRatePlanPublication(root, {
   return context.prisma.ratePlan.findUnique({ where: { id: ratePlanId } });
 }
 
-// features/keystone/lib/hotelReporting.ts
+// features/keystone/reporting/reporting.ts
 init_roomOutages();
 init_hotelBusinessTime();
 var DAY_MS2 = 864e5;
@@ -15998,6 +17762,28 @@ var ACTIVE_RESERVATIONS = /* @__PURE__ */ new Set(["confirmed", "checked_in", "c
 var REPORTING_SNAPSHOT_VERSION = 1;
 function hotelReportingDayKey(value) {
   return new Date(value).toISOString().slice(0, 10);
+}
+function roomTypeCountsForBooking(booking, dayKey2) {
+  const roomLines = (booking.lineItems || []).filter(
+    (line) => line.type === "room" && line.snapshotStatus !== "superseded" && hotelReportingDayKey(line.date) === dayKey2
+  );
+  const assignments = Array.isArray(booking.roomAssignments) ? booking.roomAssignments : [];
+  if (assignments.length) {
+    const snapshotTypes = [...new Set(roomLines.map((line) => line.roomTypeIdSnapshot).filter(Boolean))];
+    return assignments.map((assignment) => ({
+      roomTypeId: assignment.roomTypeId || assignment.roomType?.id || (snapshotTypes.length === 1 ? snapshotTypes[0] : null),
+      count: 1
+    }));
+  }
+  if (roomLines.length) return roomLines.map((line) => {
+    const count = line.quantity === void 0 ? 1 : Number(line.quantity);
+    if (!Number.isSafeInteger(count) || count < 1) throw new Error("Reporting encountered an invalid room-line quantity.");
+    return { roomTypeId: line.roomTypeIdSnapshot || null, count };
+  });
+  return [{ roomTypeId: booking.roomTypeId || null, count: 1 }];
+}
+function roomTypeCountTotal(counts) {
+  return counts.reduce((total, item) => total + item.count, 0);
 }
 function classifyHotelLedgerEntry(entry, currencyCode) {
   if (entry.currencyCode !== currencyCode || !Number.isSafeInteger(entry.amountMinor) || entry.amountMinor <= 0 || !["debit", "credit"].includes(entry.direction)) {
@@ -16028,6 +17814,8 @@ function hotelAvailableRoomNights(type, inventory, date, businessDate, outages =
 function buildHotelReportingDay(input) {
   const { date, businessDate, currencyCode, roomTypes, inventories, bookings, entries } = input;
   const key4 = hotelReportingDayKey(date);
+  const timeZone = input.settings?.timeZone || "UTC";
+  const localDayKey = (instant) => hotelReportingDayKey(propertyCalendarDate(new Date(instant), timeZone));
   const next2 = new Date(date.getTime() + DAY_MS2);
   const beforeClose = !input.closing && key4 >= hotelReportingDayKey(businessDate);
   const active = bookings.filter((booking) => ACTIVE_RESERVATIONS.has(booking.status));
@@ -16041,11 +17829,14 @@ function buildHotelReportingDay(input) {
   }]));
   const lineMap = /* @__PURE__ */ new Map();
   for (const booking of bookings) for (const line of booking.lineItems || []) lineMap.set(line.id, line);
+  let occupiedRoomNights = 0;
   for (const booking of occupied) {
-    const datedLine = (booking.lineItems || []).find((line) => line.type === "room" && line.snapshotStatus !== "superseded" && hotelReportingDayKey(line.date) === key4);
-    const typeId = datedLine?.roomTypeIdSnapshot || booking.roomAssignments?.[0]?.roomTypeId;
-    const type = typeMap.get(typeId);
-    if (type) type.occupiedRoomNights += 1;
+    const roomCounts = roomTypeCountsForBooking(booking, key4);
+    occupiedRoomNights += roomTypeCountTotal(roomCounts);
+    for (const roomCount of roomCounts) {
+      const type = roomCount.roomTypeId ? typeMap.get(roomCount.roomTypeId) : null;
+      if (type) type.occupiedRoomNights += roomCount.count;
+    }
   }
   const revenue = { roomRevenueMinor: 0, taxMinor: 0, feeMinor: 0, totalRevenueMinor: 0, paymentsMinor: 0, refundsMinor: 0 };
   const channelMap = /* @__PURE__ */ new Map();
@@ -16056,8 +17847,9 @@ function buildHotelReportingDay(input) {
     const booking = entry.folio?.booking;
     const sourceLineId = entry.entryType === "reversal" ? entry.reverses?.sourceId : entry.sourceId;
     const line = lineMap.get(sourceLineId);
-    const typeId = line?.roomTypeIdSnapshot || booking?.roomAssignments?.[0]?.roomTypeId;
-    if (typeMap.has(typeId)) typeMap.get(typeId).roomRevenueMinor += classified.roomRevenueMinor;
+    const bookingRoomTypes = booking ? [...new Set(roomTypeCountsForBooking(booking, key4).map((item) => item.roomTypeId).filter(Boolean))] : [];
+    const typeId = line?.roomTypeIdSnapshot || (bookingRoomTypes.length === 1 ? bookingRoomTypes[0] : null);
+    if (typeId && typeMap.has(typeId)) typeMap.get(typeId).roomRevenueMinor += classified.roomRevenueMinor;
     if (classified.totalRevenueMinor && booking) {
       const source = booking.source || "direct";
       const channel = channelMap.get(source) || { source, bookingIds: [], revenueMinor: 0 };
@@ -16068,7 +17860,6 @@ function buildHotelReportingDay(input) {
   }
   if (Object.values(revenue).some((value) => !Number.isSafeInteger(value))) throw new Error("Reporting totals exceed safe integer bounds.");
   const availableRoomNights = [...typeMap.values()].reduce((total, type) => total + type.availableRoomNights, 0);
-  const occupiedRoomNights = occupied.length;
   return {
     version: REPORTING_SNAPSHOT_VERSION,
     date: date.toISOString(),
@@ -16083,8 +17874,8 @@ function buildHotelReportingDay(input) {
       revparMinor: availableRoomNights ? Math.round(revenue.roomRevenueMinor / availableRoomNights) : 0,
       arrivals: active.filter((booking) => hotelReportingDayKey(booking.checkInDate) === key4).length,
       departures: active.filter((booking) => hotelReportingDayKey(booking.checkOutDate) === key4).length,
-      newReservations: bookings.filter((booking) => hotelReportingDayKey(booking.createdAt) === key4).length,
-      cancellations: bookings.filter((booking) => booking.status !== "no_show" && booking.cancelledAt && hotelReportingDayKey(booking.cancelledAt) === key4).length,
+      newReservations: bookings.filter((booking) => localDayKey(booking.createdAt) === key4).length,
+      cancellations: bookings.filter((booking) => booking.status !== "no_show" && booking.cancelledAt && localDayKey(booking.cancelledAt) === key4).length,
       noShows: bookings.filter((booking) => booking.status === "no_show" && hotelReportingDayKey(booking.checkInDate) === key4).length
     },
     roomTypes: [...typeMap.values()],
@@ -16098,16 +17889,17 @@ async function loadHotelReportingFacts(prisma, start, end) {
     prisma.roomType.findMany({ orderBy: { name: "asc" }, include: { rooms: true } }),
     prisma.roomInventory.findMany({ where: { date: { gte: start, lt: end } }, orderBy: [{ date: "asc" }, { roomTypeId: "asc" }], take: 20001 }),
     prisma.booking.findMany({
-      where: { OR: [{ checkOutDate: { gt: start }, checkInDate: { lt: end } }, { createdAt: { gte: start, lt: end } }, { cancelledAt: { gte: start, lt: end } }, { folio: { entries: { some: { serviceDate: { gte: start, lt: end } } } } }] },
+      // A local day can start or end up to a day apart from UTC midnight; bucketing is local.
+      where: { OR: [{ checkOutDate: { gt: start }, checkInDate: { lt: end } }, { createdAt: { gte: new Date(start.getTime() - DAY_MS2), lt: new Date(end.getTime() + DAY_MS2) } }, { cancelledAt: { gte: new Date(start.getTime() - DAY_MS2), lt: new Date(end.getTime() + DAY_MS2) } }, { folio: { entries: { some: { serviceDate: { gte: start, lt: end } } } } }] },
       orderBy: [{ checkInDate: "asc" }, { id: "asc" }],
       take: 5001,
-      include: { roomAssignments: { take: 1 }, lineItems: true }
+      include: { roomAssignments: true, lineItems: true }
     }),
     prisma.folioEntry.findMany({
       where: { serviceDate: { gte: start, lt: end } },
       orderBy: [{ postedAt: "asc" }, { id: "asc" }],
       take: 20001,
-      include: { reverses: { select: { entryType: true, sourceId: true } }, folio: { include: { booking: { select: { id: true, source: true, roomAssignments: { take: 1, select: { roomTypeId: true } } } } } } }
+      include: { reverses: { select: { entryType: true, sourceId: true } }, folio: { include: { booking: { select: { id: true, source: true, roomAssignments: { select: { roomTypeId: true } } } } } } }
     }),
     loadRoomOutages(prisma)
   ]);
@@ -16135,17 +17927,32 @@ function buildHotelDemandSnapshot(facts, start, end, asOfBusinessDate) {
     const bookings = active.filter((booking) => new Date(booking.checkInDate) < next2 && new Date(booking.checkOutDate) > date);
     let roomRevenueMinor = 0;
     let unpricedRoomNights = 0;
+    let onBooksRoomNights = 0;
     for (const booking of bookings) {
+      const expectedRoomCount = roomTypeCountTotal(roomTypeCountsForBooking(booking, key4));
+      onBooksRoomNights += expectedRoomCount;
       const lines = (booking.lineItems || []).filter((line) => line.type === "room" && line.snapshotStatus !== "superseded" && hotelReportingDayKey(line.date) === key4);
-      if (lines.length !== 1 || !Number.isSafeInteger(lines[0].totalPrice) || lines[0].totalPrice < 0 || lines[0].currencyCode !== currencyCode) {
-        unpricedRoomNights += 1;
+      const lineRoomCount = lines.reduce((total, line) => {
+        const quantity = line.quantity === void 0 ? 1 : Number(line.quantity);
+        if (!Number.isSafeInteger(quantity) || quantity < 1) throw new Error("Demand forecast encountered an invalid room-line quantity.");
+        return total + quantity;
+      }, 0);
+      if (!lines.length || lineRoomCount !== expectedRoomCount) {
+        unpricedRoomNights += expectedRoomCount;
         continue;
       }
-      roomRevenueMinor += lines[0].totalPrice;
+      for (const line of lines) {
+        const quantity = line.quantity === void 0 ? 1 : Number(line.quantity);
+        if (!Number.isSafeInteger(line.totalPrice) || line.totalPrice < 0 || line.currencyCode !== currencyCode) {
+          unpricedRoomNights += quantity;
+          continue;
+        }
+        roomRevenueMinor += line.totalPrice;
+      }
     }
-    if (!Number.isSafeInteger(roomRevenueMinor)) throw new Error("Demand forecast exceeds safe integer amounts.");
+    if (!Number.isSafeInteger(roomRevenueMinor) || !Number.isSafeInteger(onBooksRoomNights) || !Number.isSafeInteger(unpricedRoomNights)) throw new Error("Demand forecast exceeds safe integer amounts.");
     const availableRoomNights = facts.roomTypes.reduce((total, type) => total + hotelAvailableRoomNights(type, facts.inventories.find((row) => row.roomTypeId === type.id && hotelReportingDayKey(row.date) === key4), date, facts.clock.currentBusinessDate, facts.outages), 0);
-    days.push({ date: key4, onBooksRoomNights: bookings.length, availableRoomNights, roomRevenueMinor, unpricedRoomNights });
+    days.push({ date: key4, onBooksRoomNights, availableRoomNights, roomRevenueMinor, unpricedRoomNights });
   }
   const bands = [{ label: "0\u20132 days", min: 0, max: 2 }, { label: "3\u20137 days", min: 3, max: 7 }, { label: "8\u201330 days", min: 8, max: 30 }, { label: "31+ days", min: 31, max: Infinity }].map((band) => ({ label: band.label, reservations: leadTimes.filter((days2) => days2 >= band.min && days2 <= band.max).length }));
   return { version: 1, asOfBusinessDate: hotelReportingDayKey(asOfBusinessDate), capturedAt: (/* @__PURE__ */ new Date()).toISOString(), start: hotelReportingDayKey(start), end: hotelReportingDayKey(end), currencyCode, days, leadTime: { reservations: leadTimes.length, averageDays: leadTimes.length ? Math.round(leadTimes.reduce((total, days2) => total + days2, 0) / leadTimes.length * 10) / 10 : null, bands } };
@@ -16249,8 +18056,10 @@ async function getHotelOperationalReport(prisma, start, end) {
 }
 
 // features/keystone/queries/hotelOperations.ts
+init_roomAvailability();
 init_bookingRefund();
 init_integrationConfig();
+init_safeOperationalError();
 var HOTEL_PROPERTY_KEY2 = "the-alder-house";
 function requireHotelPermission(context, permission, propertyKey) {
   if (propertyKey !== HOTEL_PROPERTY_KEY2) {
@@ -16260,6 +18069,14 @@ function requireHotelPermission(context, permission, propertyKey) {
     throw new Error("Not authorized for this hotel workspace.");
   }
 }
+var MAX_RATE_BOARD_DAYS = 31;
+var RATE_PLAN_PAGE_SIZE = 100;
+var GUEST_PAGE_SIZE = 50;
+var ROOM_PAGE_SIZE = 100;
+var PAYMENT_PAGE_SIZE = 50;
+var MAINTENANCE_PAGE_SIZE = 50;
+var REFUND_PAGE_SIZE = 100;
+var MAINTENANCE_PRIORITIES2 = ["emergency", "high", "medium", "low"];
 function boundedDateRange(startValue, endValue, maxDays) {
   const start = new Date(startValue);
   const end = new Date(endValue);
@@ -16278,7 +18095,7 @@ function syncErrorSummary(value) {
   const error = latest2;
   return {
     count: value.length,
-    latestMessage: typeof error.message === "string" ? error.message : null,
+    latestMessage: typeof error.message === "string" ? safeOperationalErrorMessage("channel") : null,
     latestAt: typeof error.occurredAt === "string" ? error.occurredAt : null
   };
 }
@@ -16316,6 +18133,8 @@ var hotelOperationsTypeDefs = String.raw`
 
   type HotelReservationBoard {
     businessDate: DateTime!
+    "Property IANA time zone from Hotel settings; null when not configured."
+    timeZone: String
     reservations: [HotelReservationProjection!]!
     rooms: [HotelRoomRef!]!
   }
@@ -16331,7 +18150,8 @@ var hotelOperationsTypeDefs = String.raw`
     roomType: HotelRoomTypeRef!
     activeTask: HotelTaskSummary
   }
-  type HotelRoomOperations { rooms: [HotelRoomOperationsItem!]! }
+  type HotelRoomOperations { rooms: [HotelRoomOperationsItem!]!, total: Int!, statusCounts: HotelRoomStatusCounts! }
+  type HotelRoomStatusCounts { all: Int!, vacant: Int!, occupied: Int!, cleaning: Int!, maintenance: Int!, out_of_order: Int! }
 
   type HotelInventoryProjection {
     id: ID!
@@ -16365,9 +18185,23 @@ var hotelOperationsTypeDefs = String.raw`
   }
   type HotelRoomTypeCapacity { id: ID!, name: String!, totalRooms: Int!, sellableRooms: Int! }
   type HotelRateOperations {
+    businessDate: DateTime
+    start: DateTime!
+    end: DateTime!
     roomTypes: [HotelRoomTypeCapacity!]!
     inventories: [HotelInventoryProjection!]!
+    availability: [HotelInventoryAvailability!]!
     ratePlans: [HotelRatePlanProjection!]!
+    ratePlanTotal: Int!
+  }
+  type HotelInventoryAvailability {
+    roomTypeId: ID!
+    date: String!
+    total: Int!
+    booked: Int!
+    held: Int!
+    blocked: Int!
+    available: Int!
   }
 
   type HotelHousekeepingTaskProjection {
@@ -16405,7 +18239,7 @@ var hotelOperationsTypeDefs = String.raw`
     assignedTo: HotelUserRef
     createdAt: DateTime!
   }
-  type HotelMaintenanceOperations { requests: [HotelMaintenanceProjection!]! }
+  type HotelMaintenanceOperations { requests: [HotelMaintenanceProjection!]!, total: Int!, statusCounts: JSON! }
 
   type HotelFolioEntryProjection {
     id: ID!
@@ -16439,6 +18273,8 @@ var hotelOperationsTypeDefs = String.raw`
   type HotelFolioOperations {
     folios: [HotelFolioProjection!]!
     overdueExceptions: [HotelReservationProjection!]!
+    targetFolioId: ID
+    targetMissing: Boolean!
   }
   type HotelFolioGroupRef { id: ID!, name: String! }
 
@@ -16486,7 +18322,7 @@ var hotelOperationsTypeDefs = String.raw`
     events: [HotelChannelSyncProjection!]!
   }
 
-  type HotelPaymentProviderProjection { id: ID!, name: String!, code: String!, isInstalled: Boolean!, configured: Boolean! }
+  type HotelPaymentProviderProjection { id: ID!, name: String!, code: String!, isInstalled: Boolean!, configured: Boolean!, credentialSource: String }
   type HotelPaymentProjection {
     id: ID!
     paymentReference: String!
@@ -16508,8 +18344,9 @@ var hotelOperationsTypeDefs = String.raw`
     completedCount: Int!
     refundedCount: Int!
     failedCount: Int!
+    pendingCount: Int!
   }
-  type HotelPaymentOperations { payments: [HotelPaymentProjection!]!, summary: HotelPaymentSummary! }
+  type HotelPaymentOperations { payments: [HotelPaymentProjection!]!, summary: HotelPaymentSummary!, total: Int! }
   type HotelRefundQuote { paymentId: ID!, refundableMinor: Int!, currencyCode: String! }
 
   type HotelOperationalReportDay {
@@ -16584,7 +18421,8 @@ var hotelOperationsTypeDefs = String.raw`
     totalSpent: String
     createdAt: DateTime!
   }
-  type HotelGuestOperations { guests: [HotelGuestProjection!]! }
+  type HotelGuestOperations { guests: [HotelGuestProjection!]!, total: Int!, segmentCounts: HotelGuestSegmentCounts! }
+  type HotelGuestSegmentCounts { all: Int!, vip: Int!, standard: Int!, restricted: Int! }
   type HotelPaymentProviderOperations { providers: [HotelPaymentProviderProjection!]! }
   type HotelOperatorCapabilities {
     canAccessDashboard: Boolean!
@@ -16640,36 +18478,30 @@ var hotelOperationsTypeDefs = String.raw`
   }
   type HotelGroupOperations { groups: [HotelGroupBlockProjection!]! }
 
-  type HotelOutboxAttemptProjection { id: ID!, attemptNumber: Int!, status: String!, workerId: String!, errorMessage: String, startedAt: DateTime!, finishedAt: DateTime }
-  type HotelOutboxEventProjection {
-    id: ID!, eventKey: String!, topic: String!, aggregateType: String!, aggregateId: String!, status: String!, attempts: Int!,
-    availableAt: DateTime!, deliveredAt: DateTime, deadLetteredAt: DateTime, lastError: String, replayedFromEventKey: String,
-    attemptsEvidence: [HotelOutboxAttemptProjection!]!
-  }
   type HotelRefundIntentProjection {
     id: ID!, intentKey: String!, amountMinor: Int!, currencyCode: String!, reason: String!, status: String!, attempts: Int!,
     lastError: String, availableAt: DateTime!, completedAt: DateTime, booking: HotelReservationProjection!
   }
-  type HotelOutboxOperations { events: [HotelOutboxEventProjection!]!, refundIntents: [HotelRefundIntentProjection!]! }
+  type HotelRefundQueue { refundIntents: [HotelRefundIntentProjection!]!, refundIntentsTotal: Int!, statusCounts: JSON! }
 
   extend type Query {
     hotelOperatorCapabilities: HotelOperatorCapabilities!
-    hotelFrontDesk(propertyKey: String!, start: DateTime!, end: DateTime!): HotelReservationBoard!
+    hotelFrontDesk(propertyKey: String!, start: DateTime, end: DateTime): HotelReservationBoard!
     hotelReservationCalendar(propertyKey: String!, start: DateTime!, end: DateTime!): HotelReservationBoard!
-    hotelRoomOperations(propertyKey: String!): HotelRoomOperations!
-    hotelRateOperations(propertyKey: String!, start: DateTime!, end: DateTime!): HotelRateOperations!
+    hotelRoomOperations(propertyKey: String!, search: String, status: String, sort: String, take: Int, skip: Int): HotelRoomOperations!
+    hotelRateOperations(propertyKey: String!, start: DateTime, end: DateTime, ratePlanSkip: Int): HotelRateOperations!
     hotelHousekeepingOperations(propertyKey: String!): HotelHousekeepingOperations!
-    hotelMaintenanceOperations(propertyKey: String!): HotelMaintenanceOperations!
-    hotelFolioOperations(propertyKey: String!): HotelFolioOperations!
+    hotelMaintenanceOperations(propertyKey: String!, search: String, status: String, priority: String, sort: String, take: Int, skip: Int): HotelMaintenanceOperations!
+    hotelFolioOperations(propertyKey: String!, bookingId: ID): HotelFolioOperations!
     hotelChannelOperations(propertyKey: String!): HotelChannelOperations!
-    hotelPaymentOperations(propertyKey: String!): HotelPaymentOperations!
+    hotelPaymentOperations(propertyKey: String!, search: String, status: String, sort: String, take: Int, skip: Int): HotelPaymentOperations!
     hotelRefundQuote(propertyKey: String!, paymentId: ID!): HotelRefundQuote!
     hotelAnalyticsOperations(propertyKey: String!, start: DateTime!, end: DateTime!): HotelAnalyticsOperations!
-    hotelGuestOperations(propertyKey: String!, search: String): HotelGuestOperations!
+    hotelGuestOperations(propertyKey: String!, search: String, segment: String, sort: String, take: Int, skip: Int): HotelGuestOperations!
     hotelPaymentProviderOperations(propertyKey: String!): HotelPaymentProviderOperations!
     hotelNightAuditOperations(propertyKey: String!): HotelNightAuditOperations!
     hotelGroupOperations(propertyKey: String!): HotelGroupOperations!
-    hotelOutboxOperations(propertyKey: String!): HotelOutboxOperations!
+    hotelRefundQueue(propertyKey: String!, status: String, search: String, refundSkip: Int): HotelRefundQueue!
   }
 `;
 function mapRoom(room) {
@@ -16677,7 +18509,7 @@ function mapRoom(room) {
   return {
     id: room.id,
     roomNumber: room.roomNumber,
-    floor: room.floor || null,
+    floor: room.floor ?? null,
     status: room.status || null,
     roomType: room.roomType ? { id: room.roomType.id, name: room.roomType.name, baseRate: room.roomType.baseRateMinor / 100, baseRateMinor: room.roomType.baseRateMinor } : null
   };
@@ -16724,7 +18556,14 @@ var reservationInclude = {
 };
 async function reservationBoard(context, args, permission, maxDays, vacantOnly, includePendingModifications = false) {
   requireHotelPermission(context, permission, args.propertyKey);
-  const { start, end } = boundedDateRange(args.start, args.end, maxDays);
+  let range = args;
+  if (!args.start || !args.end) {
+    const current = await context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { currentBusinessDate: true } });
+    if (!current) throw new Error("Property business date is not configured.");
+    const anchor = new Date(current.currentBusinessDate).getTime();
+    range = { start: new Date(anchor - 7 * 864e5).toISOString(), end: new Date(anchor + 7 * 864e5).toISOString() };
+  }
+  const { start, end } = boundedDateRange(range.start, range.end, maxDays);
   const dateOverlap = { checkOutDate: { gt: start }, checkInDate: { lt: end } };
   const [bookings, rooms, clock] = await Promise.all([
     context.prisma.booking.findMany({
@@ -16742,8 +18581,9 @@ async function reservationBoard(context, args, permission, maxDays, vacantOnly, 
     context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 }, select: { currentBusinessDate: true } })
   ]);
   if (!clock) throw new Error("Property business date is not configured.");
+  const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { timeZone: true } });
   if (bookings.length > 250 || rooms.length > 250) throw new Error("Reservation board exceeds the supported 250-record bound; narrow the date range.");
-  return { businessDate: clock.currentBusinessDate, reservations: bookings.map(mapReservation), rooms: rooms.map(mapRoom) };
+  return { businessDate: clock.currentBusinessDate, timeZone: settings?.timeZone || null, reservations: bookings.map(mapReservation), rooms: rooms.map(mapRoom) };
 }
 var hotelOperationsResolvers = {
   Query: {
@@ -16769,9 +18609,30 @@ var hotelOperationsResolvers = {
     hotelReservationCalendar: (_root, args, context) => reservationBoard(context, args, "canManageBookings", 120, false),
     hotelRoomOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManageRooms", args.propertyKey);
+      const search = String(args.search || "").trim().slice(0, 120);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || ROOM_PAGE_SIZE), 1), 250);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 1e5);
+      const floor = /^-?\d{1,3}$/.test(search) ? Number(search) : null;
+      const searchWhere = search ? { OR: [
+        { roomNumber: { contains: search, mode: "insensitive" } },
+        { notes: { contains: search, mode: "insensitive" } },
+        { roomType: { name: { contains: search, mode: "insensitive" } } },
+        ...floor !== null ? [{ floor }] : []
+      ] } : {};
+      const statuses = ["vacant", "occupied", "cleaning", "maintenance", "out_of_order"];
+      const statusWhere = args.status === "out_of_service" ? { status: { in: ["maintenance", "out_of_order"] } } : statuses.includes(String(args.status)) ? { status: String(args.status) } : {};
+      const where = { AND: [searchWhere, statusWhere] };
+      const orderBy = args.sort === "floor" ? [{ floor: { sort: "asc", nulls: "last" } }, { roomNumber: "asc" }, { id: "asc" }] : args.sort === "status" ? [{ status: "asc" }, { roomNumber: "asc" }, { id: "asc" }] : [{ roomNumber: "asc" }, { id: "asc" }];
+      const [total, grouped] = await Promise.all([
+        context.prisma.room.count({ where }),
+        context.prisma.room.groupBy({ by: ["status"], where: searchWhere, _count: { _all: true } })
+      ]);
+      const countOf = (status) => Number(grouped.find((row) => row.status === status)?._count?._all || 0);
       const rooms = await context.prisma.room.findMany({
-        orderBy: [{ roomNumber: "asc" }],
-        take: 250,
+        where,
+        orderBy,
+        take,
+        skip,
         include: {
           roomType: true,
           housekeepingTasks: {
@@ -16787,39 +18648,67 @@ var hotelOperationsResolvers = {
           notes: room.notes || null,
           lastCleaned: room.lastCleaned,
           activeTask: room.housekeepingTasks[0] || null
-        }))
+        })),
+        total,
+        statusCounts: {
+          all: grouped.reduce((sum, row) => sum + Number(row._count?._all || 0), 0),
+          vacant: countOf("vacant"),
+          occupied: countOf("occupied"),
+          cleaning: countOf("cleaning"),
+          maintenance: countOf("maintenance"),
+          out_of_order: countOf("out_of_order")
+        }
       };
     },
     hotelRateOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManageRooms", args.propertyKey);
-      const { start, end } = boundedDateRange(args.start, args.end, 120);
-      const [roomTypes, inventories, ratePlans] = await Promise.all([
-        context.prisma.roomType.findMany({ orderBy: { name: "asc" }, include: { rooms: true } }),
+      const clock = await context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } });
+      const anchor = clock?.currentBusinessDate ? new Date(clock.currentBusinessDate) : /* @__PURE__ */ new Date();
+      anchor.setUTCHours(0, 0, 0, 0);
+      const { start, end } = boundedDateRange(
+        args.start || anchor.toISOString(),
+        args.end || new Date(anchor.getTime() + 7 * 864e5).toISOString(),
+        MAX_RATE_BOARD_DAYS
+      );
+      const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 864e5));
+      const ratePlanSkip = Math.min(Math.max(Math.trunc(Number(args.ratePlanSkip) || 0), 0), 1e5);
+      const roomTypes = await context.prisma.roomType.findMany({ orderBy: [{ name: "asc" }, { id: "asc" }], include: { rooms: true } });
+      const [inventories, ratePlans, ratePlanTotal, availability] = await Promise.all([
+        // One override row per room type and day at most, so this bound never truncates the range.
         context.prisma.roomInventory.findMany({
-          where: { date: { gte: start, lte: end } },
+          where: { date: { gte: start, lt: end } },
           orderBy: [{ date: "asc" }, { id: "asc" }],
-          take: 500,
+          take: Math.max(1, roomTypes.length * days),
           include: { roomType: true }
         }),
         context.prisma.ratePlan.findMany({
-          orderBy: [{ status: "asc" }, { priority: "desc" }, { baseRateMinor: "asc" }],
-          take: 100,
+          orderBy: [{ status: "asc" }, { priority: "desc" }, { baseRateMinor: "asc" }, { id: "asc" }],
+          skip: ratePlanSkip,
+          take: RATE_PLAN_PAGE_SIZE,
           include: { roomType: true }
-        })
+        }),
+        context.prisma.ratePlan.count(),
+        roomTypes.length ? getHotelAvailability(context, { checkInDate: start, checkOutDate: end }) : []
       ]);
+      const availabilityRows = availability.flatMap((roomType) => roomType.availabilityByDay.map((day2) => ({ roomTypeId: roomType.id, ...day2 })));
+      const availableByKey = new Map(availabilityRows.map((row) => [`${row.roomTypeId}:${row.date}`, row.available]));
       return {
+        businessDate: clock?.currentBusinessDate || null,
+        start,
+        end,
         roomTypes: roomTypes.map((type) => ({
           id: type.id,
           name: type.name,
           totalRooms: type.rooms.length,
           sellableRooms: type.rooms.filter((room) => !["maintenance", "out_of_order"].includes(room.status)).length
         })),
-        inventories: inventories.map((item) => ({
-          ...item,
-          availableRooms: Math.max(0, item.totalRooms - item.bookedRooms - item.blockedRooms),
-          isAvailable: item.totalRooms - item.bookedRooms - item.blockedRooms > 0
-        })),
-        ratePlans
+        inventories: inventories.map((item) => {
+          const available = Number(availableByKey.get(`${item.roomTypeId}:${new Date(item.date).toISOString().slice(0, 10)}`) ?? 0);
+          return { ...item, availableRooms: available, isAvailable: available > 0 };
+        }),
+        availability: availabilityRows,
+        ratePlans,
+        ratePlanTotal
       };
     },
     hotelHousekeepingOperations: async (_root, args, context) => {
@@ -16839,10 +18728,13 @@ var hotelOperationsResolvers = {
           take: 250,
           include: { room: { include: { roomType: true } }, assignedTo: true }
         }),
+        // Same eligibility as task assignment: active staff whose role grants housekeeping or
+        // room maintenance, whatever the role is called.
         context.prisma.user.findMany({
-          where: { role: { name: "Housekeeping" } },
+          where: { isActive: true, role: { OR: [{ canManageHousekeeping: true }, { canManageRooms: true }] } },
           orderBy: { name: "asc" },
-          take: 100
+          take: 500,
+          select: { id: true, name: true }
         })
       ]);
       const completed = tasks.filter((task) => task.status === "completed" && task.completedAt >= completedSince);
@@ -16859,28 +18751,83 @@ var hotelOperationsResolvers = {
     },
     hotelMaintenanceOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManageRooms", args.propertyKey);
-      const requests = await context.prisma.maintenanceRequest.findMany({
-        orderBy: [{ createdAt: "desc" }],
-        take: 100,
-        include: { room: { include: { roomType: true } }, assignedTo: true }
-      });
-      return { requests: requests.map((item) => ({ ...item, room: mapRoom(item.room) })) };
+      const search = String(args.search || "").trim().slice(0, 160);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || MAINTENANCE_PAGE_SIZE), 1), 100);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 1e5);
+      const searchWhere = search ? { OR: [
+        { title: { contains: search, mode: "insensitive" } },
+        { category: { contains: search, mode: "insensitive" } },
+        { notes: { contains: search, mode: "insensitive" } },
+        { room: { roomNumber: { contains: search, mode: "insensitive" } } },
+        { assignedTo: { name: { contains: search, mode: "insensitive" } } }
+      ] } : {};
+      const priority = MAINTENANCE_PRIORITIES2.includes(String(args.priority)) ? { priority: String(args.priority) } : {};
+      const status = args.status && args.status !== "all" ? { status: String(args.status).slice(0, 40) } : {};
+      const where = { AND: [searchWhere, priority, status] };
+      const include = { room: { include: { roomType: true } }, assignedTo: true };
+      const recent = [{ createdAt: "desc" }, { id: "desc" }];
+      let total;
+      let requests;
+      if (args.sort === "recent") {
+        [total, requests] = await Promise.all([
+          context.prisma.maintenanceRequest.count({ where }),
+          context.prisma.maintenanceRequest.findMany({ where, orderBy: recent, take, skip, include })
+        ]);
+      } else {
+        const groups = [...MAINTENANCE_PRIORITIES2.map((value) => ({ priority: value })), { priority: { notIn: MAINTENANCE_PRIORITIES2 } }];
+        const counts = await Promise.all(groups.map((group) => context.prisma.maintenanceRequest.count({ where: { AND: [where, group] } })));
+        total = counts.reduce((sum, count) => sum + count, 0);
+        requests = [];
+        let groupSkip = skip;
+        for (const [index, group] of groups.entries()) {
+          if (requests.length >= take) break;
+          if (groupSkip >= counts[index]) {
+            groupSkip -= counts[index];
+            continue;
+          }
+          requests.push(...await context.prisma.maintenanceRequest.findMany({ where: { AND: [where, group] }, orderBy: recent, skip: groupSkip, take: take - requests.length, include }));
+          groupSkip = 0;
+        }
+      }
+      const [byStatus, emergencyOpen] = await Promise.all([
+        context.prisma.maintenanceRequest.groupBy({ by: ["status"], where: { AND: [searchWhere, priority] }, _count: { _all: true } }),
+        context.prisma.maintenanceRequest.count({ where: { AND: [searchWhere, { priority: "emergency" }, { status: { notIn: ["verified", "cancelled"] } }] } })
+      ]);
+      const statusCounts = { emergencyOpen };
+      for (const row of byStatus) statusCounts[row.status || "reported"] = (statusCounts[row.status || "reported"] || 0) + Number(row._count?._all || 0);
+      return {
+        requests: requests.map((item) => ({ ...item, room: mapRoom(item.room) })),
+        total,
+        statusCounts
+      };
     },
     hotelFolioOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManagePayments", args.propertyKey);
-      const [folios, clock] = await Promise.all([context.prisma.folio.findMany({
-        orderBy: [{ openedAt: "desc" }],
-        take: 50,
-        include: {
-          booking: { include: reservationInclude },
-          groupBlock: { select: { id: true, name: true } },
-          billedBookings: { take: 1, orderBy: { id: "asc" }, select: { id: true } },
-          entries: {
-            orderBy: [{ postedAt: "asc" }, { id: "asc" }],
-            include: { reversedBy: { select: { id: true } } }
-          }
+      const folioInclude = {
+        booking: { include: reservationInclude },
+        groupBlock: { select: { id: true, name: true } },
+        billedBookings: { take: 1, orderBy: { id: "asc" }, select: { id: true } },
+        entries: {
+          orderBy: [{ postedAt: "asc" }, { id: "asc" }],
+          include: { reversedBy: { select: { id: true } } }
         }
-      }), context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } })]);
+      };
+      const requestedBookingId = args.bookingId ? String(args.bookingId).trim().slice(0, 100) : "";
+      const [recentFolios, clock, target] = await Promise.all([
+        context.prisma.folio.findMany({
+          orderBy: [{ openedAt: "desc" }],
+          take: 50,
+          include: folioInclude
+        }),
+        context.prisma.hotelBusinessDate.findUnique({ where: { id: 1 } }),
+        // A deep link names one reservation: its own folio, or the group master folio that bills it.
+        requestedBookingId ? context.prisma.folio.findFirst({
+          where: { OR: [{ bookingId: requestedBookingId }, { billedBookings: { some: { id: requestedBookingId } } }] },
+          orderBy: [{ openedAt: "desc" }],
+          include: folioInclude
+        }) : null
+      ]);
+      const folios = target && !recentFolios.some((folio) => folio.id === target.id) ? [target, ...recentFolios] : recentFolios;
       const overdueExceptions = clock ? await context.prisma.booking.findMany({
         where: { status: "checked_in", checkOutDate: { lte: clock.currentBusinessDate } },
         orderBy: [{ checkOutDate: "asc" }, { id: "asc" }],
@@ -16888,6 +18835,8 @@ var hotelOperationsResolvers = {
         include: reservationInclude
       }) : [];
       return {
+        targetFolioId: target?.id || null,
+        targetMissing: Boolean(requestedBookingId) && !target,
         overdueExceptions: overdueExceptions.map(mapReservation),
         folios: folios.map((folio) => {
           const debitMinor = folio.entries.filter((entry) => entry.direction === "debit").reduce((sum, entry) => sum + entry.amountMinor, 0);
@@ -16953,19 +18902,47 @@ var hotelOperationsResolvers = {
           channel: mapChannel(item.channel),
           reservation: mapReservation(item.reservation)
         })),
-        events: events.map((item) => ({ ...item, channel: mapChannel(item.channel) }))
+        events: events.map((item) => ({
+          ...item,
+          message: item.status === "failed" ? safeOperationalErrorMessage("channel") : item.message,
+          errorMessage: item.errorMessage ? safeOperationalErrorMessage("channel") : null,
+          channel: mapChannel(item.channel)
+        }))
       };
     },
     hotelPaymentOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManagePayments", args.propertyKey);
-      const payments = await context.prisma.bookingPayment.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 100,
-        include: { booking: { include: reservationInclude }, paymentProvider: true }
-      });
-      const completed = payments.filter((payment) => payment.status === "completed");
-      const refunded = payments.filter((payment) => payment.status === "refunded");
+      const search = String(args.search || "").trim().slice(0, 160);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || PAYMENT_PAGE_SIZE), 1), 100);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 1e5);
+      const searchWhere = search ? { OR: [
+        { paymentReference: { contains: search, mode: "insensitive" } },
+        { providerPaymentId: { contains: search, mode: "insensitive" } },
+        { paymentMethod: { contains: search, mode: "insensitive" } },
+        { booking: { confirmationNumber: { contains: search, mode: "insensitive" } } },
+        { booking: { guestName: { contains: search, mode: "insensitive" } } },
+        { paymentProvider: { name: { contains: search, mode: "insensitive" } } }
+      ] } : {};
+      const status = ["completed", "pending", "failed", "refunded", "processing", "cancelled"].includes(String(args.status)) ? String(args.status) : null;
+      const where = { AND: [searchWhere, status ? { status } : {}] };
+      const orderBy = args.sort === "amount" ? [{ amountMinor: "desc" }, { id: "desc" }] : [{ createdAt: "desc" }, { id: "desc" }];
+      const [payments, total, byStatus] = await Promise.all([
+        context.prisma.bookingPayment.findMany({
+          where,
+          orderBy,
+          take,
+          skip,
+          include: { booking: { include: reservationInclude }, paymentProvider: true }
+        }),
+        context.prisma.bookingPayment.count({ where }),
+        // Totals cover every payment record, not just the page on screen.
+        context.prisma.bookingPayment.groupBy({ by: ["status"], _count: { _all: true }, _sum: { amountMinor: true } })
+      ]);
+      const statusTotal = (value) => byStatus.find((row) => row.status === value);
+      const capturedAmountMinor = Math.max(0, Number(statusTotal("completed")?._sum?.amountMinor || 0));
+      const refundedAmountMinor = Math.abs(Number(statusTotal("refunded")?._sum?.amountMinor || 0));
       return {
+        total,
         payments: payments.map((payment) => ({
           ...payment,
           amount: payment.amountMinor / 100,
@@ -16978,13 +18955,14 @@ var hotelOperationsResolvers = {
           }
         })),
         summary: {
-          capturedAmountMinor: completed.reduce((sum, payment) => sum + Math.max(0, Number(payment.amountMinor || 0)), 0),
-          refundedAmountMinor: refunded.reduce((sum, payment) => sum + Math.abs(Number(payment.amountMinor || 0)), 0),
-          capturedAmount: completed.reduce((sum, payment) => sum + Math.max(0, Number(payment.amountMinor || 0)), 0) / 100,
-          refundedAmount: refunded.reduce((sum, payment) => sum + Math.abs(Number(payment.amountMinor || 0)), 0) / 100,
-          completedCount: completed.length,
-          refundedCount: refunded.length,
-          failedCount: payments.filter((payment) => payment.status === "failed").length
+          capturedAmountMinor,
+          refundedAmountMinor,
+          capturedAmount: capturedAmountMinor / 100,
+          refundedAmount: refundedAmountMinor / 100,
+          completedCount: Number(statusTotal("completed")?._count?._all || 0),
+          refundedCount: Number(statusTotal("refunded")?._count?._all || 0),
+          failedCount: Number(statusTotal("failed")?._count?._all || 0),
+          pendingCount: Number(statusTotal("pending")?._count?._all || 0)
         }
       };
     },
@@ -17011,15 +18989,37 @@ var hotelOperationsResolvers = {
     },
     hotelGuestOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManageGuests", args.propertyKey);
-      const search = String(args.search || "").trim();
+      const search = String(args.search || "").trim().slice(0, 160);
+      const take = Math.min(Math.max(Math.trunc(Number(args.take) || GUEST_PAGE_SIZE), 1), 100);
+      const skip = Math.min(Math.max(Math.trunc(Number(args.skip) || 0), 0), 1e5);
+      const digits = search.replace(/\D/g, "");
+      const phoneMatches = search && digits.length >= 3 ? await context.prisma.$queryRaw`SELECT "id" FROM "Guest" WHERE regexp_replace("phone", '\\D', '', 'g') LIKE ${`%${digits}%`} LIMIT 1000` : [];
+      const searchWhere = search ? { OR: [
+        { firstName: { contains: search, mode: "insensitive" } },
+        { lastName: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        ...phoneMatches.length ? [{ id: { in: phoneMatches.map((row) => row.id) } }] : []
+      ] } : {};
+      const segmentWhere = {
+        vip: { isVip: true, isBlacklisted: false },
+        standard: { isVip: false, isBlacklisted: false },
+        restricted: { isBlacklisted: true }
+      };
+      const segment = segmentWhere[String(args.segment)] ? String(args.segment) : "all";
+      const where = { AND: [searchWhere, segment === "all" ? {} : segmentWhere[segment]] };
+      const orderBy = args.sort === "name" ? [{ lastName: "asc" }, { firstName: "asc" }, { id: "asc" }] : args.sort === "reservations" ? [{ bookings: { _count: "desc" } }, { id: "asc" }] : [{ updatedAt: "desc" }, { id: "desc" }];
+      const [total, all, vip, standard, restricted] = await Promise.all([
+        context.prisma.guest.count({ where }),
+        context.prisma.guest.count({ where: searchWhere }),
+        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.vip] } }),
+        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.standard] } }),
+        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.restricted] } })
+      ]);
       const guests = await context.prisma.guest.findMany({
-        where: search ? { OR: [
-          { firstName: { contains: search, mode: "insensitive" } },
-          { lastName: { contains: search, mode: "insensitive" } },
-          { email: { contains: search, mode: "insensitive" } }
-        ] } : void 0,
-        orderBy: [{ updatedAt: "desc" }],
-        take: 100,
+        where,
+        orderBy,
+        take,
+        skip,
         select: {
           id: true,
           firstName: true,
@@ -17052,7 +19052,9 @@ var hotelOperationsResolvers = {
             totalSpent: (Number(facts?._sum?.totalAmountMinor || 0) / 100).toFixed(2),
             lastStayAt: facts?._max?.checkOutDate || null
           };
-        })
+        }),
+        total,
+        segmentCounts: { all, vip, standard, restricted }
       };
     },
     hotelPaymentProviderOperations: async (_root, args, context) => {
@@ -17061,14 +19063,15 @@ var hotelOperationsResolvers = {
       const providers = await context.prisma.paymentProvider.findMany({
         orderBy: { name: "asc" },
         take: 20,
-        select: { id: true, name: true, code: true, isInstalled: true, credentials: true }
+        select: { id: true, name: true, code: true, isInstalled: true, credentials: true, metadata: true }
       });
       return { providers: providers.map((provider) => ({
         id: provider.id,
         name: provider.name,
         code: provider.code,
-        isInstalled: provider.isInstalled,
-        configured: paymentIntegrationConfigured(provider)
+        isInstalled: paymentProviderEnabled(provider),
+        configured: paymentIntegrationConfigured(provider),
+        credentialSource: paymentProviderUsesEnvironment(provider) ? "environment" : "saved"
       })) };
     },
     hotelNightAuditOperations: async (_root, args, context) => {
@@ -17083,21 +19086,40 @@ var hotelOperationsResolvers = {
       if (!clock) throw new Error("Property business date is not configured.");
       return { currentBusinessDate: clock.currentBusinessDate, runs };
     },
-    hotelOutboxOperations: async (_root, args, context) => {
+    hotelRefundQueue: async (_root, args, context) => {
       requireHotelPermission(context, "canManageAudit", args.propertyKey);
-      const [events, refundIntents] = await Promise.all([
-        context.prisma.hotelOutboxEvent.findMany({
-          orderBy: [{ createdAt: "desc" }, { id: "asc" }],
-          take: 100,
-          include: { attemptsEvidence: { orderBy: { attemptNumber: "asc" }, take: 20 } }
-        }),
+      const search = String(args.search || "").trim().slice(0, 160);
+      const page = (value) => Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 1e5);
+      const status = ["pending", "processing", "failed", "dead_letter", "completed"].includes(String(args.status)) ? String(args.status) : null;
+      const refundWhere = { AND: [
+        status ? { status: status === "completed" ? "succeeded" : status } : {},
+        search ? { OR: [
+          { reason: { contains: search, mode: "insensitive" } },
+          { lastError: { contains: search, mode: "insensitive" } },
+          { booking: { confirmationNumber: { contains: search, mode: "insensitive" } } }
+        ] } : {}
+      ] };
+      const [refundIntents, refundIntentsTotal, refundStatuses] = await Promise.all([
         context.prisma.refundIntent.findMany({
+          where: refundWhere,
           orderBy: [{ createdAt: "desc" }, { id: "asc" }],
-          take: 100,
+          skip: page(args.refundSkip),
+          take: REFUND_PAGE_SIZE,
           include: { booking: { include: reservationInclude } }
-        })
+        }),
+        context.prisma.refundIntent.count({ where: refundWhere }),
+        context.prisma.refundIntent.groupBy({ by: ["status"], _count: { _all: true } })
       ]);
-      return { events, refundIntents: refundIntents.map((item) => ({ ...item, booking: mapReservation(item.booking) })) };
+      const statusCounts = {};
+      for (const row of refundStatuses) {
+        const key4 = row.status === "succeeded" ? "completed" : row.status;
+        statusCounts[key4] = (statusCounts[key4] || 0) + Number(row._count?._all || 0);
+      }
+      return {
+        refundIntents: refundIntents.map((item) => ({ ...item, booking: mapReservation(item.booking) })),
+        refundIntentsTotal,
+        statusCounts
+      };
     },
     hotelGroupOperations: async (_root, args, context) => {
       requireHotelPermission(context, "canManageBookings", args.propertyKey);
@@ -17111,8 +19133,9 @@ var hotelOperationsResolvers = {
   }
 };
 
-// features/keystone/mutations/runHotelNightAudit.ts
-init_folioLedger();
+// features/keystone/operations/nightAudit.ts
+init_ledger();
+init_hotelBusinessTime();
 init_access();
 init_hotelBusinessTime();
 init_bookingFolio();
@@ -17128,6 +19151,10 @@ async function runHotelNightAudit(_root, { propertyKey, businessDate: value, ide
   if (propertyKey !== HOTEL_PROPERTY_KEY || !permissions.canManagePayments({ session: context.session })) {
     throw new Error("Not authorized to run night audit for this property.");
   }
+  return closeHotelBusinessDate(context, { businessDate: value, idempotencyKey, actorId: context.session.itemId });
+}
+async function closeHotelBusinessDate(context, { businessDate: value, idempotencyKey, actorId }) {
+  const propertyKey = HOTEL_PROPERTY_KEY;
   if (!String(idempotencyKey || "").trim()) throw new Error("Idempotency key is required.");
   const businessDate = utcBusinessDate(value);
   const nextBusinessDate = new Date(businessDate);
@@ -17160,6 +19187,8 @@ async function runHotelNightAudit(_root, { propertyKey, businessDate: value, ide
     if (utcBusinessDate(clock.currentBusinessDate.toISOString()).getTime() !== businessDate.getTime()) {
       throw new Error(`Night audit must run for the current business date ${clock.currentBusinessDate.toISOString().slice(0, 10)}.`);
     }
+    const propertySettings = await prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { timeZone: true } });
+    if (!propertySettings?.timeZone) throw new Error("Property time zone is not configured.");
     const departureCandidates = await prisma.booking.findMany({
       where: {
         status: { in: ["checked_in", "checked_out"] },
@@ -17224,8 +19253,18 @@ async function runHotelNightAudit(_root, { propertyKey, businessDate: value, ide
         0
       );
     }
+    const suppressHistoricalHousekeeping = isPastPropertyCalendarDate(
+      nextBusinessDate,
+      /* @__PURE__ */ new Date(),
+      propertySettings.timeZone
+    );
+    let suppressedHistoricalHousekeepingTaskCount = 0;
     for (const booking of bookings.filter((item) => item.checkOutDate > nextBusinessDate)) {
       const assignments = await prisma.roomAssignment.findMany({ where: { bookingId: booking.id, roomId: { not: null } } });
+      if (suppressHistoricalHousekeeping) {
+        suppressedHistoricalHousekeepingTaskCount += assignments.length;
+        continue;
+      }
       for (const assignment of assignments) {
         await prisma.housekeepingTask.create({ data: { roomId: assignment.roomId, taskType: "stayover_clean", status: "pending", priority: 2, notes: `Stayover ${nextBusinessDate.toISOString().slice(0, 10)}; booking ${booking.id}; night audit ${eventKey}` } });
       }
@@ -17258,7 +19297,7 @@ async function runHotelNightAudit(_root, { propertyKey, businessDate: value, ide
     await recordHotelLifecycleEvent({
       prisma,
       eventKey,
-      actorId: context.session.itemId,
+      actorId,
       identity,
       beforeSnapshot: { currentBusinessDate: businessDate.toISOString() },
       afterSnapshot: {
@@ -17268,7 +19307,8 @@ async function runHotelNightAudit(_root, { propertyKey, businessDate: value, ide
         dueBookingCount: bookings.length,
         postedEntryCount,
         existingEntryCount,
-        debitMinor
+        debitMinor,
+        suppressedHistoricalHousekeepingTaskCount
       }
     });
     return run;
@@ -17277,12 +19317,12 @@ async function runHotelNightAudit(_root, { propertyKey, businessDate: value, ide
 
 // features/keystone/mutations/createHotelGroupBlock.ts
 init_access();
-init_hotelAvailability();
+init_roomAvailability();
 init_hotelBusinessTime();
 init_serializableTransaction();
-var import_node_crypto27 = require("node:crypto");
+var import_node_crypto30 = require("node:crypto");
 init_boundedLaunch();
-init_inventoryLock();
+init_roomNightLocks();
 init_hotelLifecycle();
 function requiredText2(value, label, max = 200) {
   const normalized = String(value || "").trim();
@@ -17316,7 +19356,7 @@ async function createHotelGroupBlock(_root, args, context) {
   hotelStayDates(arrivalDate, departureDate);
   if (arrivalDate.getUTCHours() || arrivalDate.getUTCMinutes() || arrivalDate.getUTCSeconds() || arrivalDate.getUTCMilliseconds() || departureDate.getUTCHours() || departureDate.getUTCMinutes() || departureDate.getUTCSeconds() || departureDate.getUTCMilliseconds()) throw new Error("Group stay dates must be property calendar dates at midnight UTC.");
   const eventKey = `group-block:create:${idempotencyKey}`;
-  const groupId = `grp_${(0, import_node_crypto27.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24)}`;
+  const groupId = `grp_${(0, import_node_crypto30.createHash)("sha256").update(eventKey).digest("hex").slice(0, 24)}`;
   const identity = {
     request: { ...args, arrivalDate: arrivalDate.toISOString(), departureDate: departureDate.toISOString() },
     aggregateType: "group_block",
@@ -17353,7 +19393,7 @@ async function createHotelGroupBlock(_root, args, context) {
     const block = await prisma.groupBlock.create({
       data: {
         id: groupId,
-        blockCode: `GRP-${(0, import_node_crypto27.randomUUID)().replaceAll("-", "").slice(0, 10).toUpperCase()}`,
+        blockCode: `GRP-${(0, import_node_crypto30.randomUUID)().replaceAll("-", "").slice(0, 10).toUpperCase()}`,
         name: requiredText2(args.name, "Group name"),
         status: "tentative",
         arrivalDate,
@@ -17408,294 +19448,9 @@ async function createHotelGroupBlock(_root, args, context) {
   });
 }
 
-// features/keystone/mutations/replayHotelOutboxEvent.ts
-init_access();
-
-// features/keystone/lib/hotelOutbox.ts
-var import_node_crypto28 = require("node:crypto");
-var import_client8 = require("@prisma/client");
-init_hotelLifecycle();
-var OUTBOX_DEFAULT_LEASE_MS = 6e4;
-var OUTBOX_DEFAULT_BATCH_SIZE = 25;
-function normalizePropertyKey(value) {
-  const propertyKey = String(value || "").trim();
-  if (!propertyKey || propertyKey !== HOTEL_PROPERTY_KEY) {
-    throw new Error("Unknown hotel property.");
-  }
-  return propertyKey;
-}
-function boundedInt(value, fallback, min, max) {
-  const candidate = Number(value ?? fallback);
-  if (!Number.isInteger(candidate)) return fallback;
-  return Math.min(max, Math.max(min, candidate));
-}
-function outboxBackoffMs(attemptNumber, baseMs = 5e3, maxMs = 15 * 6e4) {
-  const attempt = boundedInt(attemptNumber, 1, 1, 30);
-  const base = boundedInt(baseMs, 5e3, 100, maxMs);
-  return Math.min(maxMs, base * 2 ** (attempt - 1));
-}
-function errorMessage(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.slice(0, 2e3);
-}
-async function claimHotelOutboxEvents(prisma, options) {
-  const propertyKey = normalizePropertyKey(options.propertyKey);
-  const workerId = String(options.workerId || "").trim();
-  if (!workerId || workerId.length > 200) throw new Error("A workerId is required.");
-  const limit = boundedInt(options.limit, OUTBOX_DEFAULT_BATCH_SIZE, 1, 100);
-  const leaseMs = boundedInt(options.leaseMs, OUTBOX_DEFAULT_LEASE_MS, 1e3, 15 * 6e4);
-  const now = options.now || /* @__PURE__ */ new Date();
-  const leaseExpiresAt = new Date(now.getTime() + leaseMs);
-  const leaseToken = `${workerId}:${(0, import_node_crypto28.randomUUID)()}`;
-  const topics = [...new Set((options.topics || []).map((topic) => String(topic).trim()).filter(Boolean))];
-  const topicFilter = topics.length ? import_client8.Prisma.sql`AND "topic" IN (${import_client8.Prisma.join(topics)})` : import_client8.Prisma.empty;
-  const claimed = await prisma.$queryRaw(import_client8.Prisma.sql`
-    WITH candidates AS (
-      SELECT "id"
-      FROM "HotelOutboxEvent"
-      WHERE "propertyKey" = ${propertyKey}
-        AND (
-          ("status" IN ('pending', 'failed') AND "availableAt" <= ${now})
-          OR ("status" = 'processing' AND "leaseExpiresAt" IS NOT NULL AND "leaseExpiresAt" <= ${now})
-        )
-        ${topicFilter}
-      ORDER BY "availableAt" ASC, "createdAt" ASC, "id" ASC
-      FOR UPDATE SKIP LOCKED
-      LIMIT ${limit}
-    )
-    UPDATE "HotelOutboxEvent" AS event
-    SET "status" = 'processing',
-        "attempts" = event."attempts" + 1,
-        "leaseToken" = ${leaseToken},
-        "leaseExpiresAt" = ${leaseExpiresAt},
-        "lastAttemptAt" = ${now},
-        "updatedAt" = ${now}
-    FROM candidates
-    WHERE event."id" = candidates."id"
-    RETURNING event."id", event."eventKey", event."propertyKey", event."topic",
-      event."aggregateType", event."aggregateId", event."payloadSnapshot", event."status",
-      event."attempts", event."maxAttempts", event."leaseToken", event."leaseExpiresAt"
-  `);
-  for (const event of claimed) {
-    await prisma.hotelOutboxAttempt.create({
-      data: {
-        outboxId: event.id,
-        propertyKey,
-        attemptNumber: event.attempts,
-        workerId,
-        status: "failed",
-        errorMessage: "Dispatch started; completion not yet recorded.",
-        startedAt: now
-      }
-    });
-  }
-  return claimed;
-}
-async function finishAttempt(prisma, eventId, attemptNumber, data) {
-  await prisma.hotelOutboxAttempt.update({
-    where: { outboxId_attemptNumber: { outboxId: eventId, attemptNumber } },
-    data
-  });
-}
-async function markDelivered(prisma, event, response, now) {
-  const updated = await prisma.hotelOutboxEvent.updateMany({
-    where: { id: event.id, propertyKey: event.propertyKey, status: "processing", leaseToken: event.leaseToken },
-    data: {
-      status: "delivered",
-      deliveredAt: now,
-      leaseToken: "",
-      leaseExpiresAt: null,
-      lastError: "",
-      dispatchResultSnapshot: response ?? {},
-      updatedAt: now
-    }
-  });
-  if (updated.count !== 1) throw new Error("Outbox lease was lost before delivery could be recorded.");
-  await finishAttempt(prisma, event.id, event.attempts, {
-    status: "succeeded",
-    errorMessage: "",
-    responseSnapshot: response ?? {},
-    finishedAt: now
-  });
-}
-async function markFailed(prisma, event, error, now) {
-  const deadLettered = event.attempts >= event.maxAttempts;
-  const availableAt = new Date(now.getTime() + outboxBackoffMs(event.attempts));
-  const message = errorMessage(error);
-  const updated = await prisma.hotelOutboxEvent.updateMany({
-    where: { id: event.id, propertyKey: event.propertyKey, status: "processing", leaseToken: event.leaseToken },
-    data: {
-      status: deadLettered ? "dead_letter" : "failed",
-      availableAt,
-      deadLetteredAt: deadLettered ? now : null,
-      lastError: message,
-      leaseToken: "",
-      leaseExpiresAt: null,
-      updatedAt: now
-    }
-  });
-  if (updated.count !== 1) throw new Error("Outbox lease was lost before failure could be recorded.");
-  await finishAttempt(prisma, event.id, event.attempts, {
-    status: "failed",
-    errorMessage: message,
-    finishedAt: now
-  });
-  return deadLettered;
-}
-async function dispatchHotelOutboxBatch(prisma, options, handler) {
-  const events = await claimHotelOutboxEvents(prisma, options);
-  const result = { delivered: 0, retried: 0, deadLettered: 0, skipped: 0 };
-  for (const event of events) {
-    try {
-      const response = await handler(event);
-      await markDelivered(prisma, event, response, /* @__PURE__ */ new Date());
-      result.delivered += 1;
-    } catch (error) {
-      const deadLettered = await markFailed(prisma, event, error, /* @__PURE__ */ new Date());
-      if (deadLettered) result.deadLettered += 1;
-      else result.retried += 1;
-    }
-  }
-  return result;
-}
-async function replayHotelDeadLetter(prisma, options) {
-  const propertyKey = normalizePropertyKey(options.propertyKey);
-  const idempotencyKey = String(options.idempotencyKey || "").trim();
-  if (!idempotencyKey || idempotencyKey.length > 200) throw new Error("A stable replay idempotency key is required.");
-  const source = await prisma.hotelOutboxEvent.findUnique({ where: { id: options.eventId } });
-  if (!source || source.propertyKey !== propertyKey) throw new Error("Outbox event not found for this property.");
-  if (source.status !== "dead_letter") throw new Error("Only dead-letter events can be replayed.");
-  const eventKey = `hotel-outbox:replay:${idempotencyKey}`;
-  const request = { sourceEventKey: source.eventKey, eventId: source.id, idempotencyKey };
-  const requestHash = hashLifecycleRequest(request);
-  const existing = await prisma.hotelOutboxEvent.findUnique({ where: { eventKey } });
-  if (existing) {
-    if (existing.requestHash !== requestHash || existing.propertyKey !== propertyKey) {
-      throw new Error("Outbox replay key is already bound to different evidence.");
-    }
-    return { event: existing, replayed: true };
-  }
-  const replay = await prisma.hotelOutboxEvent.create({
-    data: {
-      eventKey,
-      requestHash,
-      propertyKey,
-      topic: source.topic,
-      aggregateType: source.aggregateType,
-      aggregateId: source.aggregateId,
-      payloadSnapshot: source.payloadSnapshot,
-      status: "pending",
-      attempts: 0,
-      maxAttempts: source.maxAttempts,
-      availableAt: /* @__PURE__ */ new Date(),
-      replayedFromEventKey: source.eventKey,
-      dispatchResultSnapshot: {}
-    }
-  });
-  return { event: replay, replayed: false };
-}
-function outboxBodyHash(body) {
-  return (0, import_node_crypto28.createHash)("sha256").update(body).digest("hex");
-}
-function signHotelOutboxBody(body, credentialKeyId, sentAt, secret) {
-  return (0, import_node_crypto28.createHmac)("sha256", secret).update(`${sentAt}.${credentialKeyId}.${body}`).digest("hex");
-}
-function createHttpOutboxHandler(options) {
-  const url = String(options.url || "").trim();
-  const secret = String(options.secret || "");
-  const credentialKeyId = String(options.credentialKeyId || "").trim();
-  if (!url || !secret || !credentialKeyId) {
-    throw new Error("Outbox HTTP dispatch requires a URL, secret, and credential key id.");
-  }
-  const timeoutMs = boundedInt(options.timeoutMs, 15e3, 1e3, 6e4);
-  return async (event) => {
-    const body = JSON.stringify({
-      eventKey: event.eventKey,
-      propertyKey: event.propertyKey,
-      topic: event.topic,
-      aggregateType: event.aggregateType,
-      aggregateId: event.aggregateId,
-      payload: event.payloadSnapshot
-    });
-    const sentAt = (/* @__PURE__ */ new Date()).toISOString();
-    const bodyHash = outboxBodyHash(body);
-    const signature2 = signHotelOutboxBody(body, credentialKeyId, sentAt, secret);
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-openfront-outbox-event-key": event.eventKey,
-        "x-openfront-outbox-credential-key-id": credentialKeyId,
-        "x-openfront-outbox-sent-at": sentAt,
-        "x-openfront-outbox-signature": signature2
-      },
-      body,
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    if (!response.ok) throw new Error(`Outbox receiver returned HTTP ${response.status}.`);
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) throw new Error("Outbox receiver did not return a JSON receipt.");
-    const ack = await response.json();
-    if (ack.accepted !== true || !ack.receiptId || ack.eventKey !== event.eventKey || ack.propertyKey !== event.propertyKey || ack.bodyHash !== bodyHash || ack.credentialKeyId !== credentialKeyId) {
-      throw new Error("Outbox receiver acknowledgement did not match the dispatched evidence.");
-    }
-    return ack;
-  };
-}
-
-// features/keystone/mutations/replayHotelOutboxEvent.ts
-init_hotelLifecycle();
-async function replayHotelOutboxEvent(_root, { eventId, idempotencyKey }, context) {
-  if (!permissions.canManageIntegrations({ session: context.session })) {
-    throw new Error("Not authorized to replay hotel outbox events.");
-  }
-  const key4 = String(idempotencyKey || "").trim();
-  if (!key4 || key4.length > 200) throw new Error("A stable replay idempotency key is required.");
-  return context.transaction(async (transactionContext) => {
-    const prisma = transactionContext.prisma;
-    await lockHotelLifecycle(prisma, `hotel-outbox-replay:${key4}`);
-    const auditEventKey = `hotel-outbox-replay:${key4}`;
-    const request = { eventId, idempotencyKey: key4 };
-    const existingAudit = await prisma.hotelAuditEvent.findUnique({ where: { eventKey: auditEventKey } });
-    if (existingAudit && existingAudit.requestHash !== hashLifecycleRequest(request)) {
-      throw new Error("Outbox replay key is already bound to different evidence.");
-    }
-    const result = await replayHotelDeadLetter(prisma, {
-      propertyKey: HOTEL_PROPERTY_KEY,
-      eventId,
-      idempotencyKey: key4
-    });
-    if (!existingAudit) {
-      await recordHotelLifecycleEvent({
-        prisma,
-        eventKey: auditEventKey,
-        actorId: context.session.itemId,
-        identity: {
-          request,
-          aggregateType: "outbox_event",
-          aggregateId: eventId,
-          action: "replayed"
-        },
-        beforeSnapshot: { sourceEventId: eventId },
-        afterSnapshot: {
-          replayEventId: result.event.id,
-          replayEventKey: result.event.eventKey,
-          replayed: result.replayed
-        }
-      });
-    }
-    return {
-      id: result.event.id,
-      eventKey: result.event.eventKey,
-      status: result.event.status,
-      replayed: result.replayed
-    };
-  }, { maxWait: 5e3, timeout: 3e4, isolationLevel: "Serializable" });
-}
-
 // features/keystone/mutations/pickupHotelGroupBlock.ts
-init_hotelGroupLifecycle();
-init_inventoryLock();
+init_commands3();
+init_roomNightLocks();
 init_access();
 init_boundedLaunch();
 init_hotelLifecycle();
@@ -17744,6 +19499,7 @@ async function pickupHotelGroupBlock(_root, { groupBlockId, allocationId, bookin
     if (booking.roomAssignments.length !== 1) throw new Error("Each group pickup must represent exactly one room.");
     await lockRoomInventory(prisma, allocation.roomTypeId, block.arrivalDate, block.departureDate);
     const contract = await groupCommercialContract(prisma, groupBlockId);
+    assertGroupAllocationMatchesContract(allocation, contract);
     const nights = Math.round((block.departureDate.getTime() - block.arrivalDate.getTime()) / 864e5);
     const roomMinor = allocation.rateMinor * nights;
     const contractTotal = roomMinor + Math.round(roomMinor * contract.taxRateBasisPoints / 1e4) + contract.feesMinor;
@@ -17854,11 +19610,12 @@ async function updateHotelGroupBlockStatus(_root, { groupBlockId, status, idempo
 }
 
 // features/keystone/mutations/resolveOverdueCheckedInBooking.ts
-init_hotelGuestGovernance();
+init_commands();
 init_serializableTransaction();
+init_commands2();
 init_access();
 init_bookingFolio();
-init_folioLedger();
+init_ledger();
 init_hotelLifecycle();
 function normalize(value, label, max) {
   const normalized = String(value || "").trim();
@@ -17957,7 +19714,7 @@ async function resolveOverdueCheckedInBooking(_root, { bookingId, idempotencyKey
     await prisma.folio.update({ where: { id: ensured.folioId }, data: { status: "closed", closedAt: now } });
     for (const assignment of booking.roomAssignments) {
       if (!assignment.room) continue;
-      const repair = await prisma.maintenanceRequest.findFirst({ where: { roomId: assignment.room.id, status: { in: ["reported", "assigned", "in_progress", "waiting_parts"] } } });
+      const repair = await prisma.maintenanceRequest.findFirst({ where: { roomId: assignment.room.id, status: { notIn: ["verified", "cancelled"] } } });
       const nextStatus = assignment.room.status === "out_of_order" ? "out_of_order" : repair || assignment.room.status === "maintenance" ? "maintenance" : "cleaning";
       await prisma.room.update({ where: { id: assignment.room.id }, data: { status: nextStatus } });
       const openTask = await prisma.housekeepingTask.findFirst({
@@ -17993,6 +19750,7 @@ async function resolveOverdueCheckedInBooking(_root, { bookingId, idempotencyKey
         lastStayAt: completed._max.checkedOutAt || now
       }
     });
+    await reconcileBookingLoyalty(prisma, bookingId, eventKey, context.session.itemId);
     await recordHotelLifecycleEvent({
       prisma,
       eventKey,
@@ -18054,12 +19812,20 @@ async function replayRefundIntent(_root, { intentId, idempotencyKey }, context) 
 
 // features/keystone/mutations/redeemHotelPasswordResetToken.ts
 var bcrypt = require("bcryptjs");
+var dumbPasswords = require("dumb-passwords");
+function hotelResetPasswordCandidateAccepted(value) {
+  const password2 = String(value || "");
+  return password2.length >= 10 && password2.length <= 1e3 && !dumbPasswords.check(password2);
+}
+function hashHotelResetPassword(value) {
+  return bcrypt.hash(value, 10);
+}
 var FAKE_TOKEN_HASH = "$2a$10$7EqJtq98hPqEX7fNZaFWoO5s7g7C2xKj.c0k7.o9KfKQZ7ZfWl8eK";
-async function redeemHotelPasswordResetToken(root, { email: email2, token, password: password2 }, context) {
-  const identity = String(email2 || "").trim().toLowerCase().slice(0, 255);
+async function redeemHotelPasswordResetToken(root, { email, token, password: password2 }, context) {
+  const identity = String(email || "").trim().toLowerCase().slice(0, 255);
   await enforceAbuseLimit(context, { scope: "auth-reset-redeem-backend", identity, limit: 8, windowMs: 15 * 6e4 });
   await enforceAbuseLimit(context, { scope: "auth-reset-redeem-backend-account", identity, limit: 12, windowMs: 15 * 6e4, includeNetwork: false });
-  if (String(password2 || "").length < 10 || String(password2 || "").length > 1e3) {
+  if (!hotelResetPasswordCandidateAccepted(password2)) {
     return { code: "FAILURE", message: "Password reset could not be completed." };
   }
   const ttlMinutes = Math.min(1440, Math.max(1, Number(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 10)));
@@ -18072,7 +19838,7 @@ async function redeemHotelPasswordResetToken(root, { email: email2, token, passw
     if (!user.passwordResetIssuedAt || Date.now() - user.passwordResetIssuedAt.getTime() > ttlMinutes * 6e4) {
       return { code: "TOKEN_EXPIRED", message: "This password reset token has expired." };
     }
-    const passwordHash = await bcrypt.hash(password2, 10);
+    const passwordHash = await hashHotelResetPassword(password2);
     const changed = await tx.prisma.user.updateMany({
       where: { id: user.id, passwordResetRedeemedAt: null, authVersion: user.authVersion },
       data: { password: passwordHash, passwordResetRedeemedAt: /* @__PURE__ */ new Date(), authVersion: Number(user.authVersion || 1) + 1 }
@@ -18083,13 +19849,16 @@ async function redeemHotelPasswordResetToken(root, { email: email2, token, passw
 }
 
 // features/keystone/mutations/configureHotelPaymentProvider.ts
+var import_node_crypto31 = require("node:crypto");
 init_access();
 init_paymentSecurity();
 init_integrationConfig();
+init_serializableTransaction();
+init_hotelLifecycle();
 function bounded3(value, label, max = 500) {
-  const text46 = String(value || "").trim();
-  if (!text46 || text46.length > max) throw new Error(`${label} is required and must be at most ${max} characters.`);
-  return text46;
+  const text44 = String(value || "").trim();
+  if (!text44 || text44.length > max) throw new Error(`${label} is required and must be at most ${max} characters.`);
+  return text44;
 }
 async function configureHotelPaymentProvider(_root, { code, enabled, credentials }, context) {
   if (!permissions.canManagePayments({ session: context.session }) || !permissions.canManageIntegrations({ session: context.session })) {
@@ -18099,7 +19868,10 @@ async function configureHotelPaymentProvider(_root, { code, enabled, credentials
   await ensureDefaultPaymentProviders(context);
   const existing = await context.prisma.paymentProvider.findUnique({ where: { code } });
   if (!existing) throw new Error("Payment provider record is unavailable.");
-  const data = { isInstalled: false };
+  const data = {
+    isInstalled: false,
+    metadata: { ...existing.metadata || {}, stripeEnvironmentDisabled: !enabled }
+  };
   if (enabled) {
     const input = credentials && typeof credentials === "object" ? credentials : {};
     data.credentials = code === "pp_stripe_stripe" ? {
@@ -18112,21 +19884,114 @@ async function configureHotelPaymentProvider(_root, { code, enabled, credentials
       webhookId: bounded3(input.webhookId, "PayPal webhook ID"),
       sandbox: input.sandbox !== false
     };
+    if (!paymentProviderCredentialsConfigured({ code, isInstalled: true, credentials: data.credentials })) {
+      throw new Error(`Payment provider ${code} credentials are incomplete or invalid.`);
+    }
     data.isInstalled = true;
   }
-  await context.query.PaymentProvider.updateOne({ where: { id: existing.id }, data, query: "id" });
-  const provider = await context.prisma.paymentProvider.findUniqueOrThrow({ where: { id: existing.id } });
-  return {
-    id: provider.id,
-    name: provider.name,
-    code: provider.code,
-    isInstalled: provider.isInstalled,
-    configured: paymentIntegrationConfigured(provider)
-  };
+  return runSerializableTransaction(context, async (transactionContext) => {
+    await transactionContext.prisma.$executeRawUnsafe(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      `hotel-payment-provider-config:${existing.id}`
+    );
+    const current = await transactionContext.prisma.paymentProvider.findUnique({ where: { id: existing.id } });
+    if (!current || current.code !== code) throw new Error("Payment provider identity changed during configuration.");
+    const result = await transactionContext.sudo().query.PaymentProvider.updateOne({
+      where: { id: current.id },
+      data,
+      query: "id name code isInstalled"
+    });
+    const persisted = await transactionContext.prisma.paymentProvider.findUniqueOrThrow({ where: { id: current.id } });
+    const auditId = (0, import_node_crypto31.randomUUID)();
+    await transactionContext.prisma.hotelAuditEvent.create({
+      data: {
+        eventKey: `payment-provider:${current.id}:${auditId}`,
+        requestHash: hashLifecycleRequest({ code, enabled, auditId }),
+        propertyKey: HOTEL_PROPERTY_KEY,
+        aggregateType: "payment_provider",
+        aggregateId: current.id,
+        action: enabled ? "configured" : "disabled",
+        actorId: context.session.itemId,
+        beforeSnapshot: {
+          code: current.code,
+          isInstalled: current.isInstalled,
+          credentialsComplete: paymentProviderCredentialsConfigured(current)
+        },
+        afterSnapshot: {
+          code: persisted.code,
+          isInstalled: persisted.isInstalled,
+          credentialsComplete: paymentProviderCredentialsConfigured(persisted)
+        },
+        metadataSnapshot: {
+          credentialValuesOmitted: true,
+          credentialsRotated: enabled,
+          credentialsRetainedOnDisable: !enabled
+        }
+      }
+    });
+    return {
+      id: result.id,
+      name: result.name,
+      code: result.code,
+      isInstalled: result.isInstalled,
+      configured: paymentIntegrationConfigured(persisted)
+    };
+  });
 }
 
 // features/keystone/mutations/index.ts
 init_integrationConfig();
+
+// features/keystone/lib/hotelAuthGraphqlSchema.ts
+var import_graphql2 = require("graphql");
+
+// features/keystone/lib/hotelResetActionSecret.ts
+var import_node_crypto32 = require("node:crypto");
+function hotelResetActionSecret(env = process.env) {
+  const configured = String(env.RESET_ACTION_SECRET || "").trim();
+  if (configured) return configured;
+  const sessionSecret2 = String(env.SESSION_SECRET || (env.NODE_ENV === "production" ? "" : "local-development-session-secret-change-me"));
+  if (!sessionSecret2) return "";
+  return (0, import_node_crypto32.createHmac)("sha256", sessionSecret2).update("hotel-password-reset-action:v1").digest("hex");
+}
+
+// features/keystone/lib/hotelAuthGraphqlSchema.ts
+function resetActionHeader(context) {
+  if (!context || typeof context !== "object" || !("req" in context)) return "";
+  const request = context.req;
+  const headers = request?.headers;
+  if (!headers || typeof headers !== "object") return "";
+  if ("get" in headers && typeof headers.get === "function") {
+    return String(headers.get("x-hotel-reset-action") || "");
+  }
+  const entry = Object.entries(headers).find(([key4]) => key4.toLowerCase() === "x-hotel-reset-action")?.[1];
+  return Array.isArray(entry) ? String(entry[0] || "") : typeof entry === "string" ? entry : "";
+}
+function applyHotelAuthGraphqlPolicy(schema) {
+  const fields = schema.getMutationType()?.getFields();
+  const builtInRedemption = fields?.redeemUserPasswordResetToken;
+  if (builtInRedemption) {
+    builtInRedemption.resolve = () => {
+      throw new import_graphql2.GraphQLError("This password reset operation is unavailable.");
+    };
+  }
+  const builtInRequest = fields?.sendUserPasswordResetLink;
+  if (builtInRequest) {
+    const originalResolver = builtInRequest.resolve;
+    builtInRequest.resolve = (root, args, context, info) => {
+      const expected = hotelResetActionSecret();
+      const supplied = resetActionHeader(context);
+      if (!expected || supplied !== expected) return true;
+      if (typeof originalResolver !== "function") {
+        throw new import_graphql2.GraphQLError("Password reset is currently unavailable.");
+      }
+      return originalResolver(root, args, context, info);
+    };
+  }
+  return schema;
+}
+
+// features/keystone/mutations/index.ts
 var graphql5 = String.raw;
 function mapCheckoutPaymentProvider(provider) {
   if (!provider) return null;
@@ -18140,16 +20005,17 @@ function mapCheckoutPaymentProvider(provider) {
     publicClientKey: provider.code === "pp_stripe_stripe" ? credentials.publishableKey || null : provider.code === "pp_paypal_paypal" ? credentials.clientId || null : null
   };
 }
-function mapCheckoutPaymentSession(session) {
+async function mapCheckoutPaymentSession(session, context) {
   if (!session) return null;
   const data = session.data && typeof session.data === "object" ? session.data : {};
+  const provider = session.paymentProvider?.id ? await context.prisma.paymentProvider.findUnique({ where: { id: session.paymentProvider.id } }) : null;
   return {
     ...session,
     clientSecret: typeof data.clientSecret === "string" ? data.clientSecret : null,
     paymentIntentId: typeof data.paymentIntentId === "string" ? data.paymentIntentId : null,
     orderId: typeof data.orderId === "string" ? data.orderId : null,
     approveLink: typeof data.approveLink === "string" ? data.approveLink : null,
-    paymentProvider: mapCheckoutPaymentProvider(session.paymentProvider)
+    paymentProvider: mapCheckoutPaymentProvider(provider || session.paymentProvider)
   };
 }
 function mapChannelSyncResult(result) {
@@ -18185,10 +20051,26 @@ function mapStorefrontRoomType(roomType) {
     ratePlans: roomType.ratePlans || []
   };
 }
+function mapGuestChangeRequest(request) {
+  if (!request) return null;
+  const date = (value) => value ? new Date(value) : null;
+  return {
+    id: request.id,
+    status: request.status,
+    requestedCheckInDate: date(request.requestedCheckInDate),
+    requestedCheckOutDate: date(request.requestedCheckOutDate),
+    guestMessage: request.guestMessage || null,
+    propertyNote: request.status === "pending" ? null : request.staffNote || null,
+    createdAt: date(request.createdAt),
+    resolvedAt: date(request.resolvedAt)
+  };
+}
 function mapGuestBooking(booking) {
   if (!booking) return null;
   return {
     ...booking,
+    changeRequest: mapGuestChangeRequest(booking.changeRequest),
+    bookedStayTerms: guestBookedStayTerms(booking),
     checkInDate: booking.checkInDate ? new Date(booking.checkInDate) : null,
     checkOutDate: booking.checkOutDate ? new Date(booking.checkOutDate) : null,
     createdAt: booking.createdAt ? new Date(booking.createdAt) : null,
@@ -18203,13 +20085,16 @@ function mapGuestBooking(booking) {
     }))
   };
 }
+var guestAccountResolvers = createGuestAccountResolvers(mapGuestBooking);
 function extendGraphqlSchema(baseSchema) {
-  return (0, import_schema.mergeSchemas)({
+  const schema = (0, import_schema.mergeSchemas)({
     schemas: [baseSchema],
     typeDefs: graphql5`
       ${hotelOperationsTypeDefs}
       ${hotelGuestGovernanceTypeDefs}
       ${hotelMfaTypeDefs}
+      ${guestAccountTypeDefs}
+      ${hotelGuestMessagesTypeDefs}
       ${maintenanceCommercialTypeDefs}
       ${hotelDerivedRateTypeDefs}
 
@@ -18225,6 +20110,7 @@ function extendGraphqlSchema(baseSchema) {
         frontDeskCopy: String
         checkInTime: String
         checkOutTime: String
+        timeZone: String
         heroImagePath: String
         heroImageAltText: String
         heroImageCaption: String
@@ -18234,6 +20120,8 @@ function extendGraphqlSchema(baseSchema) {
         locationImagePath: String
         locationImageAltText: String
         locationImageCaption: String
+        logoIcon: String
+        logoColor: String
       }
 
       type BookingCheckoutPaymentProvider {
@@ -18297,6 +20185,13 @@ function extendGraphqlSchema(baseSchema) {
         securityDepositMinor: Int!
         depositPercent: Int!
         quoteToken: String!
+        promoCodeApplied: Boolean
+        nightlyRates: [StorefrontNightlyRate!]!
+      }
+
+      type StorefrontNightlyRate {
+        date: String!
+        amountMinor: Int!
       }
 
       type StorefrontRoomImage {
@@ -18317,6 +20212,8 @@ function extendGraphqlSchema(baseSchema) {
         baseRateMinor: Int!
         currencyCode: String!
         minimumStay: Int
+        maximumStay: Int
+        advanceBookingMax: Int
         cancellationPolicy: String
         mealPlan: String
         isPromotional: Boolean!
@@ -18341,6 +20238,11 @@ function extendGraphqlSchema(baseSchema) {
         ratePlans: [StorefrontRatePlan!]!
       }
 
+      type StorefrontStayNight {
+        date: String!
+        available: Boolean!
+      }
+
       type GuestRoomAssignment {
         id: ID!
         ratePerNight: Float
@@ -18355,6 +20257,18 @@ function extendGraphqlSchema(baseSchema) {
         paymentStatus: String
         balanceDueMinor: Int!
         cancelledAt: DateTime
+        changeRequest: GuestChangeRequest
+      }
+
+      type GuestChangeRequest {
+        id: ID!
+        status: String!
+        requestedCheckInDate: DateTime
+        requestedCheckOutDate: DateTime
+        guestMessage: String
+        propertyNote: String
+        createdAt: DateTime
+        resolvedAt: DateTime
       }
 
       type HotelPasswordResetResult {
@@ -18422,6 +20336,7 @@ function extendGraphqlSchema(baseSchema) {
         depositAmountMinor: Int
         balanceDueMinor: Int
         currencyCode: String
+        bookedStayTerms: JSON
         status: String
         paymentStatus: String
         refundPendingMinor: Int
@@ -18429,9 +20344,7 @@ function extendGraphqlSchema(baseSchema) {
         createdAt: DateTime
         confirmedAt: DateTime
         cancelledAt: DateTime
-        confirmationDeliveryStatus: String
-        updateDeliveryStatus: String
-        cancellationDeliveryStatus: String
+        changeRequest: GuestChangeRequest
         roomAssignments: [GuestRoomAssignment!]!
       }
 
@@ -18443,7 +20356,8 @@ function extendGraphqlSchema(baseSchema) {
         hotelSecurityAuthorization(bookingId: ID!): JSON!
         hotelFolioReceipt(folioId: ID!): JSON!
         hotelCashierOperations: JSON!
-        hotelReceivableOperations: JSON!
+        hotelReceivableOperations: JSON! @deprecated(reason: "Use hotelReceivableOperationsPage for bounded workspace reads.")
+        hotelReceivableOperationsPage(afterAccountId: ID, afterInvoiceId: ID, pageSize: Int): JSON!
         hotelDisputeOperations: JSON!
         hotelGroupWorkspace(after: ID): String!
         hotelLoyaltyAccount(bookingId: ID!): String!
@@ -18452,12 +20366,14 @@ function extendGraphqlSchema(baseSchema) {
         hotelRoomOutages: String!
         hotelStayRegister(bookingId: ID!): String!
         redirectToInit: Boolean
+        hotelReadiness: JSON!
         publicHotelSettings: PublicHotelSettings!
         bookingPaymentProviders: [BookingCheckoutPaymentProvider!]!
-        activeBookingPaymentSession(bookingId: ID!): ActiveBookingPaymentSession
+        activeBookingPaymentSession(bookingId: ID!, providerPaymentId: String): ActiveBookingPaymentSession
         storefrontRoomTypes: [StorefrontRoomType!]!
         storefrontRoomType(id: ID!): StorefrontRoomType
         storefrontAvailability(checkInDate: DateTime!, checkOutDate: DateTime!): [StorefrontRoomType!]!
+        storefrontStayCalendar(roomTypeId: ID, fromDate: DateTime!, toDate: DateTime!): [StorefrontStayNight!]!
         storefrontQuote(
           roomTypeId: ID!
           ratePlanId: ID!
@@ -18498,13 +20414,6 @@ function extendGraphqlSchema(baseSchema) {
         succeeded: Int!
         failed: Int!
         retriedAt: DateTime!
-      }
-
-      type HotelOutboxReplayResult {
-        id: ID!
-        eventKey: String!
-        status: String!
-        replayed: Boolean!
       }
 
       type OverdueStayResolutionResult {
@@ -18561,8 +20470,6 @@ function extendGraphqlSchema(baseSchema) {
         refundApprovalThresholdMinor: Int
         writeOffApprovalThresholdMinor: Int
         cashVarianceApprovalThresholdMinor: Int
-        prearrivalEmailEnabled: Boolean
-        prearrivalDays: Int
         loyaltyEnabled: Boolean
         loyaltyEarnMinorPerPoint: Int
         loyaltyRedeemMinorPerPoint: Int
@@ -18594,6 +20501,8 @@ function extendGraphqlSchema(baseSchema) {
         locationImagePath: String
         locationImageAltText: String
         locationImageCaption: String
+        logoIcon: String
+        logoColor: String
       }
 
       input HotelPaymentProviderCredentialsInput {
@@ -18629,6 +20538,7 @@ function extendGraphqlSchema(baseSchema) {
         internalNotes: String
         source: String
         status: String
+        quoteToken: String!
         idempotencyKey: String!
       }
 
@@ -18656,7 +20566,6 @@ function extendGraphqlSchema(baseSchema) {
           businessDate: DateTime!
           idempotencyKey: String!
         ): HotelNightAuditRunProjection!
-        replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!): HotelOutboxReplayResult!
         replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
         resolveOverdueCheckedInBooking(
           bookingId: ID!
@@ -18763,6 +20672,14 @@ function extendGraphqlSchema(baseSchema) {
           idempotencyKey: String!
         ): Room
         updateHotelHousekeepingStaffCapability(staffId: ID!, configuration: String!, expectedRevision: Int!, idempotencyKey: String!): String!
+        scheduleHousekeepingTask(
+          roomId: ID!
+          taskType: String!
+          priority: Int
+          assignedToId: ID
+          notes: String
+          idempotencyKey: String!
+        ): HousekeepingTask
         updateHousekeepingTaskStatus(
           taskId: ID!
           expectedStatus: String
@@ -18806,6 +20723,7 @@ function extendGraphqlSchema(baseSchema) {
           totalRooms: Int
           bookedRooms: Int
           blockedRooms: Int
+          blockedRoomsDelta: Int
           idempotencyKey: String!
         ): RoomInventory
         requestBookingModification(
@@ -18846,9 +20764,12 @@ function extendGraphqlSchema(baseSchema) {
         hotelPayoutOperations,
         ...hotelGuestGovernanceResolvers.Query,
         ...hotelMfaResolvers.Query,
+        ...guestAccountResolvers.Query,
+        hotelGuestMessages,
         ...maintenanceCommercialResolvers.Query,
         ...hotelDerivedRateResolvers.Query,
         hotelReceivableOperations,
+        hotelReceivableOperationsPage,
         hotelDisputeOperations,
         hotelGroupWorkspace,
         hotelLoyaltyAccount,
@@ -18859,12 +20780,14 @@ function extendGraphqlSchema(baseSchema) {
         hotelStayRegister: getHotelStayRegister,
         ...hotelOperationsResolvers.Query,
         redirectToInit: redirectToInit_default,
+        hotelReadiness,
         publicHotelSettings,
         bookingPaymentProviders: async (root, args, context) => (await bookingPaymentProviders_default(root, args, context)).map(mapCheckoutPaymentProvider),
         activeBookingPaymentSession: activeBookingPaymentSession_default,
         storefrontRoomTypes: async (root, args, context) => (await storefrontRoomTypes_default(root, args, context)).map(mapStorefrontRoomType),
         storefrontRoomType: async (root, args, context) => mapStorefrontRoomType(await storefrontRoomType_default(root, args, context)),
         storefrontAvailability: async (root, args, context) => (await storefrontAvailability_default(root, args, context)).map(mapStorefrontRoomType),
+        storefrontStayCalendar: storefrontStayCalendar_default,
         storefrontQuote: storefrontQuote_default,
         guestBooking: async (root, args, context) => mapGuestBooking(await guestBooking_default(root, args, context)),
         guestBookings: async (root, args, context) => (await guestBookings_default(root, args, context)).map(mapGuestBooking),
@@ -18873,6 +20796,7 @@ function extendGraphqlSchema(baseSchema) {
       Mutation: {
         ...hotelGuestGovernanceResolvers.Mutation,
         ...hotelMfaResolvers.Mutation,
+        ...guestAccountResolvers.Mutation,
         ...maintenanceCommercialResolvers.Mutation,
         ...hotelDerivedRateResolvers.Mutation,
         updateHotelRelocation,
@@ -18897,7 +20821,6 @@ function extendGraphqlSchema(baseSchema) {
         createHotelGroupBlock,
         pickupHotelGroupBlock,
         updateHotelGroupBlockStatus,
-        replayHotelOutboxEvent,
         replayRefundIntent,
         resolveOverdueCheckedInBooking,
         verifyGuestBooking: async (root, args, context) => mapGuestBooking(await verifyGuestBooking_default(root, args, context)),
@@ -18935,6 +20858,7 @@ function extendGraphqlSchema(baseSchema) {
         updateRoomOperationalStatus,
         updateHotelHousekeepingStaffCapability,
         updateHousekeepingTaskStatus,
+        scheduleHousekeepingTask,
         updateRatePlanPublication,
         reportRoomMaintenanceIssue,
         assignRoomToBooking,
@@ -18942,554 +20866,112 @@ function extendGraphqlSchema(baseSchema) {
         updateMaintenanceRequestStatus,
         updateRoomInventoryControls,
         requestBookingModification: async (root, args, context) => {
-          const booking = await requestBookingModification(root, args, context);
+          const { booking, request } = await requestBookingModification(root, args, context);
           return {
             id: booking.id,
             status: booking.status || null,
-            paymentStatus: null,
-            cancelledAt: null
+            paymentStatus: booking.paymentStatus || null,
+            balanceDueMinor: Number(booking.balanceDueMinor || 0),
+            cancelledAt: null,
+            changeRequest: mapGuestChangeRequest(request)
           };
         },
         resolveBookingModificationRequest,
-        initiateBookingPaymentSession: async (root, args, context) => mapCheckoutPaymentSession(await initiateBookingPaymentSession_default(root, args, context)),
+        initiateBookingPaymentSession: async (root, args, context) => mapCheckoutPaymentSession(await initiateBookingPaymentSession_default(root, args, context), context),
         completeBookingPayment: completeBookingPayment_default
       }
     }
   });
-}
-
-// features/keystone/lib/mail.ts
-var import_nodemailer = require("nodemailer");
-function hotelMailInfrastructureConfigured() {
-  return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASSWORD && process.env.SMTP_FROM);
-}
-function getBaseUrlForEmails() {
-  const configured = process.env.PASSWORD_RESET_ORIGIN || process.env.NEXT_PUBLIC_SITE_URL;
-  if (configured) return configured.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production") throw new Error("Email origin is not configured.");
-  return "http://localhost:3001";
-}
-function mailFrom() {
-  if (process.env.SMTP_FROM) return process.env.SMTP_FROM;
-  if (process.env.NODE_ENV === "production") throw new Error("Email sender is not configured.");
-  return "stay@thealderhouse.example";
-}
-function getTransport() {
-  if (!hotelMailInfrastructureConfigured()) throw new Error("Email delivery infrastructure is unconfigured.");
-  const host = process.env.SMTP_HOST || (process.env.NODE_ENV === "production" ? "" : "smtp.ethereal.email");
-  if (!host) throw new Error("SMTP is not configured.");
-  return (0, import_nodemailer.createTransport)({
-    host,
-    port: Number(process.env.SMTP_PORT || 587),
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD }
-  });
-}
-function passwordResetEmail({ url }) {
-  const backgroundColor = "#f9f9f9";
-  const textColor = "#444444";
-  const mainBackgroundColor = "#ffffff";
-  const buttonBackgroundColor = "#346df1";
-  const buttonBorderColor = "#346df1";
-  const buttonTextColor = "#ffffff";
-  return `
-    <body style="background: ${backgroundColor};">
-      <table width="100%" border="0" cellspacing="20" cellpadding="0" style="background: ${mainBackgroundColor}; max-width: 600px; margin: auto; border-radius: 10px;">
-        <tr>
-          <td align="center" style="padding: 10px 0px 0px 0px; font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
-            Please click below to reset your password
-          </td>
-        </tr>
-        <tr>
-          <td align="center" style="padding: 20px 0;">
-            <table border="0" cellspacing="0" cellpadding="0">
-              <tr>
-                <td align="center" style="border-radius: 5px;" bgcolor="${buttonBackgroundColor}"><a href="${url}" target="_blank" style="font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${buttonTextColor}; text-decoration: none; border-radius: 5px; padding: 10px 20px; border: 1px solid ${buttonBorderColor}; display: inline-block; font-weight: bold;">Reset Password</a></td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-        <tr>
-          <td align="center" style="padding: 0px 0px 10px 0px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${textColor};">
-            If you did not request this email you can safely ignore it.
-          </td>
-        </tr>
-      </table>
-    </body>
-  `;
-}
-async function sendPasswordResetEmail(resetToken, to, baseUrl) {
-  const frontendUrl = baseUrl || getBaseUrlForEmails();
-  const info = await getTransport().sendMail({
-    to,
-    from: mailFrom(),
-    subject: "Your password reset token!",
-    html: passwordResetEmail({
-      url: `${frontendUrl}/dashboard/reset?token=${resetToken}`
-    })
-  });
-  if (process.env.SMTP_USER?.includes("ethereal.email")) {
-    console.log(`\u{1F4E7} Message Sent!  Preview it at ${(0, import_nodemailer.getTestMessageUrl)(info)}`);
-  }
-}
-function escapeHtml(value) {
-  return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
-}
-function emailHeader(value) {
-  return String(value ?? "").replace(/[\r\n]+/g, " ").trim();
-}
-function communicationMoney(amountMinor, currencyCode = "USD") {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currencyCode
-  }).format(Number(amountMinor || 0) / 100);
-}
-function communicationDate(value) {
-  if (!value) return "";
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC"
-  }).format(new Date(value));
-}
-function hotelCommunicationEmail(payload) {
-  const recipient = payload.to;
-  if (!recipient) throw new Error("Hotel communication recipient is required.");
-  const property = escapeHtml(payload.propertyName);
-  if (payload.kind === "contact_received") {
-    return {
-      subject: `[Website] ${emailHeader(payload.contactSubject)}`,
-      html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${property} website message</h1><p><strong>From:</strong> ${escapeHtml(payload.guestName)} &lt;${escapeHtml(payload.replyTo)}&gt;</p><p><strong>Phone:</strong> ${escapeHtml(payload.contactPhone || "Not provided")}</p><p><strong>Subject:</strong> ${escapeHtml(payload.contactSubject)}</p><p style="white-space:pre-wrap">${escapeHtml(payload.contactMessage)}</p></body>`
-    };
-  }
-  const confirmationNumber2 = payload.confirmationNumber;
-  if (!confirmationNumber2) throw new Error("Booking communication confirmation number is required.");
-  const title = payload.kind === "booking_prearrival" ? "Your upcoming stay" : payload.kind === "booking_confirmation" ? "Reservation confirmed" : payload.kind === "booking_updated" ? "Reservation updated" : payload.kind === "booking_modification_response" ? `Change request ${payload.modificationDecision || "reviewed"}` : payload.kind === "booking_no_show" ? "Reservation marked no-show" : payload.kind === "booking_refund" ? "Reservation refund recorded" : "Reservation cancelled";
-  const total = communicationMoney(payload.totalAmountMinor, payload.currencyCode);
-  const cancellation = payload.kind === "booking_cancelled" || payload.kind === "booking_no_show" ? `<h2>Policy settlement</h2><p>${escapeHtml(payload.cancellationSummary || "The booked terms were applied.")}</p><p><strong>Refund:</strong> ${escapeHtml(communicationMoney(payload.refundableMinor, payload.currencyCode))}<br/><strong>Policy fee:</strong> ${escapeHtml(communicationMoney(payload.cancellationFeeMinor, payload.currencyCode))}</p>` : payload.kind === "booking_refund" ? `<h2>Refund</h2><p>${escapeHtml(payload.cancellationSummary || "A refund was recorded by the property.")}</p><p><strong>Amount:</strong> ${escapeHtml(communicationMoney(payload.refundableMinor, payload.currencyCode))}</p>` : payload.kind === "booking_modification_response" ? `<p><strong>Decision:</strong> ${escapeHtml(payload.modificationDecision || "reviewed")}</p>${payload.staffNote ? `<p><strong>Property note:</strong> ${escapeHtml(payload.staffNote)}</p>` : ""}` : `<p><strong>Total:</strong> ${escapeHtml(total)}</p>`;
-  const lookupUrl = `${getBaseUrlForEmails()}/bookings/lookup?confirmation=${encodeURIComponent(confirmationNumber2)}&email=${encodeURIComponent(recipient)}`;
-  return {
-    subject: `${emailHeader(title)} \xB7 ${emailHeader(payload.confirmationNumber)} \xB7 ${emailHeader(payload.propertyName)}`,
-    html: `<body style="font-family:Arial,sans-serif;color:#222"><h1>${escapeHtml(title)}</h1><p>Hello ${escapeHtml(payload.guestName)},</p><p>${payload.kind === "booking_prearrival" ? `We look forward to welcoming you to ${property}. Review your arrival details below.` : payload.kind === "booking_modification_response" ? `Your change request with ${property} has been reviewed.` : `Your reservation with ${property} has been ${payload.kind === "booking_confirmation" ? "confirmed" : payload.kind === "booking_updated" ? "updated" : payload.kind === "booking_no_show" ? "marked as a no-show under the booked terms" : payload.kind === "booking_refund" ? "updated with a refund" : "cancelled"}.`}</p><p><strong>Confirmation:</strong> ${escapeHtml(payload.confirmationNumber)}<br/><strong>Room:</strong> ${escapeHtml(payload.roomTypeName)}<br/><strong>Arrival:</strong> ${escapeHtml(communicationDate(payload.checkInDate))}<br/><strong>Departure:</strong> ${escapeHtml(communicationDate(payload.checkOutDate))}<br/><strong>Guests:</strong> ${escapeHtml(payload.numberOfGuests)}</p>${cancellation}<p><a href="${escapeHtml(lookupUrl)}">Open the secure reservation lookup</a> using your confirmation number and email.</p><p>Questions? Contact <a href="mailto:${escapeHtml(payload.contactEmail)}">${escapeHtml(payload.contactEmail)}</a>.</p></body>`
-  };
-}
-async function sendHotelCommunicationEmail(payload) {
-  const message = hotelCommunicationEmail(payload);
-  const info = await getTransport().sendMail({
-    to: payload.to,
-    from: mailFrom(),
-    replyTo: payload.replyTo || void 0,
-    subject: message.subject,
-    html: message.html
-  });
-  const accepted = (info.accepted || []).map((recipient) => String(typeof recipient === "string" ? recipient : recipient.address).toLowerCase());
-  if (!accepted.includes(payload.to.toLowerCase()) || (info.rejected || []).length) throw new Error("SMTP did not accept the intended recipient. Delivery requires operator review.");
-  return { messageId: info.messageId, accepted: info.accepted, rejected: info.rejected, transportStatus: "accepted_by_smtp", inboxDeliveryVerified: false };
+  return applyHotelAuthGraphqlPolicy(schema);
 }
 
 // features/keystone/index.ts
 init_access();
 
-// features/keystone/jobs/channelSyncJobs.ts
-var import_context = require("@keystone-6/core/context");
-var PrismaModule = __toESM(require("@prisma/client"));
-
-// features/keystone/lib/workerLease.ts
-var import_client9 = require("@prisma/client");
-async function acquireWorkerLease(prisma, options) {
-  const now = /* @__PURE__ */ new Date();
-  const expiresAt = new Date(now.getTime() + options.ttlMs);
-  const rows = await prisma.$queryRaw(import_client9.Prisma.sql`
-    INSERT INTO "HotelWorkerLease" ("id", "leaseKey", "ownerId", "expiresAt", "heartbeatAt")
-    VALUES (${`lease_${options.leaseKey}`}, ${options.leaseKey}, ${options.ownerId}, ${expiresAt}, ${now})
-    ON CONFLICT ("leaseKey") DO UPDATE SET
-      "ownerId" = EXCLUDED."ownerId", "expiresAt" = EXCLUDED."expiresAt", "heartbeatAt" = EXCLUDED."heartbeatAt"
-    WHERE "HotelWorkerLease"."expiresAt" <= ${now} OR "HotelWorkerLease"."ownerId" = ${options.ownerId}
-    RETURNING "ownerId"
-  `);
-  return rows[0]?.ownerId === options.ownerId;
-}
-
-// features/keystone/jobs/channelSyncJobs.ts
-var INVENTORY_SYNC_INTERVAL_MS = 15 * 60 * 1e3;
-var RESERVATION_SYNC_INTERVAL_MS = 5 * 60 * 1e3;
-var RETRY_INTERVAL_MS = 2 * 60 * 1e3;
-function startChannelSyncJobs(config2) {
-  if (process.env.NODE_ENV === "test") {
-    return;
-  }
-  if (globalThis.__channelSyncJobsState) return;
-  const context = (0, import_context.getContext)(config2, PrismaModule);
-  const ownerId = process.env.CHANNEL_SYNC_WORKER_ID || `hotel-channel-${process.pid}`;
-  let stopping = false;
-  const leased = async (leaseKey, ttlMs, job) => {
-    if (stopping || !await acquireWorkerLease(context.prisma, { leaseKey, ownerId, ttlMs })) return;
-    await job();
-  };
-  const syncInventory = async () => {
-    const channels = await context.sudo().query.Channel.findMany({
-      where: { isActive: { equals: true } },
-      query: "id name"
-    });
-    for (const channel of channels) {
-      try {
-        await pushInventoryToChannel(context, channel.id);
-      } catch (error) {
-        console.error("Inventory sync failed for channel:", channel.id, error);
-      }
-    }
-  };
-  const syncReservations = async () => {
-    const channels = await context.sudo().query.Channel.findMany({
-      where: { isActive: { equals: true } },
-      query: "id name"
-    });
-    for (const channel of channels) {
-      try {
-        await pullReservationsFromChannel(context, channel.id);
-      } catch (error) {
-        console.error("Reservation pull failed for channel:", channel.id, error);
-      }
-    }
-  };
-  const retryFailed = async () => {
-    try {
-      await retryFailedChannelSyncs(context);
-    } catch (error) {
-      console.error("Channel sync retry failed:", error);
-    }
-  };
-  const inventory = () => leased("channel-inventory", INVENTORY_SYNC_INTERVAL_MS * 2, syncInventory);
-  const reservations = () => leased("channel-reservations", RESERVATION_SYNC_INTERVAL_MS * 2, syncReservations);
-  const retries = () => leased("channel-retries", RETRY_INTERVAL_MS * 2, retryFailed);
-  const intervals = [
-    setInterval(() => void inventory(), INVENTORY_SYNC_INTERVAL_MS),
-    setInterval(() => void reservations(), RESERVATION_SYNC_INTERVAL_MS),
-    setInterval(() => void retries(), RETRY_INTERVAL_MS)
-  ];
-  intervals.forEach((interval) => interval.unref());
-  const shutdown = () => {
-    stopping = true;
-    intervals.forEach(clearInterval);
-  };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
-  globalThis.__channelSyncJobsState = { intervals, shutdown };
-  void inventory();
-  void reservations();
-  void retries();
-}
-
-// features/keystone/lib/hotelScheduledCommunications.ts
-init_hotelCommunications();
-init_hotelBusinessTime();
-init_serializableTransaction();
-async function queueHotelPrearrivalCommunications(context, now = /* @__PURE__ */ new Date()) {
-  const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 } });
-  if (settings?.prearrivalEmailEnabled !== true) return { queued: 0, failures: 0 };
-  const days = Number(settings.prearrivalDays);
-  if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error("Pre-arrival lead time must be 1\u201314 days.");
-  const today = propertyCalendarDate(now, settings.timeZone || "UTC");
-  const target = new Date(today.getTime() + days * 864e5);
-  const bookings = await context.prisma.booking.findMany({ where: { status: "confirmed", checkInDate: { gt: today, lte: target } }, select: { id: true } });
-  let queued = 0;
-  let failures = 0;
-  for (const candidate of bookings) {
-    try {
-      const created = await runSerializableTransaction(context, async (tx) => {
-        await tx.prisma.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", `hotel-booking:${candidate.id}`);
-        const booking = await tx.prisma.booking.findUnique({ where: { id: candidate.id } });
-        if (!booking || booking.status !== "confirmed" || booking.checkInDate <= today || booking.checkInDate > target) return;
-        const eventKey = `${booking.id}:${booking.checkInDate.toISOString().slice(0, 10)}`;
-        const existing = await tx.prisma.hotelOutboxEvent.findUnique({ where: { eventKey: `hotel-communication:booking_prearrival:${eventKey}` } });
-        if (existing) return;
-        await queueBookingCommunication(tx.prisma, { bookingId: booking.id, kind: "booking_prearrival", eventKey });
-        return true;
-      });
-      if (created) queued += 1;
-    } catch {
-      failures += 1;
-    }
-  }
-  return { queued, failures };
-}
-async function prearrivalStillEligible(prisma, payload, now = /* @__PURE__ */ new Date()) {
-  const [booking, settings] = await Promise.all([prisma.booking.findUnique({ where: { id: payload.bookingId } }), prisma.hotelSettings.findUnique({ where: { id: 1 } })]);
-  return Boolean(settings?.prearrivalEmailEnabled && booking?.status === "confirmed" && booking.checkInDate.toISOString() === payload.checkInDate && booking.checkInDate > propertyCalendarDate(now, settings.timeZone || "UTC") && booking.guestEmail.trim().toLowerCase() === payload.to);
-}
-
-// features/keystone/jobs/hotelOutboxJobs.ts
-var import_context2 = require("@keystone-6/core/context");
-var PrismaModule2 = __toESM(require("@prisma/client"));
-init_integrationConfig();
-
-// features/keystone/lib/workerProgress.ts
-async function recordWorkerProgress(prisma, worker) {
-  const now = /* @__PURE__ */ new Date();
-  const data = { ownerId: `process:${process.pid}`, heartbeatAt: now, expiresAt: new Date(now.getTime() + 18e4) };
-  await prisma.hotelWorkerLease.upsert({ where: { leaseKey: `progress:${worker}` }, create: { leaseKey: `progress:${worker}`, ...data }, update: data });
-}
-
-// features/keystone/jobs/hotelOutboxJobs.ts
-init_hotelCommunications();
-var DEFAULT_INTERVAL_MS = 5e3;
-function startHotelOutboxJobs(config2) {
-  if (process.env.NODE_ENV === "test") return;
-  const dispatchConfig = getOutboxDispatchConfig();
-  const smtpInfrastructureConfigured = hotelMailInfrastructureConfigured();
-  if (!dispatchConfig.enabled && !smtpInfrastructureConfigured) return;
-  if (globalThis.__hotelOutboxJobsState) return;
-  let httpHandler = null;
-  if (dispatchConfig.enabled) {
-    const { url, secret, credentialKeyId } = dispatchConfig;
-    if (!url || !secret || !credentialKeyId) throw new Error("Enabled hotel outbox dispatch configuration is incomplete.");
-    httpHandler = createHttpOutboxHandler({ url, secret, credentialKeyId });
-  }
-  ;
-  globalThis.__hotelOutboxJobsState = { starting: true };
-  const context = (0, import_context2.getContext)(config2, PrismaModule2);
-  const workerId = process.env.HOTEL_OUTBOX_WORKER_ID || `hotel-${process.pid}`;
-  const intervalMs = Number(process.env.HOTEL_OUTBOX_INTERVAL_MS || DEFAULT_INTERVAL_MS);
-  const topics = httpHandler ? void 0 : HOTEL_COMMUNICATION_TOPICS;
-  const handler = async (event) => {
-    if (event.topic === "hotel.communication.booking_prearrival" && !await prearrivalStillEligible(context.prisma, event.payloadSnapshot)) return { suppressed: true, reason: "Reservation changed, arrival passed or scheduled emails disabled." };
-    if (isHotelCommunicationTopic(event.topic) && smtpInfrastructureConfigured) {
-      const settings = await context.prisma.hotelSettings.findUnique({ where: { id: 1 }, select: { contactEmail: true } });
-      if (!settings?.contactEmail) throw new Error("Property communication settings are unconfigured.");
-      return {
-        channel: "smtp",
-        ...await sendHotelCommunicationEmail(event.payloadSnapshot)
-      };
-    }
-    if (httpHandler) return httpHandler(event);
-    throw new Error("No delivery adapter is configured for this outbox topic.");
-  };
-  const dispatch = async () => {
-    try {
-      const scheduled = await queueHotelPrearrivalCommunications(context);
-      if (scheduled.failures) console.error("Scheduled communication records failed:", scheduled.failures);
-      await dispatchHotelOutboxBatch(
-        context.prisma,
-        { propertyKey: "the-alder-house", workerId, limit: 25, topics },
-        handler
-      );
-      if (!scheduled.failures) await recordWorkerProgress(context.prisma, "outbox");
-    } catch (error) {
-      console.error("Hotel outbox dispatch cycle failed:", error instanceof Error ? error.message : error);
-    }
-  };
-  let stopping = false;
-  let running = false;
-  const guardedDispatch = async () => {
-    if (stopping || running) return;
-    running = true;
-    try {
-      await dispatch();
-    } finally {
-      running = false;
-    }
-  };
-  const interval = setInterval(() => void guardedDispatch(), Number.isFinite(intervalMs) ? Math.max(1e3, intervalMs) : DEFAULT_INTERVAL_MS);
-  interval.unref();
-  const shutdown = () => {
-    stopping = true;
-    clearInterval(interval);
-  };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
-  ;
-  globalThis.__hotelOutboxJobsState = { interval, shutdown };
-  void guardedDispatch();
-}
-
-// features/keystone/jobs/hotelRefundJobs.ts
-var import_context3 = require("@keystone-6/core/context");
-var PrismaModule3 = __toESM(require("@prisma/client"));
-init_bookingCancellation();
-var GLOBAL_KEY = "__hotelRefundJobsState";
-async function runHotelRefundWorkerCycle(context, workerId) {
-  const securityFailures = await reconcileSecurityAuthorizations(context);
-  const retirements = await dispatchPaymentSessionRetirements(context);
-  const result = await dispatchRefundIntentBatch(context, { workerId, limit: 10 });
-  if (!securityFailures && !retirements.unresolved && !result.retried && !result.deadLettered) {
-    await recordWorkerProgress(context.prisma, "refunds");
-  }
-}
-function startHotelRefundJobs(config2) {
-  if (process.env.NODE_ENV === "test") return;
-  const globalState = globalThis;
-  if (globalState[GLOBAL_KEY]) return;
-  const context = (0, import_context3.getContext)(config2, PrismaModule3);
-  const workerId = process.env.HOTEL_REFUND_WORKER_ID || `hotel-refund-${process.pid}`;
-  const intervalMs = Math.max(1e3, Number(process.env.HOTEL_REFUND_INTERVAL_MS || 5e3));
-  let stopping = false;
-  let running = false;
-  const dispatch = async () => {
-    if (stopping || running) return;
-    running = true;
-    try {
-      await runHotelRefundWorkerCycle(context, workerId);
-    } catch (error) {
-      console.error("Hotel refund dispatch failed:", error instanceof Error ? error.message : "unknown error");
-    } finally {
-      running = false;
-    }
-  };
-  const interval = setInterval(() => void dispatch(), intervalMs);
-  interval.unref();
-  const shutdown = () => {
-    stopping = true;
-    clearInterval(interval);
-  };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
-  globalState[GLOBAL_KEY] = { interval, shutdown };
-  void dispatch();
-}
-
-// features/keystone/jobs/hotelHoldJobs.ts
-init_hotelGroupLifecycle();
-var import_context4 = require("@keystone-6/core/context");
-var PrismaModule4 = __toESM(require("@prisma/client"));
-
-// features/keystone/lib/expireHotelHolds.ts
-init_bookingCancellation();
-async function expireHotelHoldBatch(context, now = /* @__PURE__ */ new Date(), renewLease) {
-  const failures = [];
-  let processed = 0;
-  let cursor;
-  let leaseLost = false;
-  for (; ; ) {
-    if (renewLease && !await renewLease()) {
-      leaseLost = true;
-      break;
-    }
-    const rows = await context.prisma.booking.findMany({ where: { status: "pending", holdExpiresAt: { lte: now }, ...cursor ? { id: { gt: cursor } } : {} }, orderBy: { id: "asc" }, take: 50, select: { id: true } });
-    if (!rows.length) break;
-    for (const row of rows) {
-      try {
-        await requestBookingCancellation({ context, bookingId: row.id, refundReason: "Unconfirmed reservation hold expired", idempotencyKey: `hold-expired:${row.id}`, actorId: null, source: "hold_expiry" });
-        processed += 1;
-      } catch {
-        failures.push(row.id);
-      }
-    }
-    cursor = rows[rows.length - 1].id;
-    if (rows.length < 50) break;
-  }
-  return { processed, failures, leaseLost };
-}
-
-// features/keystone/jobs/hotelHoldJobs.ts
-async function runHotelHoldWorkerCycle(context, ownerId, lease = acquireWorkerLease) {
-  if (!await lease(context.prisma, { leaseKey: "booking-hold-expiry", ownerId, ttlMs: 12e4 })) return;
-  const result = await expireHotelHoldBatch(
-    context,
-    /* @__PURE__ */ new Date(),
-    () => lease(context.prisma, { leaseKey: "booking-hold-expiry", ownerId, ttlMs: 12e4 })
-  );
-  await releaseDueHotelGroupBlocks(context);
-  if (result.failures.length) console.error("Hotel hold expiry records failed:", result.failures.length);
-  else if (!result.leaseLost) await recordWorkerProgress(context.prisma, "holds");
-}
-function startHotelHoldJobs(config2) {
-  if (process.env.NODE_ENV === "test") return;
-  const globalState = globalThis;
-  if (globalState.__hotelHoldJobsState) return;
-  const context = (0, import_context4.getContext)(config2, PrismaModule4);
-  const ownerId = `hotel-hold-${process.pid}`;
-  let stopping = false;
-  let running = false;
-  const run = async () => {
-    if (running) return;
-    running = true;
-    try {
-      if (stopping) return;
-      await runHotelHoldWorkerCycle(context, ownerId);
-    } catch (error) {
-      console.error("Hotel hold expiry cycle failed:", error instanceof Error ? error.message : "unknown error");
-    } finally {
-      running = false;
-    }
-  };
-  const interval = setInterval(() => void run(), 6e4);
-  interval.unref();
-  const shutdown = () => {
-    stopping = true;
-    clearInterval(interval);
-  };
-  process.once("SIGTERM", shutdown);
-  process.once("SIGINT", shutdown);
-  globalState.__hotelHoldJobsState = { interval, shutdown };
-  void run();
-}
-
-// features/keystone/lib/productionConfig.ts
-var PLACEHOLDER2 = /(^|[-_.])(test|dummy|placeholder|changeme|your[_-]|example)([-_.]|$)|keystone|ethereal|localhost|127\.0\.0\.1/i;
-function required2(env, key4) {
-  const value = String(env[key4] || "").trim();
-  if (!value) throw new Error(`${key4} is required in production.`);
-  return value;
-}
-function strongDomainSecret(env, key4) {
-  const value = required2(env, key4);
-  if (value.length < 32) throw new Error(`${key4} must contain at least 32 characters.`);
-  if (PLACEHOLDER2.test(value)) throw new Error(`${key4} contains a development or placeholder value.`);
-  return value;
-}
-function databaseUrl(env) {
-  const value = required2(env, "DATABASE_URL");
-  let url;
+// features/keystone/database-url.ts
+var POOL_SIZES = { web: 15, worker: 5 };
+var OVERRIDE_ENV = {
+  web: "DATABASE_CONNECTION_LIMIT",
+  worker: "DATABASE_CONNECTION_LIMIT_WORKER"
+};
+function pooledDatabaseUrl(url, role = "web") {
+  if (!url || !/^postgres(ql)?:\/\//.test(url)) return url;
+  let parsed;
   try {
-    url = new URL(value);
+    parsed = new URL(url);
   } catch {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
+    return url;
   }
-  if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.pathname.slice(1)) {
-    throw new Error("DATABASE_URL must be a valid PostgreSQL URL.");
-  }
-  return value;
+  if (parsed.searchParams.has("connection_limit")) return url;
+  const override = Number(process.env[OVERRIDE_ENV[role]]);
+  parsed.searchParams.set("connection_limit", String(Number.isInteger(override) && override > 0 ? override : POOL_SIZES[role]));
+  return parsed.toString();
 }
-function httpsOrigin(env, key4) {
-  const value = required2(env, key4);
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`${key4} must be a valid URL.`);
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/" || url.hostname.endsWith(".local")) {
-    throw new Error(`${key4} must be a canonical HTTPS origin without credentials, path, query, or fragment.`);
-  }
-  return url.origin;
+
+// features/keystone/lib/keystonePrismaErrors.ts
+var RAW_METHOD = /^\$(queryRaw|executeRaw|queryRawUnsafe|executeRawUnsafe|queryRawTyped|runCommandRaw)$/;
+var clients = /* @__PURE__ */ new WeakMap();
+var delegates = /* @__PURE__ */ new WeakMap();
+function isKeystonePrismaError(value) {
+  return value instanceof Error && value.extensions?.code === "KS_PRISMA_ERROR";
 }
-function complete2(values) {
-  return values.every((value) => Boolean(String(value || "").trim()));
+function rethrowKeystonePrismaError(value) {
+  if (!isKeystonePrismaError(value)) return value;
+  const prisma = value.extensions.prisma ?? {};
+  throw Object.assign(value, { code: prisma.code, meta: prisma.meta, clientVersion: prisma.clientVersion });
 }
-function validateProductionConfig(env = process.env) {
-  const capabilities2 = {
-    mailInfrastructureConfigured: complete2([env.SMTP_HOST, env.SMTP_PORT, env.SMTP_USER, env.SMTP_PASSWORD, env.SMTP_FROM]),
-    storageInfrastructureConfigured: complete2([env.S3_BUCKET_NAME, env.S3_REGION, env.S3_ACCESS_KEY_ID, env.S3_SECRET_ACCESS_KEY, env.S3_ENDPOINT])
-  };
-  if (env.NODE_ENV !== "production") return capabilities2;
-  databaseUrl(env);
-  strongDomainSecret(env, "SESSION_SECRET");
-  strongDomainSecret(env, "HOTEL_DATA_ENCRYPTION_KEY");
-  strongDomainSecret(env, "HOTEL_QUOTE_SECRET");
-  const site = httpsOrigin(env, "NEXT_PUBLIC_SITE_URL");
-  const auth = httpsOrigin(env, "NEXTAUTH_URL");
-  if (site !== auth) throw new Error("NEXT_PUBLIC_SITE_URL and NEXTAUTH_URL must use the same canonical origin.");
-  const trustProxy = String(env.TRUST_PROXY || "off").toLowerCase();
-  if (!["off", "railway"].includes(trustProxy)) throw new Error("TRUST_PROXY must be off or railway.");
-  if (trustProxy === "railway" && !env.RAILWAY_ENVIRONMENT) throw new Error("TRUST_PROXY=railway requires RAILWAY_ENVIRONMENT.");
-  return capabilities2;
+function throwing(result) {
+  if (!result || typeof result.then !== "function") return rethrowKeystonePrismaError(result);
+  const settled = () => result.then(rethrowKeystonePrismaError);
+  return new Proxy(result, {
+    get(target, key4) {
+      if (key4 === "then") return (ok, fail) => settled().then(ok, fail);
+      if (key4 === "catch") return (fail) => settled().catch(fail);
+      if (key4 === "finally") return (done) => settled().finally(done);
+      const value = Reflect.get(target, key4, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  });
+}
+function throwingDelegate(delegate) {
+  const cached = delegates.get(delegate);
+  if (cached) return cached;
+  const wrapped = new Proxy(delegate, {
+    get(target, key4) {
+      const value = Reflect.get(target, key4, target);
+      return typeof value === "function" ? (...args) => throwing(value.apply(target, args)) : value;
+    }
+  });
+  delegates.set(delegate, wrapped);
+  return wrapped;
+}
+function throwKeystonePrismaErrors(client) {
+  const cached = clients.get(client);
+  if (cached) return cached;
+  const wrapped = new Proxy(client, {
+    get(target, key4) {
+      const value = Reflect.get(target, key4, target);
+      if (key4 === "$transaction" && typeof value === "function") {
+        return (work, ...options) => {
+          if (typeof work === "function") return value.call(target, (tx) => work(throwKeystonePrismaErrors(tx)), ...options);
+          return Promise.resolve(value.call(target, work, ...options)).then((results) => Array.isArray(results) ? results.map(rethrowKeystonePrismaError) : results);
+        };
+      }
+      if (key4 === "$extends" && typeof value === "function") return (...args) => throwKeystonePrismaErrors(value.apply(target, args));
+      if (typeof key4 === "string" && RAW_METHOD.test(key4) && typeof value === "function") return (...args) => throwing(value.apply(target, args));
+      if (typeof value === "function") return value.bind(target);
+      if (typeof key4 === "string" && !key4.startsWith("$") && value && typeof value === "object" && typeof value.findFirst === "function") return throwingDelegate(value);
+      return value;
+    }
+  });
+  clients.set(client, wrapped);
+  return wrapped;
 }
 
 // features/keystone/index.ts
 var isProduction = process.env.NODE_ENV === "production";
 var capabilities = validateProductionConfig();
-var databaseURL = process.env.DATABASE_URL || (isProduction ? "" : "postgresql://postgres:postgres@127.0.0.1:5432/runtime_hotel");
+var databaseURL = process.env.DATABASE_URL || (isProduction ? "" : "postgresql://postgres:postgres@localhost/runtime_hotel");
 var sessionSecret = process.env.SESSION_SECRET || (isProduction ? "" : "local-development-session-secret-change-me");
 if (!databaseURL) throw new Error("DATABASE_URL is required outside local development.");
 if (sessionSecret.length < 32) throw new Error("SESSION_SECRET must contain at least 32 characters.");
@@ -19526,10 +21008,10 @@ function revocableStatelessSessions() {
       where: { id: session.itemId },
       include: { role: true }
     });
-    if (!user?.isActive || !user.role) return void 0;
+    if (!user?.isActive) return void 0;
     if (!allowInitialIdentity && Number(user.authVersion || 0) !== Number(session.data?.authVersion || 0)) return void 0;
     const embeddedRole = session.data?.role || {};
-    if (!allowInitialIdentity && permissionKeys.some((key4) => Boolean(user.role[key4]) !== Boolean(embeddedRole[key4]))) return void 0;
+    if (!allowInitialIdentity && (Boolean(user.role) !== Boolean(session.data?.role) || permissionKeys.some((key4) => Boolean(user.role?.[key4]) !== Boolean(embeddedRole[key4])))) return void 0;
     return {
       ...session,
       data: {
@@ -19539,7 +21021,7 @@ function revocableStatelessSessions() {
         isActive: true,
         authVersion: user.authVersion,
         mfaEnabled: Boolean(user.mfaEnabled),
-        role: Object.fromEntries(["id", "name", ...permissionKeys].map((key4) => [key4, user.role[key4]]))
+        role: user.role ? Object.fromEntries(["id", "name", ...permissionKeys].map((key4) => [key4, user.role[key4]])) : null
       }
     };
   };
@@ -19585,7 +21067,8 @@ var { withAuth } = (0, import_auth.createAuth)({
       if (!settings?.contactEmail || !capabilities.mailInfrastructureConfigured) {
         throw new Error("Password reset email is currently unconfigured.");
       }
-      await sendPasswordResetEmail(args.token, args.identity);
+      const user = await args.context.prisma.user.findUnique({ where: { id: String(args.itemId) }, select: { roleId: true } });
+      await sendPasswordResetEmail(args.token, args.identity, void 0, user?.roleId ? "staff" : "guest");
     }
   },
   sessionData: `
@@ -19613,10 +21096,12 @@ var { withAuth } = (0, import_auth.createAuth)({
     }
   `
 });
-var baseConfig = (0, import_core42.config)({
+var baseConfig = (0, import_core40.config)({
   db: {
     provider: "postgresql",
-    url: databaseURL
+    url: pooledDatabaseUrl(databaseURL),
+    // Keystone returns failed queries as values; this makes them throw so transactions roll back.
+    extendPrismaClient: throwKeystonePrismaErrors
   },
   lists: models,
   storage: {
@@ -19629,7 +21114,7 @@ var baseConfig = (0, import_core42.config)({
       secretAccessKey,
       endpoint,
       signed: { expiry: 5e3 },
-      forcePathStyle: true
+      forcePathStyle: s3ForcePathStyle(endpoint)
     } : {
       kind: "local",
       type: "image",
@@ -19649,13 +21134,6 @@ var baseConfig = (0, import_core42.config)({
   }
 });
 var configWithAuth = withAuth(baseConfig);
-var isRuntimeServer = process.env.NEXT_PHASE !== "phase-production-build" && process.argv.some((argument) => argument === "dev" || argument === "start");
-if (isRuntimeServer) {
-  startChannelSyncJobs(configWithAuth);
-  startHotelOutboxJobs(configWithAuth);
-  startHotelRefundJobs(configWithAuth);
-  startHotelHoldJobs(configWithAuth);
-}
 var keystone_default = configWithAuth;
 
 // keystone.ts

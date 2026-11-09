@@ -76,7 +76,7 @@ Room types, physical rooms, nightly inventory, rate plans, and seasonal rates ar
 Folios record charges, payments, and reversals. Staff workflows include payment recording, refund requests, cashier operations, receivables, and night audit. Stripe and PayPal adapters are included; enabled state and encrypted credentials are configured in dashboard payment-provider records.
 
 ### Housekeeping & Property Operations
-Track cleaning tasks, room operational status, and maintenance requests. Business dates, night-audit runs, daily metrics, audit events, and an outbox support property operations. Channel records and configured HTTP exchange are available; they are not native Booking.com or Expedia adapters.
+Track cleaning tasks, room operational status, and maintenance requests. Business dates, night-audit runs, daily metrics, and audit events support property operations. Channel records and configured HTTP exchange are available; they are not native Booking.com or Expedia adapters.
 
 ## Architecture
 
@@ -112,7 +112,7 @@ The [Keystone model registry](features/keystone/models/index.ts) and [Prisma sch
 - Payment providers, sessions, payments, events, and refund intents.
 - Folios, folio entries, business dates, and night-audit runs.
 - Housekeeping tasks, maintenance requests, group blocks, and allocations.
-- Channels, channel reservations, synchronization events, daily metrics, audit events, and outbox records.
+- Channels, channel reservations, synchronization events, daily metrics, and audit events.
 
 ## Getting Started
 

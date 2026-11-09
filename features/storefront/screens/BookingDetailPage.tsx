@@ -54,9 +54,6 @@ interface Booking {
   paymentStatus?: string;
   refundPendingMinor?: number;
   specialRequests?: string;
-  confirmationDeliveryStatus?: string | null;
-  updateDeliveryStatus?: string | null;
-  cancellationDeliveryStatus?: string | null;
   changeRequest?: GuestChangeRequest | null;
   roomAssignments?: Array<{
     id: string;
@@ -463,7 +460,6 @@ export default function BookingDetailPage() {
           <p className="sf-fine" style={{ marginTop: 10 }}>The property’s current guidance is shown here. For terms specific to your reservation, contact the team with reference {booking.confirmationNumber}.</p>
           <div className="sf-row sf-noprint" style={{ marginTop: 16, gap: '8px 24px' }}><Link href="/location" className="sf-link">Plan your arrival</Link><Link href="/policies" className="sf-link">Read about rates and policies</Link></div>
         </section>
-        <p className="sf-fine" style={{ borderTop: '1px solid var(--line)', paddingTop: 20 }}>Confirmation email delivery: {booking.confirmationDeliveryStatus?.replaceAll('_', ' ') || 'not recorded'}. Email delivery does not determine your reservation or payment status.</p>
       </div>
 
       <aside className="sf-reservation__aside" aria-label={`Contact ${identity.name}`}>

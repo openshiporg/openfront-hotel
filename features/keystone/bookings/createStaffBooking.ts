@@ -5,7 +5,6 @@ import { ensureBookingFolio } from '../folios/bookingFolio';
 import { createGuestAccessToken, hashGuestAccessToken } from '../lib/guestBookingAccess';
 import { ensureGuestProfile } from '../lib/guestProfiles';
 import { assertHotelAvailability, hotelStayDates } from '../inventory/roomAvailability';
-import { queueBookingCommunication } from '../communications/commands';
 import { calculateHotelPrice, hotelQuoteCommercialTermsHash, verifyHotelQuoteToken, type HotelPriceInput } from '../rates/pricing';
 import { findHotelLifecycleReplay, lockHotelLifecycle, recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
 import { lockRoomInventory } from '../inventory/roomNightLocks';
@@ -222,13 +221,6 @@ export default async function createStaffBooking(
         currencyCode: quote.currencyCode,
       },
     });
-    if (status === 'confirmed') {
-      await queueBookingCommunication(tx.prisma, {
-        bookingId: created.id,
-        kind: 'booking_confirmation',
-        eventKey: `booking:${created.id}:confirmation:v1`,
-      });
-    }
     return created.id;
   });
 

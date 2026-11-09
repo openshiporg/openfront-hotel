@@ -10,7 +10,6 @@ import {
   lockHotelLifecycle,
   recordHotelLifecycleEvent,
 } from '../lib/hotelLifecycle';
-import { queueBookingCommunication } from '../communications/commands';
 import { assertBookingConfirmationInventory, assertGuestEligible } from './confirmation';
 import { assertCheckInOnOpenBusinessDate, assertCheckoutDateReached, lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
@@ -194,13 +193,6 @@ export default async function updateBookingStatus(
       afterSnapshot: { status: updated.status, roomStatus: status === 'checked_in' ? 'occupied' : status === 'checked_out' ? 'cleaning' : null, folioId },
       metadata: { confirmationNumber: booking.confirmationNumber, guestProfileId: booking.guestProfileId, ...(earlyDeparture ? { earlyDeparture: true, bookedDeparture: booking.checkOutDate, lastNightRetained: true } : {}) },
     });
-    if (status === 'confirmed') {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: 'booking_confirmation',
-        eventKey: `booking:${bookingId}:confirmation:v${booking.pricingRevision || 1}`,
-      });
-    }
   });
 
   return context.prisma.booking.findUnique({ where: { id: bookingId } });

@@ -3237,8 +3237,6 @@ type HotelSettings {
   refundApprovalThresholdMinor: Int
   writeOffApprovalThresholdMinor: Int
   cashVarianceApprovalThresholdMinor: Int
-  prearrivalEmailEnabled: Boolean
-  prearrivalDays: Int
   loyaltyEnabled: Boolean
   loyaltyEarnMinorPerPoint: Int
   loyaltyRedeemMinorPerPoint: Int
@@ -3289,8 +3287,6 @@ input HotelSettingsWhereInput {
   refundApprovalThresholdMinor: IntFilter
   writeOffApprovalThresholdMinor: IntFilter
   cashVarianceApprovalThresholdMinor: IntFilter
-  prearrivalEmailEnabled: BooleanFilter
-  prearrivalDays: IntFilter
   loyaltyEnabled: BooleanFilter
   loyaltyEarnMinorPerPoint: IntFilter
   loyaltyRedeemMinorPerPoint: IntFilter
@@ -3334,8 +3330,6 @@ input HotelSettingsOrderByInput {
   refundApprovalThresholdMinor: OrderDirection
   writeOffApprovalThresholdMinor: OrderDirection
   cashVarianceApprovalThresholdMinor: OrderDirection
-  prearrivalEmailEnabled: OrderDirection
-  prearrivalDays: OrderDirection
   loyaltyEnabled: OrderDirection
   loyaltyEarnMinorPerPoint: OrderDirection
   loyaltyRedeemMinorPerPoint: OrderDirection
@@ -3378,8 +3372,6 @@ input HotelSettingsUpdateInput {
   refundApprovalThresholdMinor: Int
   writeOffApprovalThresholdMinor: Int
   cashVarianceApprovalThresholdMinor: Int
-  prearrivalEmailEnabled: Boolean
-  prearrivalDays: Int
   loyaltyEnabled: Boolean
   loyaltyEarnMinorPerPoint: Int
   loyaltyRedeemMinorPerPoint: Int
@@ -3427,8 +3419,6 @@ input HotelSettingsCreateInput {
   refundApprovalThresholdMinor: Int
   writeOffApprovalThresholdMinor: Int
   cashVarianceApprovalThresholdMinor: Int
-  prearrivalEmailEnabled: Boolean
-  prearrivalDays: Int
   loyaltyEnabled: Boolean
   loyaltyEarnMinorPerPoint: Int
   loyaltyRedeemMinorPerPoint: Int
@@ -3866,333 +3856,77 @@ input HotelAuditEventCreateInput {
   updatedAt: DateTime
 }
 
-type HotelOutboxEvent {
+type HotelContactMessage {
   id: ID!
-  eventKey: String
-  requestHash: String
-  propertyKey: String
-  topic: String
-  aggregateType: String
-  aggregateId: String
-  payloadSnapshot: JSON
-  status: String
-  attempts: Int
-  availableAt: DateTime
-  deliveredAt: DateTime
-  lastError: String
-  leaseToken: String
-  leaseExpiresAt: DateTime
-  lastAttemptAt: DateTime
-  deadLetteredAt: DateTime
-  replayedFromEventKey: String
-  dispatchResultSnapshot: JSON
-  maxAttempts: Int
-  attemptsEvidence(where: HotelOutboxAttemptWhereInput! = {}, orderBy: [HotelOutboxAttemptOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelOutboxAttemptWhereUniqueInput): [HotelOutboxAttempt!]
-  attemptsEvidenceCount(where: HotelOutboxAttemptWhereInput! = {}): Int
-  createdAt: DateTime
-  updatedAt: DateTime
-}
-
-input HotelOutboxEventWhereUniqueInput {
-  id: ID
-  eventKey: String
-}
-
-input HotelOutboxEventWhereInput {
-  AND: [HotelOutboxEventWhereInput!]
-  OR: [HotelOutboxEventWhereInput!]
-  NOT: [HotelOutboxEventWhereInput!]
-  id: IDFilter
-  eventKey: StringFilter
-  requestHash: StringFilter
-  propertyKey: StringFilter
-  topic: StringFilter
-  aggregateType: StringFilter
-  aggregateId: StringFilter
-  status: StringFilter
-  attempts: IntFilter
-  availableAt: DateTimeFilter
-  deliveredAt: DateTimeNullableFilter
-  lastError: StringFilter
-  leaseToken: StringFilter
-  leaseExpiresAt: DateTimeNullableFilter
-  lastAttemptAt: DateTimeNullableFilter
-  deadLetteredAt: DateTimeNullableFilter
-  replayedFromEventKey: StringFilter
-  maxAttempts: IntFilter
-  attemptsEvidence: HotelOutboxAttemptManyRelationFilter
-  createdAt: DateTimeFilter
-  updatedAt: DateTimeFilter
-}
-
-input HotelOutboxAttemptManyRelationFilter {
-  every: HotelOutboxAttemptWhereInput
-  some: HotelOutboxAttemptWhereInput
-  none: HotelOutboxAttemptWhereInput
-}
-
-input HotelOutboxEventOrderByInput {
-  id: OrderDirection
-  eventKey: OrderDirection
-  requestHash: OrderDirection
-  propertyKey: OrderDirection
-  topic: OrderDirection
-  aggregateType: OrderDirection
-  aggregateId: OrderDirection
-  status: OrderDirection
-  attempts: OrderDirection
-  availableAt: OrderDirection
-  deliveredAt: OrderDirection
-  lastError: OrderDirection
-  leaseToken: OrderDirection
-  leaseExpiresAt: OrderDirection
-  lastAttemptAt: OrderDirection
-  deadLetteredAt: OrderDirection
-  replayedFromEventKey: OrderDirection
-  maxAttempts: OrderDirection
-  createdAt: OrderDirection
-  updatedAt: OrderDirection
-}
-
-input HotelOutboxEventUpdateInput {
-  eventKey: String
-  requestHash: String
-  propertyKey: String
-  topic: String
-  aggregateType: String
-  aggregateId: String
-  payloadSnapshot: JSON
-  status: String
-  attempts: Int
-  availableAt: DateTime
-  deliveredAt: DateTime
-  lastError: String
-  leaseToken: String
-  leaseExpiresAt: DateTime
-  lastAttemptAt: DateTime
-  deadLetteredAt: DateTime
-  replayedFromEventKey: String
-  dispatchResultSnapshot: JSON
-  maxAttempts: Int
-  attemptsEvidence: HotelOutboxAttemptRelateToManyForUpdateInput
-  createdAt: DateTime
-  updatedAt: DateTime
-}
-
-input HotelOutboxAttemptRelateToManyForUpdateInput {
-  disconnect: [HotelOutboxAttemptWhereUniqueInput!]
-  set: [HotelOutboxAttemptWhereUniqueInput!]
-  create: [HotelOutboxAttemptCreateInput!]
-  connect: [HotelOutboxAttemptWhereUniqueInput!]
-}
-
-input HotelOutboxEventUpdateArgs {
-  where: HotelOutboxEventWhereUniqueInput!
-  data: HotelOutboxEventUpdateInput!
-}
-
-input HotelOutboxEventCreateInput {
-  eventKey: String
-  requestHash: String
-  propertyKey: String
-  topic: String
-  aggregateType: String
-  aggregateId: String
-  payloadSnapshot: JSON
-  status: String
-  attempts: Int
-  availableAt: DateTime
-  deliveredAt: DateTime
-  lastError: String
-  leaseToken: String
-  leaseExpiresAt: DateTime
-  lastAttemptAt: DateTime
-  deadLetteredAt: DateTime
-  replayedFromEventKey: String
-  dispatchResultSnapshot: JSON
-  maxAttempts: Int
-  attemptsEvidence: HotelOutboxAttemptRelateToManyForCreateInput
-  createdAt: DateTime
-  updatedAt: DateTime
-}
-
-input HotelOutboxAttemptRelateToManyForCreateInput {
-  create: [HotelOutboxAttemptCreateInput!]
-  connect: [HotelOutboxAttemptWhereUniqueInput!]
-}
-
-type HotelOutboxAttempt {
-  id: ID!
-  outbox: HotelOutboxEvent
-  propertyKey: String
-  attemptNumber: Int
-  workerId: String
-  status: String
-  errorMessage: String
-  responseSnapshot: JSON
-  startedAt: DateTime
-  finishedAt: DateTime
-  createdAt: DateTime
-  updatedAt: DateTime
-}
-
-input HotelOutboxAttemptWhereUniqueInput {
-  id: ID
-}
-
-input HotelOutboxAttemptWhereInput {
-  AND: [HotelOutboxAttemptWhereInput!]
-  OR: [HotelOutboxAttemptWhereInput!]
-  NOT: [HotelOutboxAttemptWhereInput!]
-  id: IDFilter
-  outbox: HotelOutboxEventWhereInput
-  propertyKey: StringFilter
-  attemptNumber: IntFilter
-  workerId: StringFilter
-  status: StringFilter
-  errorMessage: StringFilter
-  startedAt: DateTimeFilter
-  finishedAt: DateTimeNullableFilter
-  createdAt: DateTimeFilter
-  updatedAt: DateTimeFilter
-}
-
-input HotelOutboxAttemptOrderByInput {
-  id: OrderDirection
-  propertyKey: OrderDirection
-  attemptNumber: OrderDirection
-  workerId: OrderDirection
-  status: OrderDirection
-  errorMessage: OrderDirection
-  startedAt: OrderDirection
-  finishedAt: OrderDirection
-  createdAt: OrderDirection
-  updatedAt: OrderDirection
-}
-
-input HotelOutboxAttemptUpdateInput {
-  outbox: HotelOutboxEventRelateToOneForUpdateInput
-  propertyKey: String
-  attemptNumber: Int
-  workerId: String
-  status: String
-  errorMessage: String
-  responseSnapshot: JSON
-  startedAt: DateTime
-  finishedAt: DateTime
-  createdAt: DateTime
-  updatedAt: DateTime
-}
-
-input HotelOutboxEventRelateToOneForUpdateInput {
-  create: HotelOutboxEventCreateInput
-  connect: HotelOutboxEventWhereUniqueInput
-  disconnect: Boolean
-}
-
-input HotelOutboxAttemptUpdateArgs {
-  where: HotelOutboxAttemptWhereUniqueInput!
-  data: HotelOutboxAttemptUpdateInput!
-}
-
-input HotelOutboxAttemptCreateInput {
-  outbox: HotelOutboxEventRelateToOneForCreateInput
-  propertyKey: String
-  attemptNumber: Int
-  workerId: String
-  status: String
-  errorMessage: String
-  responseSnapshot: JSON
-  startedAt: DateTime
-  finishedAt: DateTime
-  createdAt: DateTime
-  updatedAt: DateTime
-}
-
-input HotelOutboxEventRelateToOneForCreateInput {
-  create: HotelOutboxEventCreateInput
-  connect: HotelOutboxEventWhereUniqueInput
-}
-
-type HotelOutboxReceipt {
-  id: ID!
-  eventKey: String
-  propertyKey: String
-  topic: String
-  aggregateType: String
-  aggregateId: String
-  credentialKeyId: String
-  bodyHash: String
-  payloadSnapshot: JSON
+  reference: String
+  guestName: String
+  replyTo: String
+  phone: String
+  subject: String
+  message: String
   receivedAt: DateTime
   createdAt: DateTime
   updatedAt: DateTime
 }
 
-input HotelOutboxReceiptWhereUniqueInput {
+input HotelContactMessageWhereUniqueInput {
   id: ID
-  eventKey: String
+  reference: String
 }
 
-input HotelOutboxReceiptWhereInput {
-  AND: [HotelOutboxReceiptWhereInput!]
-  OR: [HotelOutboxReceiptWhereInput!]
-  NOT: [HotelOutboxReceiptWhereInput!]
+input HotelContactMessageWhereInput {
+  AND: [HotelContactMessageWhereInput!]
+  OR: [HotelContactMessageWhereInput!]
+  NOT: [HotelContactMessageWhereInput!]
   id: IDFilter
-  eventKey: StringFilter
-  propertyKey: StringFilter
-  topic: StringFilter
-  aggregateType: StringFilter
-  aggregateId: StringFilter
-  credentialKeyId: StringFilter
-  bodyHash: StringFilter
+  reference: StringFilter
+  guestName: StringFilter
+  replyTo: StringFilter
+  phone: StringFilter
+  subject: StringFilter
+  message: StringFilter
   receivedAt: DateTimeFilter
   createdAt: DateTimeFilter
   updatedAt: DateTimeFilter
 }
 
-input HotelOutboxReceiptOrderByInput {
+input HotelContactMessageOrderByInput {
   id: OrderDirection
-  eventKey: OrderDirection
-  propertyKey: OrderDirection
-  topic: OrderDirection
-  aggregateType: OrderDirection
-  aggregateId: OrderDirection
-  credentialKeyId: OrderDirection
-  bodyHash: OrderDirection
+  reference: OrderDirection
+  guestName: OrderDirection
+  replyTo: OrderDirection
+  phone: OrderDirection
+  subject: OrderDirection
+  message: OrderDirection
   receivedAt: OrderDirection
   createdAt: OrderDirection
   updatedAt: OrderDirection
 }
 
-input HotelOutboxReceiptUpdateInput {
-  eventKey: String
-  propertyKey: String
-  topic: String
-  aggregateType: String
-  aggregateId: String
-  credentialKeyId: String
-  bodyHash: String
-  payloadSnapshot: JSON
+input HotelContactMessageUpdateInput {
+  reference: String
+  guestName: String
+  replyTo: String
+  phone: String
+  subject: String
+  message: String
   receivedAt: DateTime
   createdAt: DateTime
   updatedAt: DateTime
 }
 
-input HotelOutboxReceiptUpdateArgs {
-  where: HotelOutboxReceiptWhereUniqueInput!
-  data: HotelOutboxReceiptUpdateInput!
+input HotelContactMessageUpdateArgs {
+  where: HotelContactMessageWhereUniqueInput!
+  data: HotelContactMessageUpdateInput!
 }
 
-input HotelOutboxReceiptCreateInput {
-  eventKey: String
-  propertyKey: String
-  topic: String
-  aggregateType: String
-  aggregateId: String
-  credentialKeyId: String
-  bodyHash: String
-  payloadSnapshot: JSON
+input HotelContactMessageCreateInput {
+  reference: String
+  guestName: String
+  replyTo: String
+  phone: String
+  subject: String
+  message: String
   receivedAt: DateTime
   createdAt: DateTime
   updatedAt: DateTime
@@ -5146,24 +4880,12 @@ type Mutation {
   updateHotelAuditEvents(data: [HotelAuditEventUpdateArgs!]!): [HotelAuditEvent]
   deleteHotelAuditEvent(where: HotelAuditEventWhereUniqueInput!): HotelAuditEvent
   deleteHotelAuditEvents(where: [HotelAuditEventWhereUniqueInput!]!): [HotelAuditEvent]
-  createHotelOutboxEvent(data: HotelOutboxEventCreateInput!): HotelOutboxEvent
-  createHotelOutboxEvents(data: [HotelOutboxEventCreateInput!]!): [HotelOutboxEvent]
-  updateHotelOutboxEvent(where: HotelOutboxEventWhereUniqueInput!, data: HotelOutboxEventUpdateInput!): HotelOutboxEvent
-  updateHotelOutboxEvents(data: [HotelOutboxEventUpdateArgs!]!): [HotelOutboxEvent]
-  deleteHotelOutboxEvent(where: HotelOutboxEventWhereUniqueInput!): HotelOutboxEvent
-  deleteHotelOutboxEvents(where: [HotelOutboxEventWhereUniqueInput!]!): [HotelOutboxEvent]
-  createHotelOutboxAttempt(data: HotelOutboxAttemptCreateInput!): HotelOutboxAttempt
-  createHotelOutboxAttempts(data: [HotelOutboxAttemptCreateInput!]!): [HotelOutboxAttempt]
-  updateHotelOutboxAttempt(where: HotelOutboxAttemptWhereUniqueInput!, data: HotelOutboxAttemptUpdateInput!): HotelOutboxAttempt
-  updateHotelOutboxAttempts(data: [HotelOutboxAttemptUpdateArgs!]!): [HotelOutboxAttempt]
-  deleteHotelOutboxAttempt(where: HotelOutboxAttemptWhereUniqueInput!): HotelOutboxAttempt
-  deleteHotelOutboxAttempts(where: [HotelOutboxAttemptWhereUniqueInput!]!): [HotelOutboxAttempt]
-  createHotelOutboxReceipt(data: HotelOutboxReceiptCreateInput!): HotelOutboxReceipt
-  createHotelOutboxReceipts(data: [HotelOutboxReceiptCreateInput!]!): [HotelOutboxReceipt]
-  updateHotelOutboxReceipt(where: HotelOutboxReceiptWhereUniqueInput!, data: HotelOutboxReceiptUpdateInput!): HotelOutboxReceipt
-  updateHotelOutboxReceipts(data: [HotelOutboxReceiptUpdateArgs!]!): [HotelOutboxReceipt]
-  deleteHotelOutboxReceipt(where: HotelOutboxReceiptWhereUniqueInput!): HotelOutboxReceipt
-  deleteHotelOutboxReceipts(where: [HotelOutboxReceiptWhereUniqueInput!]!): [HotelOutboxReceipt]
+  createHotelContactMessage(data: HotelContactMessageCreateInput!): HotelContactMessage
+  createHotelContactMessages(data: [HotelContactMessageCreateInput!]!): [HotelContactMessage]
+  updateHotelContactMessage(where: HotelContactMessageWhereUniqueInput!, data: HotelContactMessageUpdateInput!): HotelContactMessage
+  updateHotelContactMessages(data: [HotelContactMessageUpdateArgs!]!): [HotelContactMessage]
+  deleteHotelContactMessage(where: HotelContactMessageWhereUniqueInput!): HotelContactMessage
+  deleteHotelContactMessages(where: [HotelContactMessageWhereUniqueInput!]!): [HotelContactMessage]
   createHotelBusinessDate(data: HotelBusinessDateCreateInput!): HotelBusinessDate
   createHotelBusinessDates(data: [HotelBusinessDateCreateInput!]!): [HotelBusinessDate]
   updateHotelBusinessDate(where: HotelBusinessDateWhereUniqueInput! = {id: 1}, data: HotelBusinessDateUpdateInput!): HotelBusinessDate
@@ -5252,7 +4974,6 @@ type Mutation {
   updateHotelPropertySettings(data: HotelPropertySettingsInput!, idempotencyKey: String!): HotelSettings!
   runHotelOnboarding(template: String!, data: JSON): HotelOnboardingResult!
   runHotelNightAudit(propertyKey: String!, businessDate: DateTime!, idempotencyKey: String!): HotelNightAuditRunProjection!
-  replayHotelOutboxEvent(eventId: ID!, idempotencyKey: String!, acknowledgeUnknownDelivery: Boolean): HotelOutboxReplayResult!
   replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
   resolveOverdueCheckedInBooking(bookingId: ID!, approvalId: ID, idempotencyKey: String!, reason: String!): OverdueStayResolutionResult!
   pickupHotelGroupBlock(groupBlockId: ID!, allocationId: ID!, bookingId: ID!, idempotencyKey: String!): Booking
@@ -5404,15 +5125,9 @@ type Query {
   hotelAuditEvent(where: HotelAuditEventWhereUniqueInput!): HotelAuditEvent
   hotelAuditEvents(where: HotelAuditEventWhereInput! = {}, orderBy: [HotelAuditEventOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelAuditEventWhereUniqueInput): [HotelAuditEvent!]
   hotelAuditEventsCount(where: HotelAuditEventWhereInput! = {}): Int
-  hotelOutboxEvent(where: HotelOutboxEventWhereUniqueInput!): HotelOutboxEvent
-  hotelOutboxEvents(where: HotelOutboxEventWhereInput! = {}, orderBy: [HotelOutboxEventOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelOutboxEventWhereUniqueInput): [HotelOutboxEvent!]
-  hotelOutboxEventsCount(where: HotelOutboxEventWhereInput! = {}): Int
-  hotelOutboxAttempt(where: HotelOutboxAttemptWhereUniqueInput!): HotelOutboxAttempt
-  hotelOutboxAttempts(where: HotelOutboxAttemptWhereInput! = {}, orderBy: [HotelOutboxAttemptOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelOutboxAttemptWhereUniqueInput): [HotelOutboxAttempt!]
-  hotelOutboxAttemptsCount(where: HotelOutboxAttemptWhereInput! = {}): Int
-  hotelOutboxReceipt(where: HotelOutboxReceiptWhereUniqueInput!): HotelOutboxReceipt
-  hotelOutboxReceipts(where: HotelOutboxReceiptWhereInput! = {}, orderBy: [HotelOutboxReceiptOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelOutboxReceiptWhereUniqueInput): [HotelOutboxReceipt!]
-  hotelOutboxReceiptsCount(where: HotelOutboxReceiptWhereInput! = {}): Int
+  hotelContactMessage(where: HotelContactMessageWhereUniqueInput!): HotelContactMessage
+  hotelContactMessages(where: HotelContactMessageWhereInput! = {}, orderBy: [HotelContactMessageOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelContactMessageWhereUniqueInput): [HotelContactMessage!]
+  hotelContactMessagesCount(where: HotelContactMessageWhereInput! = {}): Int
   hotelBusinessDate(where: HotelBusinessDateWhereUniqueInput! = {id: 1}): HotelBusinessDate
   hotelBusinessDates(where: HotelBusinessDateWhereInput! = {id: {equals: 1}}, orderBy: [HotelBusinessDateOrderByInput!]! = [], take: Int, skip: Int! = 0, cursor: HotelBusinessDateWhereUniqueInput): [HotelBusinessDate!]
   hotelBusinessDatesCount(where: HotelBusinessDateWhereInput! = {id: {equals: 1}}): Int
@@ -5459,7 +5174,7 @@ type Query {
   hotelPaymentProviderOperations(propertyKey: String!): HotelPaymentProviderOperations!
   hotelNightAuditOperations(propertyKey: String!): HotelNightAuditOperations!
   hotelGroupOperations(propertyKey: String!): HotelGroupOperations!
-  hotelOutboxOperations(propertyKey: String!, status: String, search: String, eventSkip: Int, refundSkip: Int): HotelOutboxOperations!
+  hotelRefundQueue(propertyKey: String!, status: String, search: String, refundSkip: Int): HotelRefundQueue!
   hotelGuestGovernance(guestId: ID!): String!
   hotelGovernanceGuestSearch(search: String!): String!
   hotelApprovalWorkspace(offset: Int): String!
@@ -6134,32 +5849,6 @@ type HotelGroupOperations {
   groups: [HotelGroupBlockProjection!]!
 }
 
-type HotelOutboxAttemptProjection {
-  id: ID!
-  attemptNumber: Int!
-  status: String!
-  workerId: String!
-  errorMessage: String
-  startedAt: DateTime!
-  finishedAt: DateTime
-}
-
-type HotelOutboxEventProjection {
-  id: ID!
-  eventKey: String!
-  topic: String!
-  aggregateType: String!
-  aggregateId: String!
-  status: String!
-  attempts: Int!
-  availableAt: DateTime!
-  deliveredAt: DateTime
-  deadLetteredAt: DateTime
-  lastError: String
-  replayedFromEventKey: String
-  attemptsEvidence: [HotelOutboxAttemptProjection!]!
-}
-
 type HotelRefundIntentProjection {
   id: ID!
   intentKey: String!
@@ -6174,10 +5863,8 @@ type HotelRefundIntentProjection {
   booking: HotelReservationProjection!
 }
 
-type HotelOutboxOperations {
-  events: [HotelOutboxEventProjection!]!
+type HotelRefundQueue {
   refundIntents: [HotelRefundIntentProjection!]!
-  eventsTotal: Int!
   refundIntentsTotal: Int!
   statusCounts: JSON!
 }
@@ -6445,9 +6132,6 @@ type GuestBooking {
   createdAt: DateTime
   confirmedAt: DateTime
   cancelledAt: DateTime
-  confirmationDeliveryStatus: String
-  updateDeliveryStatus: String
-  cancellationDeliveryStatus: String
   changeRequest: GuestChangeRequest
   roomAssignments: [GuestRoomAssignment!]!
 }
@@ -6478,13 +6162,6 @@ type ChannelRetryResult {
   succeeded: Int!
   failed: Int!
   retriedAt: DateTime!
-}
-
-type HotelOutboxReplayResult {
-  id: ID!
-  eventKey: String!
-  status: String!
-  replayed: Boolean!
 }
 
 type OverdueStayResolutionResult {
@@ -6541,8 +6218,6 @@ input HotelPropertySettingsInput {
   refundApprovalThresholdMinor: Int
   writeOffApprovalThresholdMinor: Int
   cashVarianceApprovalThresholdMinor: Int
-  prearrivalEmailEnabled: Boolean
-  prearrivalDays: Int
   loyaltyEnabled: Boolean
   loyaltyEarnMinorPerPoint: Int
   loyaltyRedeemMinorPerPoint: Int

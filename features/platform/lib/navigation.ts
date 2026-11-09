@@ -62,7 +62,7 @@ export const platformNavItems: PlatformNavItem[] = [
   { title: 'Group Blocks', href: '/platform/groups', color: 'zinc', description: 'Manage contracted room blocks, rooming lists and master folios.', icon: Blocks, group: 'operations', permission: 'canManageBookings' },
   { title: 'Maintenance', href: '/platform/maintenance', color: 'orange', description: 'Manage room issues, maintenance requests, and outages.', icon: Wrench, group: 'operations', permission: 'canManageRooms' },
   { title: 'Payment Providers', href: '/platform/payment-providers', color: 'slate', description: 'Configure payment gateways and provider settings.', icon: CreditCard, group: 'integrations', permission: 'canManagePayments' },
-  { title: 'Outbox', href: '/platform/outbox', color: 'rose', description: 'Review message and refund delivery, and retry failures.', icon: Send, group: 'integrations', permission: 'canManageAudit' },
+  { title: 'Refund queue', href: '/platform/refund-queue', color: 'rose', description: 'Review provider refunds in flight, and retry failures.', icon: Send, group: 'integrations', permission: 'canManageAudit' },
 ];
 
 export const platformStandaloneItems = platformNavItems.filter((item) => item.group === 'standalone');

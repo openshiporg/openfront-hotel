@@ -4,7 +4,6 @@ import { assertActiveCashierShift } from '../cashier/commands';
 
 import { ensurePaymentFolioPosting, getBookingCollectibleBalance } from '../folios/bookingFolio';
 import { findHotelLifecycleReplay, hashLifecycleRequest, HOTEL_PROPERTY_KEY, lockHotelLifecycle, recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
-import { queueBookingCommunication } from '../communications/commands';
 import { isOnlinePaymentProviderCode } from '../lib/paymentSecurity';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { moneyText } from '../lib/moneyText';
@@ -251,12 +250,6 @@ export async function requestBookingPaymentRefund({
       metadata: { bookingId: payment.bookingId, providerCode: payment.paymentProvider?.code || null },
     });
     if (result.status === 'recorded') {
-      await queueBookingCommunication(prisma, {
-        bookingId: payment.bookingId,
-        kind: 'booking_refund',
-        eventKey,
-        cancellation: { summary: normalizedReason, refundableMinor: amountMinor, cancellationFeeMinor: 0 },
-      });
     }
     return result;
   });

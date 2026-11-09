@@ -53,7 +53,7 @@ export const permissionFields = {
   }),
   canManageIntegrations: checkbox({
     defaultValue: false,
-    label: "User can manage integrations, outbox replay, and channel delivery"
+    label: "User can manage integrations, and channel delivery"
   }),
 }
 

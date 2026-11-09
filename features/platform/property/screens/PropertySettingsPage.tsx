@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { BadgeCheck, BellRing, Blocks, Building2, BadgePlus, CircleDollarSign, Gift, ImageIcon, ImageOff, Loader2, Palette, RotateCcw, Save, Wallet } from 'lucide-react';
+import { BadgeCheck, Blocks, Building2, BadgePlus, CircleDollarSign, Gift, ImageIcon, ImageOff, Loader2, Palette, RotateCcw, Save, Wallet } from 'lucide-react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { Code } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -34,7 +34,6 @@ const empty = {
   timeZone: 'UTC', checkInTime: '3:00 PM', checkOutTime: '11:00 AM',
   currencyCode: 'USD', taxRateBasisPoints: '0', serviceFeeMinor: '0',
   depositPercent: '100', securityDepositMinor: '0',
-  prearrivalEmailEnabled: 'false', prearrivalDays: '1',
   loyaltyEnabled: 'false', loyaltyEarnMinorPerPoint: '100', loyaltyRedeemMinorPerPoint: '1', loyaltyMinimumRedemptionPoints: '100',
   groupsEnabled: 'false',
   refundApprovalThresholdMinor: '0', writeOffApprovalThresholdMinor: '0', cashVarianceApprovalThresholdMinor: '0', ratePublicationRequiresApproval: 'true',
@@ -52,13 +51,12 @@ const MONEY_KEYS = ['serviceFeeMinor', 'securityDepositMinor', 'loyaltyEarnMinor
 const isMoneyKey = (key: Key) => (MONEY_KEYS as readonly Key[]).includes(key);
 const dollars = (value: string) => dollarsToMinor(value, { allowZero: true });
 
-type SectionId = 'identity' | 'commercial' | 'deposits' | 'communications' | 'loyalty' | 'groups' | 'approvals' | 'logo' | 'accent' | 'media';
+type SectionId = 'identity' | 'commercial' | 'deposits' | 'loyalty' | 'groups' | 'approvals' | 'logo' | 'accent' | 'media';
 
 const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ComponentType<{ className?: string }>; keys: Key[] }> = [
   { id: 'identity', label: 'Identity & front desk', icon: Building2, keys: ['propertyName', 'tagline', 'contactEmail', 'contactPhone', 'addressLine1', 'addressLine2', 'frontDeskCopy', 'timeZone', 'checkInTime', 'checkOutTime'] },
   { id: 'commercial', label: 'Commercial defaults', icon: CircleDollarSign, keys: ['currencyCode', 'taxRateBasisPoints', 'serviceFeeMinor'] },
   { id: 'deposits', label: 'Deposits & security', icon: Wallet, keys: ['depositPercent', 'securityDepositMinor'] },
-  { id: 'communications', label: 'Arrival communications', icon: BellRing, keys: ['prearrivalEmailEnabled', 'prearrivalDays'] },
   { id: 'loyalty', label: 'Loyalty', icon: Gift, keys: ['loyaltyEnabled', 'loyaltyEarnMinorPerPoint', 'loyaltyRedeemMinorPerPoint', 'loyaltyMinimumRedemptionPoints'] },
   { id: 'groups', label: 'Group bookings', icon: Blocks, keys: ['groupsEnabled'] },
   { id: 'approvals', label: 'Independent approvals', icon: BadgeCheck, keys: ['refundApprovalThresholdMinor', 'writeOffApprovalThresholdMinor', 'cashVarianceApprovalThresholdMinor', 'ratePublicationRequiresApproval'] },
@@ -274,11 +272,6 @@ export default function PropertySettingsPage() {
                   : 'Enter a whole number from 1 to 100.',
               })}
               {field('securityDepositMinor', 'Refundable security hold', { hint: minor('securityDepositMinor') ? 'Stripe reserves funds; capture requires reviewed actual charges.' : 'Zero disables new authorizations.' })}
-            </>)}
-
-            {section('communications', 'Send one reminder email before each confirmed arrival.', <>
-              {toggle('prearrivalEmailEnabled', 'Pre-arrival email', 'Send a reminder ahead of each confirmed arrival.')}
-              {field('prearrivalDays', 'Days before arrival (1–14)', { type: 'number', hint: enabled('prearrivalEmailEnabled') ? `Sent ${form.prearrivalDays || '—'} day(s) before check-in.` : 'Used once the reminder is on.' })}
             </>)}
 
             {section('loyalty', 'Points are earned from settled eligible stays and redeemed against open folios. Changes require role administration.', <>

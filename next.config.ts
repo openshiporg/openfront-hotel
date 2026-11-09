@@ -9,13 +9,12 @@ const nextConfig: NextConfig = {
   experimental: { serverActions: { bodySizeLimit: '10mb' } },
   serverExternalPackages: ['graphql'],
   // Every inbound callback is served by the reference /api/payment-webhooks/[providerId] route.
-  // URLs already registered with Stripe, PayPal, channels and outbox senders keep working
+  // URLs already registered with Stripe, PayPal, and channels keep working
   // (a rewrite, not a redirect: providers do not follow redirects on POST).
   async rewrites() {
     return [
       { source: '/api/payment-providers/:providerCode/webhook', destination: '/api/payment-webhooks/:providerCode' },
       { source: '/api/webhooks/channel/:channelId', destination: '/api/payment-webhooks/channel-:channelId' },
-      { source: '/api/hotel/outbox/receiver', destination: '/api/payment-webhooks/hotel-outbox-receiver' },
     ];
   },
   // Workaround since we diverged from Keystone reltionship and document views

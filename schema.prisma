@@ -647,8 +647,6 @@ model HotelSettings {
   refundApprovalThresholdMinor       Int      @default(0)
   writeOffApprovalThresholdMinor     Int      @default(0)
   cashVarianceApprovalThresholdMinor Int      @default(0)
-  prearrivalEmailEnabled             Boolean  @default(false)
-  prearrivalDays                     Int      @default(1)
   loyaltyEnabled                     Boolean  @default(false)
   loyaltyEarnMinorPerPoint           Int      @default(100)
   loyaltyRedeemMinorPerPoint         Int      @default(1)
@@ -765,73 +763,17 @@ model HotelAuditEvent {
   @@index([aggregateType, aggregateId, occurredAt], map: "HotelAuditEvent_aggregate_idx")
 }
 
-model HotelOutboxEvent {
-  id                     String               @id @default(cuid())
-  eventKey               String               @unique @default("")
-  requestHash            String               @default("")
-  propertyKey            String               @default("")
-  topic                  String               @default("")
-  aggregateType          String               @default("")
-  aggregateId            String               @default("")
-  payloadSnapshot        Json?                @default("{}")
-  status                 String               @default("pending")
-  attempts               Int                  @default(0)
-  availableAt            DateTime             @default(now())
-  deliveredAt            DateTime?
-  lastError              String               @default("")
-  leaseToken             String               @default("")
-  leaseExpiresAt         DateTime?
-  lastAttemptAt          DateTime?
-  deadLetteredAt         DateTime?
-  replayedFromEventKey   String               @default("")
-  dispatchResultSnapshot Json?                @default("{}")
-  maxAttempts            Int                  @default(5)
-  attemptsEvidence       HotelOutboxAttempt[] @relation("HotelOutboxAttempt_outbox")
-  createdAt              DateTime             @default(now())
-  updatedAt              DateTime             @default(now()) @updatedAt
-
-  @@index([status, availableAt], map: "HotelOutboxEvent_dispatch_idx")
-  @@index([aggregateType, aggregateId], map: "HotelOutboxEvent_aggregate_idx")
-  @@index([propertyKey, status, availableAt], map: "HotelOutboxEvent_tenant_dispatch_idx")
-  @@index([propertyKey, status, leaseExpiresAt], map: "HotelOutboxEvent_lease_idx")
-}
-
-model HotelOutboxAttempt {
-  id               String           @id @default(cuid())
-  outbox           HotelOutboxEvent @relation("HotelOutboxAttempt_outbox", fields: [outboxId], references: [id])
-  outboxId         String           @map("outbox")
-  propertyKey      String           @default("")
-  attemptNumber    Int
-  workerId         String           @default("")
-  status           String
-  errorMessage     String           @default("")
-  responseSnapshot Json?            @default("{}")
-  startedAt        DateTime
-  finishedAt       DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @default(now()) @updatedAt
-
-  @@unique([outboxId, attemptNumber], map: "HotelOutboxAttempt_outbox_attempt_key")
-  @@index([outboxId])
-  @@index([propertyKey, startedAt], map: "HotelOutboxAttempt_tenant_idx")
-}
-
-model HotelOutboxReceipt {
-  id              String   @id @default(cuid())
-  eventKey        String   @unique @default("")
-  propertyKey     String   @default("")
-  topic           String   @default("")
-  aggregateType   String   @default("")
-  aggregateId     String   @default("")
-  credentialKeyId String   @default("")
-  bodyHash        String   @default("")
-  payloadSnapshot Json?    @default("{}")
-  receivedAt      DateTime
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @default(now()) @updatedAt
-
-  @@index([propertyKey, receivedAt], map: "HotelOutboxReceipt_tenant_idx")
-  @@index([topic, receivedAt], map: "HotelOutboxReceipt_topic_idx")
+model HotelContactMessage {
+  id         String   @id @default(cuid())
+  reference  String   @unique @default("")
+  guestName  String   @default("")
+  replyTo    String   @default("")
+  phone      String   @default("")
+  subject    String   @default("")
+  message    String   @default("")
+  receivedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
 }
 
 model HotelBusinessDate {

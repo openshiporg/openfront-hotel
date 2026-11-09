@@ -4,7 +4,6 @@ import { ensureReservationSnapshots } from '../folios/reservationSnapshots';
 import { lockRoomInventory } from '../inventory/roomNightLocks';
 import { assertHotelAvailability } from '../inventory/roomAvailability';
 import { findHotelLifecycleReplay, lockHotelLifecycle, recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
-import { queueBookingCommunication } from '../communications/commands';
 import { currentPostingDate, lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
 import { moneyText } from '../lib/moneyText';
@@ -165,13 +164,6 @@ export async function amendUnpaidBooking({
       afterSnapshot: { checkInDate: updated.checkInDate, checkOutDate: updated.checkOutDate, roomTypeId, totalAmountMinor, pricingRevision: revision, netPaidMinor, balanceDueMinor, paymentStatus },
       metadata: { source, reversedSnapshotPostingCount: posted.length },
     });
-    if (queueCommunication) {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: 'booking_updated',
-        eventKey,
-      });
-    }
     return updated;
   };
   if (withinTransaction) return execute(context);

@@ -9,7 +9,6 @@ import { releaseCancelledGroupPickup } from '../groups/commands';
 import { ensurePaymentFolioPosting } from '../folios/bookingFolio';
 import { recomputeBookingPaymentState } from './bookingRefund';
 import { cancellationSettlementStatus } from '../lib/cancellationSettlement';
-import { queueBookingCommunication } from '../communications/commands';
 import {
   HOTEL_PROPERTY_KEY,
   findHotelLifecycleReplay,
@@ -221,12 +220,6 @@ export async function settleRefundIntent(context: any, intent: RefundIntentClaim
     const isCancellation = String(current.cancellationEventKey || '').startsWith('booking:cancel:');
     if (!isCancellation) {
       await recomputeBookingPaymentState(prisma, current.bookingId);
-      await queueBookingCommunication(prisma, {
-        bookingId: current.bookingId,
-        kind: 'booking_refund',
-        eventKey: current.intentKey,
-        cancellation: { summary: current.reason, refundableMinor: current.amountMinor, cancellationFeeMinor: 0 },
-      });
       return { settled: true, failed: false };
     }
     const outstanding = await prisma.refundIntent.count({
@@ -276,16 +269,6 @@ export async function settleRefundIntent(context: any, intent: RefundIntentClaim
           beforeSnapshot: { status: booking.status, paymentStatus: booking.paymentStatus },
           afterSnapshot: { status: updated.status, paymentStatus: updated.paymentStatus, netRetainedMinor, outstandingFeeMinor },
           metadata: { cancellationEventKey: current.cancellationEventKey },
-        });
-        await queueBookingCommunication(prisma, {
-          bookingId: current.bookingId,
-          kind: finalStatus === 'no_show' ? 'booking_no_show' : 'booking_cancelled',
-          eventKey,
-          cancellation: {
-            summary: String(terms.summary || 'The booked cancellation terms were applied.'),
-            refundableMinor: Number(terms.refundableMinor || 0),
-            cancellationFeeMinor: Number(terms.cancellationFeeMinor || 0),
-          },
         });
       }
     }

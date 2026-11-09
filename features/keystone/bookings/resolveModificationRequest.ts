@@ -3,7 +3,6 @@ import { amendUnpaidBooking } from './amendment';
 import { changeUnpricedBookingStayDatesInTransaction } from './stayDates';
 import { calculateHotelPrice } from '../rates/pricing';
 import { hashLifecycleRequest, lockHotelLifecycle, recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
-import { queueBookingCommunication } from '../communications/commands';
 import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 
 const MAX_STAY_DAYS = 365;
@@ -146,12 +145,6 @@ export default async function resolveBookingModificationRequest(
       beforeSnapshot: { status: 'pending', bookingId, checkInDate: booking.checkInDate, checkOutDate: booking.checkOutDate, pricingRevision: booking.pricingRevision },
       afterSnapshot: snapshot,
       metadata: { commercialAmendmentEventKey: decision === 'approved' && booking.lineItems.length ? `${eventKey}:commercial-amendment` : null },
-    });
-    await queueBookingCommunication(prisma, {
-      bookingId,
-      kind: 'booking_modification_response',
-      eventKey,
-      modification: { decision: decision as 'approved' | 'declined', staffNote: note || null },
     });
     return resultFromSnapshot(snapshot, false);
   });

@@ -347,9 +347,6 @@ export const GET_GUEST_BOOKING = gql`
       refundPendingMinor
       bookedStayTerms
       specialRequests
-      confirmationDeliveryStatus
-      updateDeliveryStatus
-      cancellationDeliveryStatus
       changeRequest {
         id
         status

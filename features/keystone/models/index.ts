@@ -26,9 +26,7 @@ import { PaymentEvent } from './PaymentEvent';
 import { Folio } from './Folio';
 import { FolioEntry } from './FolioEntry';
 import { HotelAuditEvent } from './HotelAuditEvent';
-import { HotelOutboxEvent } from './HotelOutboxEvent';
-import { HotelOutboxAttempt } from './HotelOutboxAttempt';
-import { HotelOutboxReceipt } from './HotelOutboxReceipt';
+import { HotelContactMessage } from './HotelContactMessage';
 import { HotelBusinessDate } from './HotelBusinessDate';
 import { NightAuditRun } from './NightAuditRun';
 import { GroupBlock } from './GroupBlock';
@@ -68,9 +66,7 @@ export const models = {
   Folio,
   FolioEntry,
   HotelAuditEvent,
-  HotelOutboxEvent,
-  HotelOutboxAttempt,
-  HotelOutboxReceipt,
+  HotelContactMessage,
   HotelBusinessDate,
   NightAuditRun,
   GroupBlock,

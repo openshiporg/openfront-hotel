@@ -5,16 +5,16 @@ import { Inbox, Mail, Phone, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
-import { Callout, Panel } from '@/features/platform/components/Surface';
+import { Panel } from '@/features/platform/components/Surface';
 import { WorkspaceEmpty, WorkspaceError, WorkspaceLoading } from '@/features/platform/components/WorkspaceControls';
 import { formatDateTime, humanize } from '@/features/platform/lib/format';
 import { getGuestMessages } from '../actions';
 
 type GuestMessage = {
   id: string; reference: string; receivedAt: string; guestName: string; replyTo: string; phone: string;
-  subject: string; message: string; deliveryStatus: string; deliveredAt?: string | null; attempts: number;
+  subject: string; message: string;
 };
-type Workspace = { deliveryConfigured: boolean; notifyAddress: string | null; messages: GuestMessage[] };
+type Workspace = { messages: GuestMessage[] };
 
 /** Contact inquiries from the storefront, readable by the front desk without the audit model view. */
 export default function GuestMessagesPage() {
@@ -36,9 +36,6 @@ export default function GuestMessagesPage() {
       {loading && !data ? <WorkspaceLoading label="Loading guest messages" rows={4} />
         : error ? <WorkspaceError message={error} onRetry={() => void load()} title="Guest messages unavailable" />
         : data ? <div className="space-y-4">
-          {!data.deliveryConfigured && <Callout tone="warning" title="Email notifications are off">
-            New messages appear here, but no email is sent{data.notifyAddress ? ` to ${data.notifyAddress}` : ''} until email delivery is set up for the property.
-          </Callout>}
           {data.messages.length === 0 ? <div className="rounded-lg border bg-card"><WorkspaceEmpty icon={Inbox} title="No guest messages yet" description="Messages sent from the storefront contact page will appear here." /></div>
             : data.messages.map(message => <Panel key={message.id} className="p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -52,12 +49,7 @@ export default function GuestMessagesPage() {
                 </div>
               </div>
               <p className="mt-3 whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 text-sm leading-6">{message.message}</p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {message.replyTo ? <>From <span className="break-all">{message.replyTo}</span>{message.phone ? ` · ${message.phone}` : ''} · </> : null}
-                {message.deliveryStatus === 'delivered' ? <>Email notification sent{message.deliveredAt ? <> {formatDateTime(message.deliveredAt)}</> : ''}</>
-                  : data.deliveryConfigured ? `Email notification ${humanize(message.deliveryStatus)}${message.attempts ? ` after ${message.attempts} ${message.attempts === 1 ? 'attempt' : 'attempts'}` : ''}`
-                  : 'Email notification not sent'}
-              </p>
+              <p className="mt-2 text-xs text-muted-foreground">{message.replyTo ? <>From <span className="break-all">{message.replyTo}</span>{message.phone ? ` · ${message.phone}` : ''}</> : null}</p>
             </Panel>)}
         </div> : null}
     </PlatformPage>

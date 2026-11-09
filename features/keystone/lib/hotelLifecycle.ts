@@ -98,26 +98,5 @@ export async function recordHotelLifecycleEvent({
     },
     select: { id: true },
   }));
-  requirePrismaResult(await prisma.hotelOutboxEvent.create({
-    data: {
-      eventKey,
-      topic: `hotel.${identity.aggregateType}.${identity.action}`,
-      aggregateType: identity.aggregateType,
-      aggregateId: identity.aggregateId,
-      requestHash,
-      propertyKey: HOTEL_PROPERTY_KEY,
-      payloadSnapshot: {
-        auditEventId: audit.id,
-        actorId: actorId || null,
-        before: stableValue(beforeSnapshot) ?? null,
-        after: stableValue(afterSnapshot) ?? null,
-        metadata: stableValue(metadata),
-        occurredAt: occurredAt.toISOString(),
-      },
-      status: 'pending',
-      attempts: 0,
-      availableAt: occurredAt,
-    },
-  }));
   return audit;
 }

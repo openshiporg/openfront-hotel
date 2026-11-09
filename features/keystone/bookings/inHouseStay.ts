@@ -10,7 +10,6 @@ import { assertHotelAvailability } from '../inventory/roomAvailability';
 import { findHotelLifecycleReplay, lockHotelLifecycle, recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
 import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
-import { queueBookingCommunication } from '../communications/commands';
 import { moneyText } from '../lib/moneyText';
 
 export function assertInHouseDateChange(booking: any, checkIn: Date, checkOut: Date, businessDate: Date, roomTypeId: string, ratePlanId: string, allowCommercialMove = false) {
@@ -107,7 +106,6 @@ export async function amendInHouseStay(context: any, input: { bookingId: string;
     const collectible = await getBookingCollectibleBalance(tx, booking.id);
     Object.assign(updated, await p.booking.update({ where: { id: booking.id }, data: { balanceDueMinor: collectible.balanceDueMinor, balanceDue: collectible.balanceDueMinor / 100, paymentStatus: collectible.balanceDueMinor <= 0 ? 'paid' : netPaid > 0 ? 'partial' : 'unpaid' } }));
     await recordHotelLifecycleEvent({ prisma: p, eventKey, actorId: context.session.itemId, identity, beforeSnapshot: { checkOutDate: booking.checkOutDate, totalAmountMinor: booking.totalAmountMinor }, afterSnapshot: { checkOutDate: end, totalAmountMinor: total, pricingRevision: revision, preservedHistoricalLines: historical.length, guestCreditMinor: collectible.creditMinor, waivedMinor, waiverReason: waivedMinor ? input.earlyDepartureReason?.trim() : null, waiverApprovalId: input.earlyDepartureApprovalId || null } });
-    await queueBookingCommunication(p, { bookingId: booking.id, kind: 'booking_updated', eventKey });
     return updated;
   });
 }

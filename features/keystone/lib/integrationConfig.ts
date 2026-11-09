@@ -69,32 +69,6 @@ export function paymentIntegrationConfigured(provider: PersistedPaymentProvider)
   return paymentProviderEnabled(provider) && paymentProviderCredentialsConfigured(provider);
 }
 
-export type OutboxDispatchConfig = {
-  enabled: boolean;
-  url?: string;
-  secret?: string;
-  credentialKeyId?: string;
-};
-
-/**
- * Optional HTTP dispatch is infrastructure wiring, enabled only by a complete
- * tuple. No capability boolean is read and partial wiring fails closed.
- */
-export function getOutboxDispatchConfig(env: NodeJS.ProcessEnv = process.env): OutboxDispatchConfig {
-  const url = String(env.HOTEL_OUTBOX_DISPATCH_URL || '').trim();
-  const secret = String(env.HOTEL_OUTBOX_DISPATCH_SECRET || '').trim();
-  const credentialKeyId = String(env.HOTEL_OUTBOX_DISPATCH_CREDENTIAL_KEY_ID || '').trim();
-  if (!url && !secret && !credentialKeyId) return { enabled: false };
-  if (!url) throw new Error('HOTEL_OUTBOX_DISPATCH_URL is required when HTTP outbox dispatch wiring is present.');
-  let parsed: URL;
-  try { parsed = new URL(url); } catch { throw new Error('HOTEL_OUTBOX_DISPATCH_URL must be a valid URL.'); }
-  if (env.NODE_ENV === 'production' && parsed.protocol !== 'https:') throw new Error('HOTEL_OUTBOX_DISPATCH_URL must use HTTPS in production.');
-  if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('HOTEL_OUTBOX_DISPATCH_URL must use HTTP or HTTPS.');
-  if (!complete(secret, 32)) throw new Error('HOTEL_OUTBOX_DISPATCH_SECRET must contain at least 32 non-placeholder characters.');
-  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(credentialKeyId)) throw new Error('HOTEL_OUTBOX_DISPATCH_CREDENTIAL_KEY_ID is required and invalid.');
-  return { enabled: true, url, secret, credentialKeyId };
-}
-
 export type ChannelIntegrationMode = 'disabled' | 'demo' | 'live' | 'invalid';
 
 export function channelIntegrationMode(channel: { isActive?: boolean; credentials?: any }): ChannelIntegrationMode {

@@ -20,7 +20,7 @@ function normalize(value: string, label: string, max: number) {
 /**
  * Resolves a genuinely overdue checked-in stay without rewriting history.
  * The outstanding balance is closed by an explicit, append-only write-off,
- * then checkout/folio/room/housekeeping/audit/outbox state commits atomically.
+ * then checkout/folio/room/housekeeping/audit state commits atomically.
  */
 export default async function resolveOverdueCheckedInBooking(
   _root: unknown,

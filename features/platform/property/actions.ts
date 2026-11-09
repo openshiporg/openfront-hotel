@@ -22,7 +22,7 @@ const PROPERTY_SETTINGS = String.raw`
   query PropertySettings {
     hotelSettings {
       propertyName tagline contactEmail contactPhone addressLine1 addressLine2 frontDeskCopy
-      securityDepositMinor depositPercent loyaltyEnabled loyaltyEarnMinorPerPoint loyaltyRedeemMinorPerPoint loyaltyMinimumRedemptionPoints prearrivalEmailEnabled prearrivalDays groupsEnabled refundApprovalThresholdMinor writeOffApprovalThresholdMinor cashVarianceApprovalThresholdMinor ratePublicationRequiresApproval
+      securityDepositMinor depositPercent loyaltyEnabled loyaltyEarnMinorPerPoint loyaltyRedeemMinorPerPoint loyaltyMinimumRedemptionPoints groupsEnabled refundApprovalThresholdMinor writeOffApprovalThresholdMinor cashVarianceApprovalThresholdMinor ratePublicationRequiresApproval
       timeZone checkInTime checkOutTime currencyCode taxRateBasisPoints serviceFeeMinor pricingVersion
       storefrontAccentPreset
       heroImagePath heroImageAltText heroImageCaption amenityImagePath amenityImageAltText
@@ -67,8 +67,6 @@ export async function updatePropertySettingsAction(input: Record<string, unknown
       loyaltyEarnMinorPerPoint: boundedInteger(input.loyaltyEarnMinorPerPoint, "Loyalty configuration", { min: 1, max: 1000000 }),
       loyaltyRedeemMinorPerPoint: boundedInteger(input.loyaltyRedeemMinorPerPoint, "Loyalty configuration", { min: 1, max: 1000000 }),
       loyaltyMinimumRedemptionPoints: boundedInteger(input.loyaltyMinimumRedemptionPoints, "Loyalty configuration", { min: 1, max: 1000000 }),
-      prearrivalEmailEnabled: input.prearrivalEmailEnabled === "true",
-      prearrivalDays: boundedInteger(input.prearrivalDays, "Pre-arrival lead time", { min: 1, max: 14 }),
       groupsEnabled: input.groupsEnabled === "true",
       refundApprovalThresholdMinor: boundedInteger(input.refundApprovalThresholdMinor, "Refund approval threshold", { min: 0, max: 2147483647 }),
       writeOffApprovalThresholdMinor: boundedInteger(input.writeOffApprovalThresholdMinor, "Write-off approval threshold", { min: 0, max: 2147483647 }),

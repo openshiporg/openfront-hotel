@@ -6,7 +6,6 @@ import { ensureBookingFolio } from '../folios/bookingFolio';
 import { recomputeBookingPaymentState } from '../refunds/bookingRefund';
 import { calculateCancellationTerms } from '../lib/cancellationPolicy';
 import { buildFolioReversalPosting, normalizeFolioCurrency } from '../folios/ledger';
-import { queueBookingCommunication } from '../communications/commands';
 import { isOnlinePaymentProviderCode } from '../lib/paymentSecurity';
 import {
   HOTEL_PROPERTY_KEY,
@@ -314,18 +313,6 @@ export async function requestBookingCancellation({
       },
       metadata: { confirmationNumber: booking.confirmationNumber, refundReason: normalized.reason, source },
     });
-    if (!hasOutstandingRefunds) {
-      await queueBookingCommunication(prisma, {
-        bookingId,
-        kind: source === 'no_show' ? 'booking_no_show' : 'booking_cancelled',
-        eventKey,
-        cancellation: {
-          summary: cancellationTerms.summary,
-          refundableMinor: cancellationTerms.refundableMinor,
-          cancellationFeeMinor: cancellationTerms.cancellationFeeMinor,
-        },
-      });
-    }
     return updated;
   };
   if (withinTransaction) return execute(context);

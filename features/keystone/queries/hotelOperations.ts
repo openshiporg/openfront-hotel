@@ -23,7 +23,7 @@ const GUEST_PAGE_SIZE = 50;
 const ROOM_PAGE_SIZE = 100;
 const PAYMENT_PAGE_SIZE = 50;
 const MAINTENANCE_PAGE_SIZE = 50;
-const OUTBOX_PAGE_SIZE = 100;
+const REFUND_PAGE_SIZE = 100;
 const MAINTENANCE_PRIORITIES = ['emergency', 'high', 'medium', 'low'];
 
 function boundedDateRange(startValue: string, endValue: string, maxDays: number) {
@@ -434,17 +434,11 @@ export const hotelOperationsTypeDefs = String.raw`
   }
   type HotelGroupOperations { groups: [HotelGroupBlockProjection!]! }
 
-  type HotelOutboxAttemptProjection { id: ID!, attemptNumber: Int!, status: String!, workerId: String!, errorMessage: String, startedAt: DateTime!, finishedAt: DateTime }
-  type HotelOutboxEventProjection {
-    id: ID!, eventKey: String!, topic: String!, aggregateType: String!, aggregateId: String!, status: String!, attempts: Int!,
-    availableAt: DateTime!, deliveredAt: DateTime, deadLetteredAt: DateTime, lastError: String, replayedFromEventKey: String,
-    attemptsEvidence: [HotelOutboxAttemptProjection!]!
-  }
   type HotelRefundIntentProjection {
     id: ID!, intentKey: String!, amountMinor: Int!, currencyCode: String!, reason: String!, status: String!, attempts: Int!,
     lastError: String, availableAt: DateTime!, completedAt: DateTime, booking: HotelReservationProjection!
   }
-  type HotelOutboxOperations { events: [HotelOutboxEventProjection!]!, refundIntents: [HotelRefundIntentProjection!]!, eventsTotal: Int!, refundIntentsTotal: Int!, statusCounts: JSON! }
+  type HotelRefundQueue { refundIntents: [HotelRefundIntentProjection!]!, refundIntentsTotal: Int!, statusCounts: JSON! }
 
   extend type Query {
     hotelOperatorCapabilities: HotelOperatorCapabilities!
@@ -463,7 +457,7 @@ export const hotelOperationsTypeDefs = String.raw`
     hotelPaymentProviderOperations(propertyKey: String!): HotelPaymentProviderOperations!
     hotelNightAuditOperations(propertyKey: String!): HotelNightAuditOperations!
     hotelGroupOperations(propertyKey: String!): HotelGroupOperations!
-    hotelOutboxOperations(propertyKey: String!, status: String, search: String, eventSkip: Int, refundSkip: Int): HotelOutboxOperations!
+    hotelRefundQueue(propertyKey: String!, status: String, search: String, refundSkip: Int): HotelRefundQueue!
   }
 `;
 
@@ -1080,20 +1074,12 @@ export const hotelOperationsResolvers = {
       return { currentBusinessDate: clock.currentBusinessDate, runs };
     },
 
-    hotelOutboxOperations: async (_root: unknown, args: any, context: any) => {
+    hotelRefundQueue: async (_root: unknown, args: any, context: any) => {
       requireHotelPermission(context, 'canManageAudit', args.propertyKey);
       const search = String(args.search || '').trim().slice(0, 160);
       const page = (value: unknown) => Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 100_000);
-      // Messages record success as 'delivered' and refunds as 'succeeded'; the screen shows both as 'completed'.
-      const status = ['pending', 'processing', 'failed', 'dead_letter', 'skipped', 'completed'].includes(String(args.status)) ? String(args.status) : null;
-      const eventWhere = { AND: [
-        status ? { status: status === 'completed' ? 'delivered' : status } : {},
-        search ? { OR: [
-          { topic: { contains: search, mode: 'insensitive' } }, { eventKey: { contains: search, mode: 'insensitive' } },
-          { aggregateType: { contains: search, mode: 'insensitive' } }, { aggregateId: { contains: search, mode: 'insensitive' } },
-          { lastError: { contains: search, mode: 'insensitive' } },
-        ] } : {},
-      ] };
+      // Refunds record success as 'succeeded'; the screen shows it as 'completed'.
+      const status = ['pending', 'processing', 'failed', 'dead_letter', 'completed'].includes(String(args.status)) ? String(args.status) : null;
       const refundWhere = { AND: [
         status ? { status: status === 'completed' ? 'succeeded' : status } : {},
         search ? { OR: [
@@ -1101,29 +1087,21 @@ export const hotelOperationsResolvers = {
           { booking: { confirmationNumber: { contains: search, mode: 'insensitive' } } },
         ] } : {},
       ] };
-      const [events, refundIntents, eventsTotal, refundIntentsTotal, eventStatuses, refundStatuses] = await Promise.all([
-        context.prisma.hotelOutboxEvent.findMany({
-          where: eventWhere, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: page(args.eventSkip), take: OUTBOX_PAGE_SIZE,
-          include: { attemptsEvidence: { orderBy: { attemptNumber: 'asc' }, take: 20 } },
-        }),
+      const [refundIntents, refundIntentsTotal, refundStatuses] = await Promise.all([
         context.prisma.refundIntent.findMany({
-          where: refundWhere, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: page(args.refundSkip), take: OUTBOX_PAGE_SIZE,
+          where: refundWhere, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], skip: page(args.refundSkip), take: REFUND_PAGE_SIZE,
           include: { booking: { include: reservationInclude } },
         }),
-        context.prisma.hotelOutboxEvent.count({ where: eventWhere }),
         context.prisma.refundIntent.count({ where: refundWhere }),
-        context.prisma.hotelOutboxEvent.groupBy({ by: ['status'], _count: { _all: true } }),
         context.prisma.refundIntent.groupBy({ by: ['status'], _count: { _all: true } }),
       ]);
       const statusCounts: Record<string, number> = {};
-      for (const row of [...eventStatuses, ...refundStatuses]) {
-        const key = row.status === 'delivered' || row.status === 'succeeded' ? 'completed' : row.status;
+      for (const row of refundStatuses) {
+        const key = row.status === 'succeeded' ? 'completed' : row.status;
         statusCounts[key] = (statusCounts[key] || 0) + Number(row._count?._all || 0);
       }
       return {
-        events,
         refundIntents: refundIntents.map((item: any) => ({ ...item, booking: mapReservation(item.booking) })),
-        eventsTotal,
         refundIntentsTotal,
         statusCounts,
       };

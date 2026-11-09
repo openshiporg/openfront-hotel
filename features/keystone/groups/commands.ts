@@ -12,7 +12,6 @@ import { lockRoomInventory } from '../inventory/roomNightLocks';
 import { lockHotelBusinessDate } from '../lib/hotelBusinessTime';
 import { findHotelLifecycleReplay, lockHotelLifecycle, recordHotelLifecycleEvent } from '../lib/hotelLifecycle';
 import { runSerializableTransaction } from '../lib/serializableTransaction';
-import { queueBookingCommunication } from '../communications/commands';
 
 export type RoomingListRow = { rowId: string; guestName: string; guestEmail: string; numberOfGuests: number; guestPhone?: string; specialRequests?: string };
 function authorize(context: any) { if (!permissions.canManageBookings({ session: context.session })) throw new Error('Not authorized to operate group reservations.'); }
@@ -112,7 +111,6 @@ export async function createHotelGroupRoomingList(_root: unknown, { groupBlockId
       for (const { reservation: _, ...line } of snapshots) await p.reservationLineItem.create({ data: { ...line, date: new Date(line.date), reservationId: id, snapshotStatus: 'active' } });
       await ensureBookingFolio(tx, id);
       await recordHotelLifecycleEvent({ prisma: p, eventKey: rowKey, actorId: context.session.itemId, identity: { request: { groupBlockId, allocationId, row }, aggregateType: 'booking', aggregateId: id, action: 'group_created' }, afterSnapshot: { bookingId: id, rowId: row.rowId, groupBlockId, allocationId, totalAmountMinor: totalMinor, billingType: block.billingType } });
-      await queueBookingCommunication(p, { bookingId: id, kind: 'booking_confirmation', eventKey: `booking:${id}:confirmation:v1` });
       created.push({ rowId: row.rowId, bookingId: id, confirmationNumber: booking.confirmationNumber, totalAmountMinor: totalMinor });
     }
     await p.groupBlockAllocation.update({ where: { id: allocationId }, data: { roomsPickedUp: { increment: rows.length } } });
