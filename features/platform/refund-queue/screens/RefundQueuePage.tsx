@@ -15,7 +15,7 @@ import { WorkspaceControls, WorkspaceEmpty, WorkspaceError, WorkspaceLoading } f
 import { formatDateTime, formatMoneyMinor, humanize } from '@/features/platform/lib/format';
 import { statusMeta } from '@/features/platform/lib/status';
 import { workspaceResultLabel } from '@/features/platform/lib/workspace';
-import { getRefundWorkspace, replayRefundEvidence } from '../actions';
+import { getRefundWorkspace, refreshRefundOperations, replayRefundEvidence } from '../actions';
 import { unwrapAction } from '@/features/platform/lib/actionOutcome';
 
 type Capabilities = { canManageIntegrations: boolean; canManagePayments: boolean };
@@ -38,6 +38,7 @@ export default function RefundQueuePage() {
     setLoading(true);
     setError(null);
     try {
+      await refreshRefundOperations();
       const result = await getRefundWorkspace({ status, search });
       if (id !== request.current) return;
       setData(result.hotelRefundQueue);

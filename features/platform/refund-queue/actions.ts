@@ -19,6 +19,11 @@ const REFUND_WORKSPACE = String.raw`
 `;
 const REPLAY_REFUND = String.raw`mutation($id:ID!,$key:String!){replayRefundIntent(intentId:$id,idempotencyKey:$key){id status}}`;
 
+/** Staff Refresh: sends queued refunds to the provider and advances lapsed holds. Never blocks the page on failure. */
+export async function refreshRefundOperations() {
+  try { await keystoneClient<any>('mutation RefreshHotelOperations { refreshHotelOperations }'); } catch { /* the page still loads */ }
+}
+
 /** Messages and refunds matching the status and search; each list reads its own page offset. */
 export async function getRefundWorkspace(view: { status?: string; search?: string; refundSkip?: number } = {}) {
   const offset = (value: unknown) => Math.min(Math.max(Math.trunc(Number(value) || 0), 0), 100_000);

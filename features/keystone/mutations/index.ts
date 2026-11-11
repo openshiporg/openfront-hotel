@@ -73,6 +73,7 @@ import pickupHotelGroupBlock from './pickupHotelGroupBlock';
 import updateHotelGroupBlockStatus from './updateHotelGroupBlockStatus';
 import resolveOverdueCheckedInBooking from './resolveOverdueCheckedInBooking';
 import replayRefundIntent from './replayRefundIntent';
+import refreshHotelOperations from './refreshHotelOperations';
 import redeemHotelPasswordResetToken from './redeemHotelPasswordResetToken';
 import configureHotelPaymentProvider from './configureHotelPaymentProvider';
 import { paymentProviderCredentials } from '../lib/integrationConfig';
@@ -675,6 +676,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
           idempotencyKey: String!
         ): HotelNightAuditRunProjection!
         replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
+        refreshHotelOperations: JSON!
         resolveOverdueCheckedInBooking(
           bookingId: ID!
           approvalId: ID
@@ -920,6 +922,7 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         pickupHotelGroupBlock,
         updateHotelGroupBlockStatus,
         replayRefundIntent,
+        refreshHotelOperations,
         resolveOverdueCheckedInBooking,
         verifyGuestBooking: async (
           root: unknown,

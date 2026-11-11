@@ -8,25 +8,6 @@ export function createWorkerLeaseOwnerId(worker: string) {
   return `${prefix}:${randomUUID()}`;
 }
 
-/** Prevent setInterval from starting a second effect while this process is still running the first. */
-export type NonOverlappingTick = (() => Promise<boolean>) & { drain: () => Promise<void> };
-
-export function createNonOverlappingTick(task: () => Promise<void>): NonOverlappingTick {
-  let inFlight: Promise<void> | null = null;
-  const run = (async () => {
-    if (inFlight) return false;
-    const current = Promise.resolve().then(task);
-    inFlight = current;
-    try { await current; return true; }
-    finally { if (inFlight === current) inFlight = null; }
-  }) as NonOverlappingTick;
-  run.drain = async () => {
-    const current = inFlight;
-    if (current) await current.catch(() => undefined);
-  };
-  return run;
-}
-
 /**
  * Atomically acquire or renew a lease using the database clock. An active owner
  * may renew; a different owner may take over only after expiry. An expired

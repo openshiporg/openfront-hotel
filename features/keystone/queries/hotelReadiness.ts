@@ -1,5 +1,4 @@
 import { propertyCalendarDate } from '../lib/hotelBusinessTime';
-import { getWorkerReadiness } from '../lib/workerProgress';
 import { paymentIntegrationConfigured } from '../lib/integrationConfig';
 import { hotelMailInfrastructureConfigured } from '../lib/mail';
 
@@ -69,8 +68,6 @@ export default async function hotelReadiness(_root: unknown, _args: unknown, con
     const brokenGroupBilling = await prisma.booking.findFirst({ where: { groupBlock: { billingType: 'master_folio' }, billingFolioId: null, status: { in: ['pending', 'confirmed', 'checked_in'] } }, select: { id: true } });
     const groupsHealthy = settings?.groupsEnabled === true ? !brokenGroupBilling : groupsDisabled;
     const frontDeskClear = !overdueStay && !orphanOccupiedRoom;
-    const progress = await prisma.hotelWorkerLease.findMany({ where: { leaseKey: { in: ['progress:holds', 'progress:refunds'] } } });
-    const workers = getWorkerReadiness(progress);
     const staleBefore = new Date(Date.now() - 15 * 60_000);
     const [stuckHold, stuckRefund] = await Promise.all([
       prisma.booking.findFirst({ where: { status: 'pending', holdExpiresAt: { lt: staleBefore } }, select: { id: true } }),
@@ -78,14 +75,14 @@ export default async function hotelReadiness(_root: unknown, _args: unknown, con
     ]);
     const recoveryClear = !stuckHold && !stuckRefund;
     const configured = Boolean(
-      workers.ready && recoveryClear && propertyConfigured &&
+      recoveryClear && propertyConfigured &&
       businessDateCurrent && sellableRate && !activeChannel && !enabledRateSync && !enabledInventorySync && groupsHealthy && frontDeskClear && mailEnabled && paymentEnabled,
     );
     if (!configured) {
-      return { status: 'not_ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds }, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } };
+      return { status: 'not_ready', checks: { database: true, recoveryClear, property: propertyConfigured, businessDate: businessDateCurrent, inventory: Boolean(sellableRate), channelsDisabled: !activeChannel && !enabledRateSync && !enabledInventorySync, groupsDisabled, groupsHealthy, frontDeskClear, mail: mailEnabled, payment: paymentEnabled, paymentVerification: 'not_checked' } };
     }
-    return { status: 'ready', checks: { database: true, workers: { holds: workers.holds, refunds: workers.refunds }, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } };
+    return { status: 'ready', checks: { database: true, recoveryClear, property: true, businessDate: true, inventory: true, channelsDisabled: true, groupsDisabled, groupsHealthy: true, frontDeskClear: true, mail: true, payment: true, paymentVerification: 'not_checked' } };
   } catch {
-    return { status: 'not_ready', checks: { database: false, workers: { holds: false, refunds: false }, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } };
+    return { status: 'not_ready', checks: { database: false, recoveryClear: false, property: false, businessDate: false, inventory: false, channelsDisabled: false, groupsDisabled: false, frontDeskClear: false, mail: false, payment: false } };
   }
 }

@@ -4975,6 +4975,7 @@ type Mutation {
   runHotelOnboarding(template: String!, data: JSON): HotelOnboardingResult!
   runHotelNightAudit(propertyKey: String!, businessDate: DateTime!, idempotencyKey: String!): HotelNightAuditRunProjection!
   replayRefundIntent(intentId: ID!, idempotencyKey: String!): RefundIntent!
+  refreshHotelOperations: JSON!
   resolveOverdueCheckedInBooking(bookingId: ID!, approvalId: ID, idempotencyKey: String!, reason: String!): OverdueStayResolutionResult!
   pickupHotelGroupBlock(groupBlockId: ID!, allocationId: ID!, bookingId: ID!, idempotencyKey: String!): Booking
   updateHotelGroupBlockStatus(groupBlockId: ID!, status: String!, idempotencyKey: String!): HotelGroupBlockProjection!

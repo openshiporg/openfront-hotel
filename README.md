@@ -95,11 +95,10 @@ openfront-hotel/
 │   ├── dashboard/          # Staff workspaces and first-admin setup
 │   └── api/                # Health, payment, and integration endpoints
 ├── features/
-│   ├── keystone/           # Models, booking commands, access, and workers
+│   ├── keystone/           # Models, booking commands, access
 │   ├── platform/           # Staff workspaces and onboarding
 │   ├── storefront/         # Guest components and screens
 │   └── integrations/       # Stripe and PayPal adapters
-├── instrumentation.ts      # In-process worker startup
 └── components/             # Shared UI components
 ```
 
@@ -248,7 +247,7 @@ npm start
 Back up an existing database before applying migrations. The included [`railway.toml`](railway.toml) builds without migrations and applies them when the application starts.
 
 ### Scaling Considerations
-The application starts hotel workers through Next.js instrumentation. Use a long-running process for these jobs; importing the repository into Vercel does not supply a persistent worker runtime. Keep one property's database and encryption keys consistent across processes.
+There are no timers, cron jobs or worker processes. Lapsed holds, due group cut-offs, queued refunds and payment-attempt retirements advance on the request that touches them and on the staff Refresh buttons (Front Desk, Refund queue); night audit and channel sync are staff buttons (Folios, Channels). External events go only through Openfront Commerce webhooks. Keep one property's database and encryption keys consistent across processes.
 
 ## Contributing
 

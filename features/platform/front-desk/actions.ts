@@ -63,8 +63,12 @@ export async function getLastNightAudit(): Promise<LastNightAudit> {
   const response = await keystoneClient<any>(`query LastNightAudit { nightAuditRuns(orderBy: [{ businessDate: desc }], take: 1) { businessDate completedAt eventKey postedEntryCount } hotelSettings(where: { id: 1 }) { timeZone } }`);
   const run = response.success ? response.data?.nightAuditRuns?.[0] : null;
   if (!run) return null;
-  // The scheduler's runs use the idempotency key auto:<date>; anything else was run by staff.
-  return { businessDate: run.businessDate, completedAt: run.completedAt, automatic: String(run.eventKey || '').includes(':auto:'), postedEntryCount: Number(run.postedEntryCount || 0), timeZone: response.data?.hotelSettings?.timeZone || 'UTC' };
+  return { businessDate: run.businessDate, completedAt: run.completedAt, automatic: false, postedEntryCount: Number(run.postedEntryCount || 0), timeZone: response.data?.hotelSettings?.timeZone || 'UTC' };
+}
+
+/** Staff Refresh: advances lapsed holds, due group cut-offs and queued refunds, then reads the board. Never blocks the page on failure. */
+export async function refreshHotelOperationsAction() {
+  try { await keystoneClient<any>('mutation RefreshHotelOperations { refreshHotelOperations }'); } catch { /* the page still loads */ }
 }
 
 export async function getFrontDeskWorkspace() {

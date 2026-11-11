@@ -14,6 +14,7 @@ import {
   cancelFrontDeskBooking,
   getFrontDeskWorkspace,
   getLastNightAudit,
+  refreshHotelOperationsAction,
   type LastNightAudit,
   resolveFrontDeskModification,
   updateFrontDeskBookingStatus,
@@ -106,6 +107,7 @@ export function FrontDeskPage() {
     setError(null);
     try {
       void getLastNightAudit().then(setLastAudit).catch(() => setLastAudit(null));
+      await refreshHotelOperationsAction();
       const data = await getFrontDeskWorkspace() as FrontDeskResponse['hotelFrontDesk'];
 
       const mappedReservations = (data.reservations || []).map((booking: any) => {
@@ -250,8 +252,8 @@ export function FrontDeskPage() {
           <MetaItem icon={CalendarDays}>Business date {businessDate ? formatStay(businessDate, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'} ({timeZoneLabel(timeZone)})</MetaItem>
           <MetaItem icon={CalendarCheck}>
             {lastAudit
-              ? `Night audit last closed ${formatStay(lastAudit.businessDate, { month: 'short', day: 'numeric' })} · ${lastAudit.automatic ? 'automatically' : 'by staff'} ${new Date(lastAudit.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: lastAudit.timeZone })} · next at 3am property time`
-              : 'Night audit runs automatically at 3am property time'}
+              ? `Night audit last closed ${formatStay(lastAudit.businessDate, { month: 'short', day: 'numeric' })} · by staff ${new Date(lastAudit.completedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: lastAudit.timeZone })} · run from Folios`
+              : 'Night audit is closed by staff from Folios'}
           </MetaItem>
           <MetaItem>Window ±7 days</MetaItem>
         </>

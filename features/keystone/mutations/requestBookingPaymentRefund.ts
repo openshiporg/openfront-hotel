@@ -1,5 +1,6 @@
 import { permissions } from '../access';
 import { requestBookingPaymentRefund as requestRefund } from '../refunds/bookingRefund';
+import { dispatchRefundIntentBatch } from '../refunds/refundIntentWorker';
 
 export default async function requestBookingPaymentRefund(
   _root: unknown,
@@ -21,7 +22,7 @@ export default async function requestBookingPaymentRefund(
   if (!permissions.canManagePayments({ session: context.session })) {
     throw new Error('Not authorized to refund booking payments.');
   }
-  return requestRefund({
+  const result = await requestRefund({
     context,
     approvalId,
     paymentId,
@@ -30,4 +31,7 @@ export default async function requestBookingPaymentRefund(
     idempotencyKey,
     actorId: context.session.itemId,
   });
+  // No background sender: the refund goes to the provider on this request; the Refund queue Refresh retries any that fail.
+  await dispatchRefundIntentBatch(context, { workerId: 'request-refund', limit: 10 }).catch(() => undefined);
+  return result;
 }
