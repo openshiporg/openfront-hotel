@@ -20,6 +20,7 @@ export const HotelSettings = list({
     },
   },
   ui: {
+    isHidden: (args) => !permissions.canManageOnboarding(args),
     hideCreate: true,
     hideDelete: true,
     listView: {

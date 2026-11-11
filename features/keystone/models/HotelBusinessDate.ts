@@ -15,7 +15,7 @@ export const HotelBusinessDate = list({
       delete: denyAll,
     },
   },
-  ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: 'read' } },
+  ui: { isHidden: (args) => !permissions.canManagePayments(args), hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: 'read' } },
   fields: {
     propertyKey: text({ isIndexed: 'unique', validation: { isRequired: true } }),
     currentBusinessDate: timestamp({ validation: { isRequired: true } }),
