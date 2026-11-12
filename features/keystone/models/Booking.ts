@@ -52,7 +52,7 @@ export const Booking = list({
     hideCreate: true,
     hideDelete: true,
     listView: {
-      initialColumns: ['confirmationNumber', 'guestName', 'checkInDate', 'checkOutDate', 'status', 'totalAmount'],
+      initialColumns: ['confirmationNumber', 'guestName', 'checkInDate', 'checkOutDate', 'status', 'total'],
     },
     itemView: {
       defaultFieldMode: 'read',
@@ -115,6 +115,17 @@ export const Booking = list({
       },
     }),
 
+    total: virtual({
+      field: graphql.field({
+        type: graphql.String,
+        resolve(item: any) {
+          try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: item.currencyCode || 'USD' }).format(Number(item.totalAmountMinor || 0) / 100) } catch { return '' }
+        },
+      }),
+      ui: { listView: { fieldMode: 'read' } },
+      label: 'Total',
+    }),
+
     // Computed number of nights
     numberOfNights: virtual({
       field: graphql.field({
@@ -167,7 +178,7 @@ export const Booking = list({
     roomRate: float({ validation: { min: 0 }, label: 'Legacy Room Rate' }),
     taxAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Tax Amount' }),
     feesAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Fees Amount' }),
-    totalAmount: float({ validation: { min: 0 }, label: 'Legacy Total Amount' }),
+    totalAmount: float({ validation: { min: 0 }, label: 'Total Amount (superseded)' }),
     depositAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Deposit Amount' }),
     balanceDue: float({ validation: { min: 0 }, label: 'Legacy Balance Due' }),
     ratePlan: relationship({ ref: 'RatePlan.bookings', ui: { displayMode: 'select', labelField: 'name' } }),

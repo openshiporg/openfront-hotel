@@ -22,7 +22,8 @@ export async function getListByPath(path: string) {
     // Find the list by path
     const rawList = adminMeta.lists.find((l: any) => l.path === path)
     
-    if (!rawList) {
+    // A list the role cannot query is hidden by Keystone per session: treat it as missing.
+    if (!rawList || rawList.isHidden) {
       return undefined
     }
 

@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 import { getServerGraphQLTarget } from "@/features/dashboard/lib/getBaseUrl";
 import { GraphQLClient } from 'graphql-request';
 import { safeErrorSummary, sanitizeDashboardRedirect } from './lib/security';
+import { platformNavItems } from '@/features/platform/lib/navigation';
+import { roleCanUsePlatformItem } from './lib/sidebarAccess';
 import { isDashboardRoute, publicSignUpsAllowed } from './lib/authFlow';
 
 const basePath = "/dashboard";
@@ -51,7 +53,8 @@ export async function getAuthenticatedUser(request: NextRequest) {
         ... on User {
           id
           role {
-            canAccessDashboard
+            canAccessDashboard canManageRooms canManageBookings canManageHousekeeping
+            canManageGuests canManagePayments canManageAudit canManageIntegrations canManageGuestPrivacy canApproveHotelExceptions
           }
         }
       }
@@ -134,6 +137,15 @@ export async function handleDashboardRoutes(
   // Check role permissions
   if (user && !isNoAccessRoute && !user.role?.canAccessDashboard) {
     return NextResponse.redirect(new URL(`${basePath}/no-access`, request.url));
+  }
+
+  // A platform page the role holds no permission for does not exist for it: 404.
+  const platformSlug = pathname.match(/^\/dashboard\/platform\/([^/]+)/)?.[1];
+  if (user && platformSlug) {
+    const item = platformNavItems.find((i) => i.href === `/platform/${platformSlug}`);
+    if (item && !roleCanUsePlatformItem(item, user)) {
+      return NextResponse.rewrite(new URL(`${basePath}/not-found-for-role`, request.url));
+    }
   }
 
   return NextResponse.next();

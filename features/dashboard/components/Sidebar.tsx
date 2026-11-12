@@ -53,6 +53,7 @@ interface User {
   role?: {
     canAccessDashboard?: boolean;
     canManageOnboarding?: boolean;
+    [flag: string]: unknown;
   };
 }
 

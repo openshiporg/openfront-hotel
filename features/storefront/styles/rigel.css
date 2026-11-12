@@ -116,7 +116,7 @@
 .sf-planner__text small { font-size: 0.75rem; color: var(--ink-3); }
 .sf-planner__text b { display: block; font-family: var(--sans); font-size: 0.8rem; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sf-planner__short { display: none; }
-.sf-planner__submit { margin-left: 4px; min-height: 32px; padding: 0 16px; font-size: 0.75rem; }
+.sf-planner__submit { margin-left: 4px; min-height: 44px; padding: 0 16px; font-size: 0.75rem; }
 .sf-planner__nights { display: none; }
 .sf-planner__error { margin-top: 12px; }
 
@@ -180,7 +180,7 @@
 .rg-room__price small { font-family: var(--display); font-size: 0.75rem; color: var(--ink-3); }
 .rg-room__price b { font-family: var(--display); font-size: 1.12rem; font-weight: 400; line-height: 1; color: var(--ink); font-variant-numeric: lining-nums; }
 .rg-room__night { display: none; }
-.rg-room__go { position: relative; z-index: 2; flex: none; min-height: 24px; padding: 0 10px; font-size: 0.75rem; }
+.rg-room__go { position: relative; z-index: 2; flex: none; min-height: 44px; padding: 0 12px; font-size: 0.75rem; }
 .rg-more { margin-top: 18px; text-align: center; }
 
 
@@ -299,8 +299,8 @@
   .sf-planner__text b { font-family: var(--display); font-size: 0.86rem; }
   .sf-planner__long { display: none; }
   .sf-planner__short { display: inline; }
-  .sf-planner__submit { grid-area: go; margin: 0; min-height: 34px; text-transform: none; letter-spacing: 0.01em; font-size: 0.8rem; font-weight: 500; }
-  .sf-planner__nights { grid-area: nights; position: relative; display: flex; align-items: center; justify-content: center; min-height: 28px; font-family: var(--display); font-size: 0.8rem; color: var(--ink); }
+  .sf-planner__submit { grid-area: go; margin: 0; min-height: 44px; text-transform: none; letter-spacing: 0.01em; font-size: 0.8rem; font-weight: 500; }
+  .sf-planner__nights { grid-area: nights; position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; font-family: var(--display); font-size: 0.8rem; color: var(--ink); }
   .sf-planner__nights svg { position: absolute; right: 2px; width: 16px; height: 16px; color: var(--ink-2); }
 
   .rg-hero { width: 100%; }
@@ -334,7 +334,7 @@
   .rg-room__bed, .rg-room__from { display: none; }
   .rg-room__night { display: inline; }
   .rg-room__price b { font-size: 1.2rem; }
-  .rg-room__go { min-height: 28px; padding: 0 20px; text-transform: none; letter-spacing: 0.01em; font-size: 0.75rem; font-weight: 500; }
+  .rg-room__go { min-height: 44px; padding: 0 20px; text-transform: none; letter-spacing: 0.01em; font-size: 0.75rem; font-weight: 500; }
 
 
 
@@ -375,3 +375,12 @@
 .rg-room__foot { min-width: 0; }
 .rg-room__bed { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 @media (min-width: 768px) { .rg-room__from { display: none; } }
+
+/* Tap targets: 44px. */
+.sf-choice input { position: relative; }
+.sf-choice input::before, .sf-check input::before, .sf-check button[role='checkbox']::before { content: ''; position: absolute; inset: -12px; }
+.sf-check input, .sf-check button[role='checkbox'] { position: relative; }
+@media (max-width: 360px) {
+  .sf-wordmark { font-size: 0.9rem; letter-spacing: 0.01em; }
+  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { max-width: calc(100vw - 128px); }
+}

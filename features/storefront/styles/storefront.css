@@ -386,7 +386,7 @@
 .sf-stay__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .sf-stay__title { font-size: 13px; font-weight: 500; }
 .sf-stay__nav { display: flex; gap: 1px; }
-.sf-stay__month { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 4px; color: var(--ink); transition: background 0.18s, color 0.18s, transform 0.12s; }
+.sf-stay__month { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 4px; color: var(--ink); transition: background 0.18s, color 0.18s, transform 0.12s; }
 .sf-stay__month:hover:not(:disabled) { background: var(--stay-pale); color: var(--stay-primary); }
 .sf-stay__month:active:not(:disabled) { transform: scale(0.985); }
 .sf-stay__month:disabled { opacity: 0.25; cursor: not-allowed; }
@@ -429,7 +429,7 @@
   .sf-stay__field b { font-size: 14px; }
   .sf-stay__cal { margin-top: 14px; }
   .sf-stay__head { margin-bottom: 1px; }
-  .sf-stay__month { width: 36px; height: 32px; }
+  .sf-stay__month { width: 44px; height: 44px; }
   .sf-stay__n { font-size: 14px; line-height: 20px; }
   .sf-stay__p { font-size: 12px; line-height: 14px; }
   .sf-stay__hint { margin-top: 10px; }

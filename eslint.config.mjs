@@ -6,6 +6,7 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
   {
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts,cts}"],
     // NKS carries inherited dynamic dashboard/storefront surfaces and predates
     // the React Compiler lint rules bundled with Next 16. Keep lint executable
     // and visible without treating that inherited debt as a release blocker.

@@ -37,7 +37,16 @@ import { HotelAbuseBucket } from './HotelAbuseBucket';
 import { HotelWorkerLease } from './HotelWorkerLease';
 import { BookingModificationRequest } from './BookingModificationRequest';
 
-export const models = {
+// A list the role cannot query is hidden from it (sidebar, list, create and item routes 404),
+// unless the list already decides its own visibility.
+function hiddenWhenUnreadable<T>(model: T): T {
+  const config = model as any;
+  const query = config?.access?.operation?.query;
+  if (typeof query !== 'function' || config.ui?.isHidden !== undefined) return model;
+  return { ...config, ui: { ...config.ui, isHidden: (args: any) => !query(args) } };
+}
+
+const rawModels = {
   User,
   Role,
   RoomType,
@@ -77,5 +86,9 @@ export const models = {
   HotelWorkerLease,
   BookingModificationRequest,
 };
+
+export const models = Object.fromEntries(
+  Object.entries(rawModels).map(([key, model]) => [key, hiddenWhenUnreadable(model)]),
+) as typeof rawModels;
 
 export default models;

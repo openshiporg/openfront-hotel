@@ -1117,6 +1117,7 @@ type Booking {
   guestPhone: String
   checkInDate: DateTime
   checkOutDate: DateTime
+  total: String
   numberOfNights: Int
   numberOfGuests: Int
   numberOfAdults: Int
@@ -1565,6 +1566,7 @@ type BookingPayment {
   id: ID!
   paymentReference: String
   paymentType: String
+  amountFormatted: String
   amountMinor: Int
   amount: Float
   currency: String

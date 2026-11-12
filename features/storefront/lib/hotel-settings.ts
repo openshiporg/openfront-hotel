@@ -137,7 +137,8 @@ function publicText(record: SettingsRecord, key: string, fallback: string) {
 
 function publicEmail(record: SettingsRecord, key: string, fallback: string) {
   const value = firstString(record, key);
-  if (!value || !SAFE_EMAIL.test(value)) return fallback;
+  // A reserved placeholder domain (.example) is not a real address guests can write to.
+  if (!value || !SAFE_EMAIL.test(value) || /\.example$/i.test(value)) return fallback;
   return value;
 }
 

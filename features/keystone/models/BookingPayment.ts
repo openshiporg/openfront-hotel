@@ -8,11 +8,13 @@ import {
   timestamp,
   relationship,
   json,
+  virtual,
 } from '@keystone-6/core/fields'
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { graphql } from '@keystone-6/core'
 
 // Generate a unique payment reference
 function generatePaymentReference(): string {
@@ -34,7 +36,7 @@ export const BookingPayment = list({
     hideCreate: true,
     hideDelete: true,
     listView: {
-      initialColumns: ['paymentReference', 'booking', 'amount', 'paymentType', 'status', 'createdAt'],
+      initialColumns: ['paymentReference', 'booking', 'amountFormatted', 'paymentType', 'status', 'createdAt'],
     },
     itemView: {
       defaultFieldMode: 'read',
@@ -80,10 +82,19 @@ export const BookingPayment = list({
     }),
 
     // Signed integer minor units are authoritative; amount is legacy display compatibility.
+    amountFormatted: virtual({
+      field: graphql.field({
+        type: graphql.String,
+        resolve(item: any) {
+          try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: item.currencyCode || 'USD' }).format(Number(item.amountMinor || 0) / 100) } catch { return '' }
+        },
+      }),
+      label: 'Amount',
+    }),
     amountMinor: integer({ validation: { isRequired: true }, defaultValue: 0, label: 'Amount (minor units)' }),
     amount: float({
       validation: { isRequired: true },
-      label: 'Amount',
+      label: 'Amount (superseded)',
       ui: {
         description: 'Payment amount (negative for refunds)',
       },
