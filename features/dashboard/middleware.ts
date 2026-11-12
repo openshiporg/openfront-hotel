@@ -53,7 +53,7 @@ export async function getAuthenticatedUser(request: NextRequest) {
         ... on User {
           id
           role {
-            canAccessDashboard canManageRooms canManageBookings canManageHousekeeping
+            canAccessDashboard canManageOnboarding canManageRooms canManageBookings canManageHousekeeping
             canManageGuests canManagePayments canManageAudit canManageIntegrations canManageGuestPrivacy canApproveHotelExceptions
           }
         }
