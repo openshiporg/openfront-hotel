@@ -10,6 +10,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterBookings, canFilterGuests, canFilterUsers } from '../access'
 
 export const LoyaltyTransaction = list({
   access: {
@@ -32,7 +33,7 @@ export const LoyaltyTransaction = list({
   },
   fields: {
     // Guest relationship
-    guest: relationship({
+    guest: relationship({ isFilterable: canFilterGuests,
       ref: 'Guest',
       db: requiredRelationshipDb,
       ui: {
@@ -43,7 +44,7 @@ export const LoyaltyTransaction = list({
     }),
 
     // Booking relationship (optional - for earned points from stays)
-    booking: relationship({
+    booking: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking',
       ui: {
         displayMode: 'select',
@@ -90,7 +91,7 @@ export const LoyaltyTransaction = list({
     }),
 
     // Created by (staff member who created transaction)
-    createdBy: relationship({
+    createdBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

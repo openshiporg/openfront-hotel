@@ -11,6 +11,7 @@ import {
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterChannels, canFilterUsers } from '../access'
 
 export const ChannelSyncEvent = list({
   access: {
@@ -33,7 +34,7 @@ export const ChannelSyncEvent = list({
     },
   },
   fields: {
-    channel: relationship({
+    channel: relationship({ isFilterable: canFilterChannels,
       ref: 'Channel',
       db: requiredRelationshipDb,
       ui: {
@@ -69,14 +70,14 @@ export const ChannelSyncEvent = list({
       ui: { itemView: { fieldMode: 'read' } },
     }),
     message: text({
-      access: { read: permissions.canManageIntegrations },
+      isFilterable: permissions.canManageIntegrations, isOrderable: permissions.canManageIntegrations, access: { read: permissions.canManageIntegrations },
       label: 'Message',
       ui: {
         displayMode: 'textarea',
       },
     }),
     payload: json({
-      access: { read: permissions.canManageIntegrations },
+      isFilterable: permissions.canManageIntegrations, isOrderable: permissions.canManageIntegrations, access: { read: permissions.canManageIntegrations },
       label: 'Payload',
       ui: {
         description: 'Payload captured during sync for troubleshooting',
@@ -86,7 +87,7 @@ export const ChannelSyncEvent = list({
       defaultValue: {},
     }),
     errorMessage: text({
-      access: { read: permissions.canManageIntegrations },
+      isFilterable: permissions.canManageIntegrations, isOrderable: permissions.canManageIntegrations, access: { read: permissions.canManageIntegrations },
       label: 'Error Message',
       ui: {
         displayMode: 'textarea',
@@ -107,7 +108,7 @@ export const ChannelSyncEvent = list({
       defaultValue: { kind: 'now' },
       label: 'Occurred At',
     }),
-    createdBy: relationship({
+    createdBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       many: false,
       ui: {

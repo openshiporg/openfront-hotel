@@ -10,6 +10,7 @@ import {
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterBookings, canFilterChannels, canFilterRooms } from '../access'
 
 export const ChannelReservation = list({
   access: {
@@ -32,7 +33,7 @@ export const ChannelReservation = list({
   },
   fields: {
     // Channel relationship
-    channel: relationship({
+    channel: relationship({ isFilterable: canFilterChannels,
       ref: 'Channel.channelReservations',
       db: requiredRelationshipDb,
       ui: {
@@ -61,7 +62,7 @@ export const ChannelReservation = list({
     }),
 
     // Link to our internal Reservation
-    reservation: relationship({
+    reservation: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking',
       ui: {
         displayMode: 'select',
@@ -72,7 +73,7 @@ export const ChannelReservation = list({
     }),
 
     // Room type (as provided by channel)
-    roomType: relationship({
+    roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType',
       ui: {
         displayMode: 'select',

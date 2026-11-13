@@ -11,6 +11,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterBookings, canFilterUsers } from '../access'
 
 export const ReservationLineItem = list({
   access: {
@@ -33,7 +34,7 @@ export const ReservationLineItem = list({
   },
   fields: {
     // Reservation relationship
-    reservation: relationship({
+    reservation: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.lineItems',
       db: requiredRelationshipDb,
       ui: {
@@ -146,7 +147,7 @@ export const ReservationLineItem = list({
     }),
 
     // Posted by (staff member who added the charge)
-    postedBy: relationship({
+    postedBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

@@ -13,6 +13,7 @@ import {
 
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { canFilterBookings } from '../access'
 
 const canReadChannels = ({ session }: any) => permissions.canManageBookings({ session }) || permissions.canManageIntegrations({ session });
 const canManageChannels = ({ session }: any) => permissions.canManageBookings({ session }) && permissions.canManageIntegrations({ session });
@@ -73,7 +74,7 @@ export const Channel = list({
     }),
 
     // Experimental bridge credentials are encrypted at rest and never publicly projected.
-    credentials: json({
+    credentials: json({ isFilterable: false, isOrderable: false,
       hooks: { resolveInput: ({ resolvedData }) => resolvedData.credentials === undefined ? undefined : encryptChannelCredentials(resolvedData.credentials) },
       access: {
         read: denyAll,
@@ -144,7 +145,7 @@ export const Channel = list({
 
     // Sync errors
     syncErrors: json({
-      access: { read: permissions.canManageIntegrations },
+      isFilterable: permissions.canManageIntegrations, isOrderable: permissions.canManageIntegrations, access: { read: permissions.canManageIntegrations },
       label: 'Sync Errors',
       ui: {
         description: 'Array of recent sync errors',
@@ -166,7 +167,7 @@ export const Channel = list({
     }),
 
     // Relationships
-    channelReservations: relationship({
+    channelReservations: relationship({ isFilterable: canFilterBookings,
       ref: 'ChannelReservation.channel',
       many: true,
       ui: {

@@ -4,6 +4,7 @@ import { checkbox, json, relationship, text } from '@keystone-6/core/fields';
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
 import { encryptSensitiveText } from '../lib/sensitiveData';
+import { canFilterPayments } from '../access'
 
 const canManagePaymentIntegrations = ({ session }: any) =>
   permissions.canManagePayments({ session }) && permissions.canManageIntegrations({ session });
@@ -47,7 +48,7 @@ export const PaymentProvider = list({
       defaultValue: true,
       ui: { itemView: { fieldMode: 'read' } },
     }),
-    credentials: json({
+    credentials: json({ isFilterable: false, isOrderable: false,
       defaultValue: {},
       access: {
         read: denyAll,
@@ -81,19 +82,19 @@ export const PaymentProvider = list({
     getPaymentStatusFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
     generatePaymentLinkFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
     handleWebhookFunction: text({ access: { create: denyAll, update: denyAll }, validation: { isRequired: true }, ui: { itemView: { fieldMode: 'read' } } }),
-    bookingPaymentSessions: relationship({
+    bookingPaymentSessions: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPaymentSession.paymentProvider',
       many: true,
       access: { create: denyAll, update: denyAll },
       ui: { itemView: { fieldMode: 'read' } },
     }),
-    bookingPayments: relationship({
+    bookingPayments: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPayment.paymentProvider',
       many: true,
       access: { create: denyAll, update: denyAll },
       ui: { itemView: { fieldMode: 'read' } },
     }),
-    refundIntents: relationship({
+    refundIntents: relationship({ isFilterable: canFilterPayments,
       ref: 'RefundIntent.paymentProvider',
       many: true,
       access: { create: denyAll, update: denyAll },

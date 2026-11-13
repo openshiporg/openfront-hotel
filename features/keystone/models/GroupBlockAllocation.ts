@@ -5,6 +5,7 @@ import { integer, relationship, text } from '@keystone-6/core/fields';
 import { permissions } from '../access';
 import { requiredRelationshipDb } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
+import { canFilterBookings, canFilterRooms } from '../access'
 
 export const GroupBlockAllocation = list({
   access: {
@@ -18,13 +19,13 @@ export const GroupBlockAllocation = list({
   ui: { hideCreate: true, hideDelete: true, itemView: { defaultFieldMode: 'read' } },
   fields: {
     allocationKey: text({ isIndexed: 'unique', validation: { isRequired: true } }),
-    groupBlock: relationship({ ref: 'GroupBlock.allocations', db: requiredRelationshipDb }),
-    roomType: relationship({ ref: 'RoomType', db: requiredRelationshipDb }),
+    groupBlock: relationship({ isFilterable: canFilterBookings, ref: 'GroupBlock.allocations', db: requiredRelationshipDb }),
+    roomType: relationship({ isFilterable: canFilterRooms, ref: 'RoomType', db: requiredRelationshipDb }),
     roomsHeld: integer({ validation: { isRequired: true, min: 1 } }),
     roomsPickedUp: integer({ validation: { isRequired: true, min: 0 } }),
     rateMinor: integer({ validation: { isRequired: true, min: 0 } }),
     currencyCode: text({ validation: { isRequired: true } }),
-    bookings: relationship({ ref: 'Booking.groupBlockAllocation', many: true }),
+    bookings: relationship({ isFilterable: canFilterBookings, ref: 'Booking.groupBlockAllocation', many: true }),
     ...trackingFields,
   },
 });

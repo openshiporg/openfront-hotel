@@ -12,6 +12,7 @@ import { isSignedIn, permissions } from '../access'
 import { getHotelAvailability } from '../inventory/roomAvailability'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterRooms } from '../access'
 
 async function authoritativeAvailable(item: any, context: any) {
   if (!item?.roomTypeId || !item?.date) return 0
@@ -63,7 +64,7 @@ export const RoomInventory = list({
     }),
 
     // Room type relationship
-    roomType: relationship({
+    roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType',
       db: requiredRelationshipDb,
       ui: {

@@ -16,6 +16,7 @@ import { isSignedIn, permissions } from '../access'
 import { ensureBookingHasGuestAccess } from '../lib/guestBookingAccess'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb, restrictRelation } from './requiredRelationship'
+import { canFilterBookings, canFilterGuests, canFilterPayments, canFilterRooms, canFilterUsers } from '../access'
 
 // Generate a unique confirmation number
 function generateConfirmationNumber(): string {
@@ -181,7 +182,7 @@ export const Booking = list({
     totalAmount: float({ validation: { min: 0 }, label: 'Total Amount (superseded)' }),
     depositAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Deposit Amount' }),
     balanceDue: float({ validation: { min: 0 }, label: 'Legacy Balance Due' }),
-    ratePlan: relationship({ ref: 'RatePlan.bookings', ui: { displayMode: 'select', labelField: 'name' } }),
+    ratePlan: relationship({ isFilterable: canFilterRooms, ref: 'RatePlan.bookings', ui: { displayMode: 'select', labelField: 'name' } }),
     pricingVersion: text({ defaultValue: 'legacy-v1' }),
     pricingRevision: integer({ validation: { isRequired: true, min: 1 }, defaultValue: 1 }),
     pricingSnapshot: json({ defaultValue: {} }),
@@ -257,7 +258,7 @@ export const Booking = list({
       },
       label: 'Internal Notes',
     }),
-    guestAccessTokenHash: text({
+    guestAccessTokenHash: text({ isFilterable: false, isOrderable: false,
       isIndexed: true,
       access: {
         read: permissions.canManageBookings,
@@ -270,7 +271,7 @@ export const Booking = list({
         listView: { fieldMode: 'hidden' },
       },
     }),
-    guestAccessTokenIssuedAt: timestamp({
+    guestAccessTokenIssuedAt: timestamp({ isFilterable: false, isOrderable: false,
       access: {
         read: permissions.canManageBookings,
         create: permissions.canManageBookings,
@@ -284,7 +285,7 @@ export const Booking = list({
     }),
 
     // Relationships
-    roomAssignments: relationship({
+    roomAssignments: relationship({ isFilterable: canFilterBookings,
       ref: 'RoomAssignment.booking',
       many: true,
       ui: {
@@ -297,7 +298,7 @@ export const Booking = list({
     }),
 
     // Guest profile relationship
-    guestProfile: relationship({
+    guestProfile: relationship({ isFilterable: canFilterGuests,
       ref: 'Guest.bookings',
       db: requiredRelationshipDb,
       ui: {
@@ -308,7 +309,7 @@ export const Booking = list({
     }),
 
     // Legacy guest relationship (for backwards compatibility with User)
-    guest: relationship({
+    guest: relationship({ isFilterable: canFilterUsers,
       ref: 'User.bookings',
       ui: {
         displayMode: 'select',
@@ -317,7 +318,7 @@ export const Booking = list({
       label: 'User Account',
     }),
 
-    folio: relationship({
+    folio: relationship({ isFilterable: canFilterPayments,
       ref: 'Folio.booking',
       ui: {
         displayMode: 'select',
@@ -328,25 +329,25 @@ export const Booking = list({
       label: 'Primary Folio',
     }),
 
-    billingFolio: relationship({
+    billingFolio: relationship({ isFilterable: canFilterPayments,
       ref: 'Folio.billedBookings',
       ui: { displayMode: 'select', labelField: 'folioNumber' },
       label: 'Billing Folio',
     }),
 
-    groupBlock: relationship({
+    groupBlock: relationship({ isFilterable: canFilterBookings,
       ref: 'GroupBlock.bookings',
       ui: { displayMode: 'select', labelField: 'name' },
       label: 'Group Block',
     }),
 
-    groupBlockAllocation: relationship({
+    groupBlockAllocation: relationship({ isFilterable: canFilterBookings,
       ref: 'GroupBlockAllocation.bookings',
       ui: { displayMode: 'select', labelField: 'allocationKey' },
       label: 'Group Allocation',
     }),
 
-    lineItems: relationship({
+    lineItems: relationship({ isFilterable: canFilterBookings,
       ref: 'ReservationLineItem.reservation',
       many: true,
       ui: {
@@ -359,7 +360,7 @@ export const Booking = list({
     }),
 
     // Payments relationship
-    payments: relationship({
+    payments: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPayment.booking',
       many: true,
       ui: {
@@ -370,7 +371,7 @@ export const Booking = list({
       },
       label: 'Payments',
     }),
-    paymentSessions: relationship({
+    paymentSessions: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPaymentSession.booking',
       many: true,
       ui: {
@@ -378,17 +379,17 @@ export const Booking = list({
       },
       label: 'Payment Sessions',
     }),
-    paymentEvents: relationship({
+    paymentEvents: relationship({ isFilterable: canFilterPayments,
       ref: 'PaymentEvent.booking',
       many: true,
       ui: { displayMode: 'count' },
     }),
-    refundIntents: relationship({
+    refundIntents: relationship({ isFilterable: canFilterPayments,
       ref: 'RefundIntent.booking',
       many: true,
       ui: { displayMode: 'count' },
     }),
-    modificationRequests: relationship({
+    modificationRequests: relationship({ isFilterable: canFilterBookings,
       ref: 'BookingModificationRequest.booking',
       many: true,
       ui: { displayMode: 'count' },

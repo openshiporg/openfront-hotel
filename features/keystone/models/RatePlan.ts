@@ -14,6 +14,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterBookings, canFilterRooms } from '../access'
 
 export const RatePlan = list({
   access: {
@@ -51,7 +52,7 @@ export const RatePlan = list({
     }),
 
     // Room type relationship
-    roomType: relationship({
+    roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType.ratePlans',
       db: requiredRelationshipDb,
       ui: {
@@ -72,7 +73,7 @@ export const RatePlan = list({
       ui: { itemView: { fieldMode: 'read' }, description: 'Derived compatibility value; minor units are authoritative.' },
     }),
 
-    bookings: relationship({ access: { create: () => false, update: () => false }, ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),
+    bookings: relationship({ isFilterable: canFilterBookings, access: { create: () => false, update: () => false }, ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),
 
     // Seasonal adjustments stored as JSON
     seasonalAdjustments: json({

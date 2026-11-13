@@ -10,6 +10,7 @@ import {
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterBookings, canFilterHousekeeping, canFilterRooms } from '../access'
 
 export const Room = list({
   access: {
@@ -40,7 +41,7 @@ export const Room = list({
     }),
 
     // Room type relationship
-    roomType: relationship({
+    roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType.rooms',
       db: requiredRelationshipDb,
       ui: {
@@ -99,7 +100,7 @@ export const Room = list({
     }),
 
     // Relationships
-    housekeepingTasks: relationship({
+    housekeepingTasks: relationship({ isFilterable: canFilterHousekeeping,
       access: { create: () => false, update: () => false },
       ref: 'HousekeepingTask.room',
       many: true,
@@ -112,7 +113,7 @@ export const Room = list({
       },
       label: 'Housekeeping Tasks',
     }),
-    roomAssignments: relationship({
+    roomAssignments: relationship({ isFilterable: canFilterBookings,
       access: { create: () => false, update: () => false },
       ref: 'RoomAssignment.room',
       many: true,

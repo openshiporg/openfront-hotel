@@ -3,6 +3,7 @@ import { json, relationship, text, timestamp } from '@keystone-6/core/fields';
 
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
+import { canFilterUsers } from '../access'
 
 export const HotelAuditEvent = list({
   db: {
@@ -35,7 +36,7 @@ export const HotelAuditEvent = list({
     aggregateType: text({ validation: { isRequired: true } }),
     aggregateId: text({ validation: { isRequired: true } }),
     action: text({ validation: { isRequired: true } }),
-    actor: relationship({ ref: 'User', ui: { displayMode: 'select', labelField: 'email' } }),
+    actor: relationship({ isFilterable: canFilterUsers, ref: 'User', ui: { displayMode: 'select', labelField: 'email' } }),
     beforeSnapshot: json(),
     afterSnapshot: json(),
     metadataSnapshot: json({ defaultValue: {} }),

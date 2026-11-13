@@ -11,6 +11,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterRooms, canFilterUsers } from '../access'
 
 export const HousekeepingTask = list({
   access: {
@@ -33,7 +34,7 @@ export const HousekeepingTask = list({
   },
   fields: {
     // Room relationship
-    room: relationship({
+    room: relationship({ isFilterable: canFilterRooms,
       ref: 'Room.housekeepingTasks',
       db: requiredRelationshipDb,
       ui: {
@@ -62,7 +63,7 @@ export const HousekeepingTask = list({
     }),
 
     // Assignment
-    assignedTo: relationship({
+    assignedTo: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

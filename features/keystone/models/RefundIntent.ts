@@ -5,6 +5,7 @@ import { integer, json, relationship, select, text, timestamp } from '@keystone-
 import { permissions } from '../access';
 import { requiredRelationshipDb } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
+import { canFilterBookings, canFilterPaymentProviders, canFilterPayments } from '../access'
 
 /** Durable provider-refund command. Provider I/O occurs only after this row commits. */
 export const RefundIntent = list({
@@ -38,9 +39,9 @@ export const RefundIntent = list({
     requestHash: text({ validation: { isRequired: true } }),
     cancellationEventKey: text({ validation: { isRequired: true } }),
     propertyKey: text({ validation: { isRequired: true } }),
-    booking: relationship({ ref: 'Booking.refundIntents', db: requiredRelationshipDb }),
-    sourcePayment: relationship({ ref: 'BookingPayment.refundIntents', db: requiredRelationshipDb }),
-    paymentProvider: relationship({ ref: 'PaymentProvider.refundIntents', db: requiredRelationshipDb }),
+    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.refundIntents', db: requiredRelationshipDb }),
+    sourcePayment: relationship({ isFilterable: canFilterPayments, ref: 'BookingPayment.refundIntents', db: requiredRelationshipDb }),
+    paymentProvider: relationship({ isFilterable: canFilterPaymentProviders, ref: 'PaymentProvider.refundIntents', db: requiredRelationshipDb }),
     amountMinor: integer({ validation: { isRequired: true, min: 1 } }),
     currencyCode: text({ validation: { isRequired: true } }),
     reason: text({ validation: { isRequired: true } }),

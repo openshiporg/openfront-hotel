@@ -3,6 +3,7 @@ import { list } from '@keystone-6/core';
 import { isSignedIn, permissions } from '../access';
 import { permissionFields } from './fields';
 import { trackingFields } from './trackingFields';
+import { canFilterUsers } from '../access'
 
 // Signed-in staff can read their own role's permission flags; the canonical dashboard
 // admission query needs them. Other roles and role membership stay with role managers.
@@ -32,7 +33,7 @@ export const Role = list({
   fields: {
     name: text({ validation: { isRequired: true } }),
     ...permissionFields,
-    assignedTo: relationship({
+    assignedTo: relationship({ isFilterable: canFilterUsers,
       ref: 'User.role',
       many: true,
       access: { read: permissions.canManageRoles },

@@ -12,6 +12,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { assertGuestProfileEditable, resolveGuestIdentityInput } from '../guest-governance/commands'
+import { canFilterBookings, canFilterUsers } from '../access'
 
 export const Guest = list({
   access: {
@@ -141,7 +142,7 @@ export const Guest = list({
     }),
     idNumber: text({
       label: 'ID Number',
-      access: { read: denyAll, create: permissions.canManageGuests, update: permissions.canManageGuests },
+      isFilterable: false, isOrderable: false, access: { read: denyAll, create: permissions.canManageGuests, update: permissions.canManageGuests },
       hooks: { resolveInput: ({ resolvedData }) => resolveGuestIdentityInput(resolvedData) },
       ui: {
         description: 'Encrypted identification document number; never returned by generic GraphQL.',
@@ -206,7 +207,7 @@ export const Guest = list({
     }),
 
     // Relationships
-    bookings: relationship({
+    bookings: relationship({ isFilterable: canFilterBookings,
       access: { create: () => false, update: () => false },
       ref: 'Booking.guestProfile',
       many: true,
@@ -218,7 +219,7 @@ export const Guest = list({
     }),
 
     // Linked user account (optional - for guests who create accounts)
-    userAccount: relationship({
+    userAccount: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

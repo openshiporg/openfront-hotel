@@ -13,6 +13,7 @@ import {
 import { isSignedIn, permissions, rules } from '../access';
 import { trackingFields } from './trackingFields';
 import { enforceAbuseLimit } from '../lib/abuseControl';
+import { canFilterBookings } from '../access'
 
 // Dashboard sign-up is open only when the deployment sets PUBLIC_SIGNUPS_ALLOWED=true,
 // the same switch that shows the sign-up page. Accounts created this way have no
@@ -93,12 +94,12 @@ export const User = list({
       access: { create: () => false, update: () => false },
       ui: { itemView: { fieldMode: 'read' } },
     }),
-    mfaEnabled: checkbox({ defaultValue: false, access: { read: () => false, create: () => false, update: () => false } }),
-    mfaSecret: text({ access: { read: () => false, create: () => false, update: () => false } }),
-    mfaPendingSecret: text({ access: { read: () => false, create: () => false, update: () => false } }),
-    mfaPendingExpiresAt: timestamp({ access: { read: () => false, create: () => false, update: () => false } }),
-    mfaLastCounter: integer({ defaultValue: -1, access: { read: () => false, create: () => false, update: () => false } }),
-    mfaRecoveryHashes: json({ defaultValue: [], access: { read: () => false, create: () => false, update: () => false } }),
+    mfaEnabled: checkbox({ isFilterable: false, isOrderable: false, defaultValue: false, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaSecret: text({ isFilterable: false, isOrderable: false, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaPendingSecret: text({ isFilterable: false, isOrderable: false, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaPendingExpiresAt: timestamp({ isFilterable: false, isOrderable: false, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaLastCounter: integer({ isFilterable: false, isOrderable: false, defaultValue: -1, access: { read: () => false, create: () => false, update: () => false } }),
+    mfaRecoveryHashes: json({ isFilterable: false, isOrderable: false, defaultValue: [], access: { read: () => false, create: () => false, update: () => false } }),
     onboardingStatus: select({
       options: [
         { label: 'Not Started', value: 'not_started' },
@@ -112,7 +113,7 @@ export const User = list({
       },
     }),
     // Hotel-specific relationships
-    bookings: relationship({
+    bookings: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.guest',
       many: true,
       access: { create: denyAll, update: denyAll },

@@ -11,6 +11,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterGuests, canFilterUsers } from '../access'
 
 export const GuestDocument = list({
   access: {
@@ -34,7 +35,7 @@ export const GuestDocument = list({
   },
   fields: {
     // Guest relationship
-    guest: relationship({
+    guest: relationship({ isFilterable: canFilterGuests,
       ref: 'Guest',
       db: requiredRelationshipDb,
       ui: {
@@ -62,7 +63,7 @@ export const GuestDocument = list({
 
     // Document details
     documentNumber: text({
-      access: { read: denyAll },
+      isFilterable: false, isOrderable: false, access: { read: denyAll },
       validation: { isRequired: true },
       label: 'Document Number',
       ui: {
@@ -86,7 +87,7 @@ export const GuestDocument = list({
 
     // Document images (S3 URLs)
     frontImage: text({
-      access: { read: denyAll },
+      isFilterable: false, isOrderable: false, access: { read: denyAll },
       label: 'Front Image URL',
       ui: {
         description: 'S3 URL to front image of document',
@@ -94,7 +95,7 @@ export const GuestDocument = list({
     }),
 
     backImage: text({
-      access: { read: denyAll },
+      isFilterable: false, isOrderable: false, access: { read: denyAll },
       label: 'Back Image URL',
       ui: {
         description: 'S3 URL to back image of document',
@@ -118,7 +119,7 @@ export const GuestDocument = list({
       },
     }),
 
-    verifiedBy: relationship({
+    verifiedBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

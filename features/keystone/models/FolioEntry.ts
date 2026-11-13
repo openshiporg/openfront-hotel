@@ -4,6 +4,7 @@ import { integer, json, relationship, select, text, timestamp } from '@keystone-
 import { permissions } from '../access';
 import { requiredRelationshipDb } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
+import { canFilterPayments, canFilterUsers } from '../access'
 
 export const FolioEntry = list({
   access: {
@@ -23,7 +24,7 @@ export const FolioEntry = list({
     itemView: { defaultFieldMode: 'read' },
   },
   fields: {
-    folio: relationship({
+    folio: relationship({ isFilterable: canFilterPayments,
       ref: 'Folio.entries',
       db: { foreignKey: true, ...requiredRelationshipDb },
     }),
@@ -78,16 +79,16 @@ export const FolioEntry = list({
     sourceId: text(),
     taxCategorySnapshot: text(),
     metadataSnapshot: json({ defaultValue: {} }),
-    postedBy: relationship({
+    postedBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: { displayMode: 'select', labelField: 'name' },
     }),
-    reverses: relationship({
+    reverses: relationship({ isFilterable: canFilterPayments,
       ref: 'FolioEntry.reversedBy',
       db: { foreignKey: true },
       ui: { displayMode: 'select', labelField: 'postingKey' },
     }),
-    reversedBy: relationship({
+    reversedBy: relationship({ isFilterable: canFilterPayments,
       ref: 'FolioEntry.reverses',
       ui: { displayMode: 'select', labelField: 'postingKey' },
     }),

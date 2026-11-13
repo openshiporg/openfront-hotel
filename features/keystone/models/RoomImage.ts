@@ -4,6 +4,7 @@ import { checkbox, image, integer, json, relationship, text } from '@keystone-6/
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
 import { requiredRelationshipDb } from './requiredRelationship';
+import { canFilterRooms } from '../access'
 
 const storageInfrastructureConfigured = () => Boolean(
   process.env.S3_BUCKET_NAME && process.env.S3_REGION && process.env.S3_ACCESS_KEY_ID &&
@@ -55,7 +56,7 @@ export const RoomImage = list({
     caption: text(),
     order: integer({ defaultValue: 0 }),
     isPrimary: checkbox({ defaultValue: false }),
-    roomType: relationship({ ref: 'RoomType.roomImages', db: requiredRelationshipDb }),
+    roomType: relationship({ isFilterable: canFilterRooms, ref: 'RoomType.roomImages', db: requiredRelationshipDb }),
     metadata: json(),
     ...trackingFields,
   },

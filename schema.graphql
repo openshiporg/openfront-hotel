@@ -50,11 +50,6 @@ input UserWhereInput {
   isActive: BooleanFilter
   authVersion: IntFilter
   disabledAt: DateTimeNullableFilter
-  mfaEnabled: BooleanFilter
-  mfaSecret: StringFilter
-  mfaPendingSecret: StringFilter
-  mfaPendingExpiresAt: DateTimeNullableFilter
-  mfaLastCounter: IntNullableFilter
   onboardingStatus: StringNullableFilter
   bookings: BookingManyRelationFilter
   createdAt: DateTimeFilter
@@ -136,17 +131,6 @@ input DateTimeNullableFilter {
   not: DateTimeNullableFilter
 }
 
-input IntNullableFilter {
-  equals: Int
-  in: [Int!]
-  notIn: [Int!]
-  lt: Int
-  lte: Int
-  gt: Int
-  gte: Int
-  not: IntNullableFilter
-}
-
 input StringNullableFilter {
   equals: String
   in: [String!]
@@ -191,11 +175,6 @@ input UserOrderByInput {
   isActive: OrderDirection
   authVersion: OrderDirection
   disabledAt: OrderDirection
-  mfaEnabled: OrderDirection
-  mfaSecret: OrderDirection
-  mfaPendingSecret: OrderDirection
-  mfaPendingExpiresAt: OrderDirection
-  mfaLastCounter: OrderDirection
   onboardingStatus: OrderDirection
   createdAt: OrderDirection
   updatedAt: OrderDirection
@@ -496,6 +475,17 @@ input FloatFilter {
   gt: Float
   gte: Float
   not: FloatFilter
+}
+
+input IntNullableFilter {
+  equals: Int
+  in: [Int!]
+  notIn: [Int!]
+  lt: Int
+  lte: Int
+  gt: Int
+  gte: Int
+  not: IntNullableFilter
 }
 
 input RoomImageManyRelationFilter {
@@ -1216,8 +1206,6 @@ input BookingWhereInput {
   source: StringNullableFilter
   specialRequests: StringFilter
   internalNotes: StringFilter
-  guestAccessTokenHash: StringFilter
-  guestAccessTokenIssuedAt: DateTimeNullableFilter
   roomAssignments: RoomAssignmentManyRelationFilter
   guestProfile: GuestWhereInput
   guest: UserWhereInput
@@ -1307,8 +1295,6 @@ input BookingOrderByInput {
   source: OrderDirection
   specialRequests: OrderDirection
   internalNotes: OrderDirection
-  guestAccessTokenHash: OrderDirection
-  guestAccessTokenIssuedAt: OrderDirection
   holdExpiresAt: OrderDirection
   confirmedAt: OrderDirection
   checkedInAt: OrderDirection
@@ -2194,7 +2180,6 @@ input GuestWhereInput {
   loyaltyTier: StringNullableFilter
   loyaltyPoints: StringFilter
   idType: StringNullableFilter
-  idNumber: StringFilter
   nationality: StringFilter
   address1: StringFilter
   address2: StringFilter
@@ -2225,7 +2210,6 @@ input GuestOrderByInput {
   loyaltyTier: OrderDirection
   loyaltyPoints: OrderDirection
   idType: OrderDirection
-  idNumber: OrderDirection
   nationality: OrderDirection
   address1: OrderDirection
   address2: OrderDirection
@@ -2340,11 +2324,8 @@ input GuestDocumentWhereInput {
   id: IDFilter
   guest: GuestWhereInput
   documentType: StringFilter
-  documentNumber: StringFilter
   issuingCountry: StringFilter
   expiryDate: DateTimeNullableFilter
-  frontImage: StringFilter
-  backImage: StringFilter
   verified: BooleanFilter
   verifiedAt: DateTimeNullableFilter
   verifiedBy: UserWhereInput
@@ -2355,11 +2336,8 @@ input GuestDocumentWhereInput {
 input GuestDocumentOrderByInput {
   id: OrderDirection
   documentType: OrderDirection
-  documentNumber: OrderDirection
   issuingCountry: OrderDirection
   expiryDate: OrderDirection
-  frontImage: OrderDirection
-  backImage: OrderDirection
   verified: OrderDirection
   verifiedAt: OrderDirection
   createdAt: OrderDirection

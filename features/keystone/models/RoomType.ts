@@ -12,6 +12,7 @@ import { document } from '@keystone-6/fields-document'
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
+import { canFilterBookings, canFilterRooms } from '../access'
 
 export const RoomType = list({
   access: {
@@ -167,7 +168,7 @@ export const RoomType = list({
     }),
 
     // Relationships
-    roomImages: relationship({
+    roomImages: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomImage.roomType',
       many: true,
       ui: {
@@ -183,7 +184,7 @@ export const RoomType = list({
       },
       label: 'Storefront images',
     }),
-    rooms: relationship({ access: { create: () => false, update: () => false },
+    rooms: relationship({ isFilterable: canFilterRooms, access: { create: () => false, update: () => false },
       ref: 'Room.roomType',
       many: true,
       ui: {
@@ -191,7 +192,7 @@ export const RoomType = list({
       },
       label: 'Rooms',
     }),
-    roomAssignments: relationship({ access: { create: () => false, update: () => false },
+    roomAssignments: relationship({ isFilterable: canFilterBookings, access: { create: () => false, update: () => false },
       ref: 'RoomAssignment.roomType',
       many: true,
       ui: {
@@ -199,7 +200,7 @@ export const RoomType = list({
       },
       label: 'Room Assignments',
     }),
-    ratePlans: relationship({ access: { create: () => false, update: () => false },
+    ratePlans: relationship({ isFilterable: canFilterRooms, access: { create: () => false, update: () => false },
       ref: 'RatePlan.roomType',
       many: true,
       ui: {

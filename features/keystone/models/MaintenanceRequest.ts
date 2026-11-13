@@ -12,6 +12,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
+import { canFilterRooms, canFilterUsers } from '../access'
 
 export const MaintenanceRequest = list({
   access: {
@@ -34,7 +35,7 @@ export const MaintenanceRequest = list({
   },
   fields: {
     // Room relationship
-    room: relationship({
+    room: relationship({ isFilterable: canFilterRooms,
       ref: 'Room',
       db: requiredRelationshipDb,
       ui: {
@@ -117,7 +118,7 @@ export const MaintenanceRequest = list({
     }),
 
     // People involved
-    reportedBy: relationship({
+    reportedBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',
@@ -127,7 +128,7 @@ export const MaintenanceRequest = list({
       label: 'Reported By',
     }),
 
-    assignedTo: relationship({
+    assignedTo: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

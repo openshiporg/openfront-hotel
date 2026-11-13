@@ -4,6 +4,7 @@ import { json, relationship, select, text, timestamp } from '@keystone-6/core/fi
 
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
+import { canFilterBookings, canFilterPayments } from '../access'
 
 /** Append-only replay and settlement evidence written only by payment domain code. */
 export const PaymentEvent = list({
@@ -40,8 +41,8 @@ export const PaymentEvent = list({
     payloadHash: text({ validation: { isRequired: true } }),
     processedAt: timestamp({ defaultValue: { kind: 'now' } }),
     evidence: json({ defaultValue: {} }),
-    booking: relationship({ ref: 'Booking.paymentEvents' }),
-    payment: relationship({ ref: 'BookingPayment.events' }),
+    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.paymentEvents' }),
+    payment: relationship({ isFilterable: canFilterPayments, ref: 'BookingPayment.events' }),
     ...trackingFields,
   },
 });

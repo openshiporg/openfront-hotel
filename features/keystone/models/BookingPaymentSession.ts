@@ -3,6 +3,7 @@ import { checkbox, integer, json, relationship, text, timestamp, virtual } from 
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
 import { requiredRelationshipDb } from './requiredRelationship';
+import { canFilterBookings, canFilterPaymentProviders, canFilterPayments } from '../access'
 
 export const BookingPaymentSession = list({
   access: {
@@ -50,15 +51,15 @@ export const BookingPaymentSession = list({
     idempotencyKey: text({
       isIndexed: 'unique',
     }),
-    booking: relationship({
+    booking: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.paymentSessions',
       db: requiredRelationshipDb,
     }),
-    paymentProvider: relationship({
+    paymentProvider: relationship({ isFilterable: canFilterPaymentProviders,
       ref: 'PaymentProvider.bookingPaymentSessions',
       db: requiredRelationshipDb,
     }),
-    payment: relationship({
+    payment: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPayment.paymentSession',
       ui: {
         itemView: { fieldMode: 'read' },

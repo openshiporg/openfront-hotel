@@ -4,6 +4,7 @@ import { json, relationship, select, text, timestamp } from '@keystone-6/core/fi
 import { permissions } from '../access';
 import { requiredRelationshipDb } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
+import { canFilterBookings, canFilterUsers } from '../access'
 
 export const BookingModificationRequest = list({
   db: {
@@ -23,7 +24,7 @@ export const BookingModificationRequest = list({
   ui: { isHidden: true, hideCreate: true, hideDelete: true },
   fields: {
     requestKey: text({ isIndexed: 'unique', validation: { isRequired: true } }),
-    booking: relationship({ ref: 'Booking.modificationRequests', db: { foreignKey: true, ...requiredRelationshipDb } }),
+    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.modificationRequests', db: { foreignKey: true, ...requiredRelationshipDb } }),
     requestedCheckInDate: timestamp(),
     requestedCheckOutDate: timestamp(),
     guestMessage: text({ ui: { displayMode: 'textarea' } }),
@@ -38,7 +39,7 @@ export const BookingModificationRequest = list({
     }),
     resolutionKey: text({ isIndexed: 'unique', db: { isNullable: true } }),
     resolutionRequestHash: text(),
-    resolvedBy: relationship({ ref: 'User' }),
+    resolvedBy: relationship({ isFilterable: canFilterUsers, ref: 'User' }),
     resolvedAt: timestamp(),
     staffNote: text({ ui: { displayMode: 'textarea' } }),
     resultSnapshot: json({ defaultValue: {} }),

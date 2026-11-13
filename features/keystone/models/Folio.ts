@@ -4,6 +4,7 @@ import { relationship, select, text, timestamp } from '@keystone-6/core/fields';
 import { permissions } from '../access';
 import { restrictRelation } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
+import { canFilterBookings, canFilterPayments } from '../access'
 
 export const Folio = list({
   db: {
@@ -34,17 +35,17 @@ export const Folio = list({
       validation: { isRequired: true },
       ui: { itemView: { fieldMode: 'read' } },
     }),
-    booking: relationship({
+    booking: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.folio',
       db: { foreignKey: true },
       ui: { displayMode: 'select', labelField: 'confirmationNumber' },
     }),
-    groupBlock: relationship({
+    groupBlock: relationship({ isFilterable: canFilterBookings,
       ref: 'GroupBlock.masterFolio',
       db: { foreignKey: true },
       ui: { displayMode: 'select', labelField: 'name' },
     }),
-    billedBookings: relationship({
+    billedBookings: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.billingFolio',
       many: true,
       ui: { displayMode: 'count' },
@@ -63,7 +64,7 @@ export const Folio = list({
       validation: { isRequired: true },
       defaultValue: 'USD',
     }),
-    entries: relationship({
+    entries: relationship({ isFilterable: canFilterPayments,
       ref: 'FolioEntry.folio',
       many: true,
       ui: { displayMode: 'cards', cardFields: ['entryType', 'direction', 'amountMinor', 'description', 'postedAt'] },

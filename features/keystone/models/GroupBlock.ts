@@ -4,6 +4,7 @@ import { relationship, select, text, timestamp } from '@keystone-6/core/fields';
 
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
+import { canFilterBookings, canFilterPayments } from '../access'
 
 export const GroupBlock = list({
   access: {
@@ -42,9 +43,9 @@ export const GroupBlock = list({
         { label: 'Split', value: 'split' },
       ],
     }),
-    allocations: relationship({ ref: 'GroupBlockAllocation.groupBlock', many: true }),
-    bookings: relationship({ ref: 'Booking.groupBlock', many: true }),
-    masterFolio: relationship({ ref: 'Folio.groupBlock', ui: { displayMode: 'select', labelField: 'folioNumber' } }),
+    allocations: relationship({ isFilterable: canFilterBookings, ref: 'GroupBlockAllocation.groupBlock', many: true }),
+    bookings: relationship({ isFilterable: canFilterBookings, ref: 'Booking.groupBlock', many: true }),
+    masterFolio: relationship({ isFilterable: canFilterPayments, ref: 'Folio.groupBlock', ui: { displayMode: 'select', labelField: 'folioNumber' } }),
     ...trackingFields,
   },
 });

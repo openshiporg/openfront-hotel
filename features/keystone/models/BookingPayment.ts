@@ -15,6 +15,7 @@ import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
 import { requiredRelationshipDb } from './requiredRelationship'
 import { graphql } from '@keystone-6/core'
+import { canFilterBookings, canFilterPaymentProviders, canFilterPayments, canFilterUsers } from '../access'
 
 // Generate a unique payment reference
 function generatePaymentReference(): string {
@@ -271,7 +272,7 @@ export const BookingPayment = list({
     }),
 
     // Relationships
-    booking: relationship({
+    booking: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.payments',
       db: requiredRelationshipDb,
       ui: {
@@ -280,7 +281,7 @@ export const BookingPayment = list({
       },
       label: 'Booking',
     }),
-    paymentProvider: relationship({
+    paymentProvider: relationship({ isFilterable: canFilterPaymentProviders,
       ref: 'PaymentProvider.bookingPayments',
       db: requiredRelationshipDb,
       ui: {
@@ -289,7 +290,7 @@ export const BookingPayment = list({
       },
       label: 'Payment Provider',
     }),
-    paymentSession: relationship({
+    paymentSession: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPaymentSession.payment',
       ui: {
         displayMode: 'select',
@@ -300,19 +301,19 @@ export const BookingPayment = list({
         foreignKey: true,
       },
     }),
-    events: relationship({
+    events: relationship({ isFilterable: canFilterPayments,
       ref: 'PaymentEvent.payment',
       many: true,
       ui: { displayMode: 'count' },
     }),
-    refundIntents: relationship({
+    refundIntents: relationship({ isFilterable: canFilterPayments,
       ref: 'RefundIntent.sourcePayment',
       many: true,
       ui: { displayMode: 'count' },
     }),
 
     // Processed by (staff member)
-    processedBy: relationship({
+    processedBy: relationship({ isFilterable: canFilterUsers,
       ref: 'User',
       ui: {
         displayMode: 'select',

@@ -51,6 +51,18 @@ export const permissions = {
   canManageIntegrations: ({ session }: AccessArgs) => isSignedIn({ session }) && (session?.data.role?.canManageIntegrations ?? false),
 }
 
+// Relation filters must not read through to a list the session cannot read.
+export const canFilterBookings = permissions.canManageBookings
+export const canFilterRooms = permissions.canManageRooms
+export const canFilterPayments = permissions.canManagePayments
+export const canFilterGuests = permissions.canManageGuests
+export const canFilterUsers = permissions.canManagePeople
+export const canFilterRoles = permissions.canManageRoles
+export const canFilterHousekeeping = permissions.canManageHousekeeping
+export const canFilterIntegrations = permissions.canManageIntegrations
+export const canFilterChannels = ({ session }: AccessArgs) => permissions.canManageBookings({ session }) || permissions.canManageIntegrations({ session })
+export const canFilterPaymentProviders = ({ session }: AccessArgs) => permissions.canManagePayments({ session }) && permissions.canManageIntegrations({ session })
+
 export const rules = {
   canReadPeople: ({ session }: AccessArgs) => {
     if (!session) return false
