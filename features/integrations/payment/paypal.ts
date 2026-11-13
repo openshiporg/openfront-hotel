@@ -6,10 +6,9 @@ const NO_DIVISION_CURRENCIES = [
   'HTG', 'VUV', 'XAG', 'XDR', 'XAU',
 ];
 
-type PayPalCredentials = { clientId?: string; clientSecret?: string; webhookId?: string; sandbox?: boolean };
+type PayPalCredentials = { clientId?: string; clientSecret?: string; webhookId?: string };
 
-const getPayPalBaseUrl = (credentials: PayPalCredentials) =>
-  credentials.sandbox === false ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+const getPayPalBaseUrl = (_credentials: PayPalCredentials) => 'https://api-m.paypal.com';
 
 const formatPayPalAmount = (amount: number, currency: string): string =>
   NO_DIVISION_CURRENCIES.includes(currency.toUpperCase())

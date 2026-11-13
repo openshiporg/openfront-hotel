@@ -35,8 +35,7 @@ export function paymentProviderCredentials(provider: PersistedPaymentProvider): 
     };
   }
   const stored = object(provider.credentials);
-  // Only secrets are stored encrypted. Typed settings such as PayPal's `sandbox: false` keep
-  // their type; reading them as text would turn a live account back into sandbox mode.
+  // Secrets are stored encrypted; any non-text value keeps its type.
   return Object.fromEntries(Object.entries(stored).map(([key, value]) => [key, typeof value === 'boolean' ? value : decryptSensitiveText(value)]));
 }
 

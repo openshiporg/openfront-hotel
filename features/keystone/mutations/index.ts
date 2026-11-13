@@ -621,7 +621,6 @@ export function extendGraphqlSchema(baseSchema: GraphQLSchema) {
         clientId: String
         clientSecret: String
         webhookId: String
-        sandbox: Boolean
       }
 
       type HotelPaymentProviderConfigurationResult {

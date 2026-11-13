@@ -4,7 +4,7 @@
  * Front-desk card payment: the same booking payment session and Stripe PaymentIntent the guest
  * checkout uses (initiate → confirm in Stripe Elements → completeBookingPayment), so a desk
  * payment settles the folio through the one audited settlement path. Staff key the card while
- * the guest is at the desk or on the phone; Stripe test mode accepts 4242 4242 4242 4242.
+ * the guest is at the desk or on the phone; The card is charged through the property's configured Stripe account.
  */
 import React from 'react';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';

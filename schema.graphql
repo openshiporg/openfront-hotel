@@ -6241,7 +6241,6 @@ input HotelPaymentProviderCredentialsInput {
   clientId: String
   clientSecret: String
   webhookId: String
-  sandbox: Boolean
 }
 
 type HotelPaymentProviderConfigurationResult {

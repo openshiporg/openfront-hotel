@@ -22,10 +22,6 @@ function inventoryDayKeys(roomTypeId: string, start: Date, end: Date, delta: num
   }
 }
 
-function testFailure(stage: string) {
-  if (process.env.NODE_ENV === 'test' && process.env.HOTEL_AMENDMENT_FAIL_AFTER === stage) throw new Error(`Injected amendment failure after ${stage}.`);
-}
-
 async function transferChannelInventory(prisma: any, booking: any, oldRoomTypeId: string, roomTypeId: string, checkIn: Date, checkOut: Date) {
   if (booking.source !== 'ota') return;
   const deltas = new Map<string, { roomTypeId: string; date: Date; delta: number }>();
@@ -112,7 +108,6 @@ export async function amendUnpaidBooking({
       excludeInventoryBooking: booking.source === 'ota' ? { roomTypeId: currentRoomTypeId, checkInDate: booking.checkInDate, checkOutDate: booking.checkOutDate } : undefined,
     });
     await transferChannelInventory(prisma, booking, currentRoomTypeId, roomTypeId, checkIn, checkOut);
-    testFailure('inventory');
     const ensured = await ensureBookingFolio(tx, bookingId);
     const openDay = await currentPostingDate(prisma);
     const folio = await prisma.folio.findUniqueOrThrow({ where: { id: ensured.folioId }, include: { entries: { include: { reversedBy: true } } } });
@@ -123,7 +118,6 @@ export async function amendUnpaidBooking({
       const reversal = buildFolioReversalPosting(entry, { postingKey: `${eventKey}:reverse:${entry.id}`, reason: `${source} commercial amendment` });
       await prisma.folioEntry.create({ data: { folioId: folio.id, ...reversal, serviceDate: openDay, postedAt: now, metadataSnapshot: { ...(reversal.metadataSnapshot as any), source, amendmentEventKey: eventKey } } });
     }
-    testFailure('reversals');
     await prisma.reservationLineItem.updateMany({ where: { id: { in: [...activeLineIds] } }, data: { snapshotStatus: 'superseded', supersededAt: now } });
     const revision = Number(booking.pricingRevision || 1) + 1;
     const nights = Math.max(1, Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000));
@@ -153,12 +147,10 @@ export async function amendUnpaidBooking({
       pricingVersion: commercialPricing?.pricingVersion ?? `${source}-amendment-v1`, pricingRevision: revision,
       pricingSnapshot: { depositPercent: commercialPricing?.depositPercent ?? booking.pricingSnapshot?.depositPercent, securityDepositMinor: commercialPricing?.securityDepositMinor ?? booking.pricingSnapshot?.securityDepositMinor, arrivalInstant: commercialPricing?.arrivalInstant || booking.pricingSnapshot?.arrivalInstant, propertyTimeZone: commercialPricing?.propertyTimeZone || booking.pricingSnapshot?.propertyTimeZone, cancellationPolicy: commercialPricing?.cancellationPolicy || booking.pricingSnapshot?.cancellationPolicy, ratePlanId, ratePlanName, mealPlan, previousRevision: { revision: Number(booking.pricingRevision || 1), checkInDate: new Date(booking.checkInDate).toISOString(), checkOutDate: new Date(booking.checkOutDate).toISOString(), totalMinor: booking.totalAmountMinor, arrivalInstant: booking.pricingSnapshot?.arrivalInstant || null }, snapshotKeyPrefix: `v${revision}`, source, nightlyRates, roomSubtotalMinor, taxMinor, feesMinor, totalMinor: totalAmountMinor, currencyCode, taxRateBasisPoints: commercialPricing?.taxRateBasisPoints ?? 0 },
     } });
-    testFailure('booking');
     const assignment = booking.roomAssignments[0];
     await prisma.roomAssignment.update({ where: { id: assignment.id }, data: { roomTypeId, ...(currentRoomTypeId !== roomTypeId ? { roomId: null } : {}), guestName, ratePerNightMinor: Math.round(roomSubtotalMinor / nights), ratePerNight: roomSubtotalMinor / nights / 100 } });
     await ensureReservationSnapshots(tx, bookingId);
     await ensureBookingFolio(tx, bookingId, { postSnapshotEntries: true, serviceDate: openDay });
-    testFailure('snapshots');
     await recordHotelLifecycleEvent({ prisma, eventKey, actorId, identity,
       beforeSnapshot: { checkInDate: booking.checkInDate, checkOutDate: booking.checkOutDate, roomTypeId: currentRoomTypeId, totalAmountMinor: booking.totalAmountMinor },
       afterSnapshot: { checkInDate: updated.checkInDate, checkOutDate: updated.checkOutDate, roomTypeId, totalAmountMinor, pricingRevision: revision, netPaidMinor, balanceDueMinor, paymentStatus },

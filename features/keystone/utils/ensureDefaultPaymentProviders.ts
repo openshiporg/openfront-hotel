@@ -64,7 +64,7 @@ export async function ensureDefaultPaymentProviders(context: any) {
       isInstalled: false,
       metadata: code === 'pp_stripe_stripe'
         ? { provider: 'stripe', displayName: 'Credit / debit card' }
-        : { provider: 'paypal', displayName: 'PayPal', sandbox: true },
+        : { provider: 'paypal', displayName: 'PayPal' },
     });
     providers.push(provider);
   }

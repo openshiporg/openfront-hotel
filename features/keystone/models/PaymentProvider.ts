@@ -61,7 +61,7 @@ export const PaymentProvider = list({
           if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) return credentials;
           return Object.fromEntries(Object.entries(credentials).map(([key, value]) => [
             key,
-            key === 'sandbox' ? Boolean(value) : encryptSensitiveText(value),
+            encryptSensitiveText(value),
           ]));
         },
       },

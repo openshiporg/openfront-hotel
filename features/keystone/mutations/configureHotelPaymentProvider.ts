@@ -41,7 +41,6 @@ export default async function configureHotelPaymentProvider(
           clientId: bounded(input.clientId, 'PayPal client ID'),
           clientSecret: bounded(input.clientSecret, 'PayPal client secret'),
           webhookId: bounded(input.webhookId, 'PayPal webhook ID'),
-          sandbox: input.sandbox !== false,
         };
     if (!paymentProviderCredentialsConfigured({ code, isInstalled: true, credentials: data.credentials })) {
       throw new Error(`Payment provider ${code} credentials are incomplete or invalid.`);

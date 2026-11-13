@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { CheckboxField, Field, FieldInput } from '@/features/platform/components/Form';
+import { Field, FieldInput } from '@/features/platform/components/Form';
 import { PlatformPage } from '@/features/platform/components/PlatformPage';
 import { StatusPill } from '@/features/platform/components/StatusPill';
 import { Callout, Panel, PanelToolbar } from '@/features/platform/components/Surface';
@@ -19,9 +19,9 @@ type Provider = { id: string; name: string; code: string; isInstalled: boolean; 
 
 type CredentialForm = {
   secretKey: string; publishableKey: string; webhookSecret: string;
-  clientId: string; clientSecret: string; webhookId: string; sandbox: boolean;
+  clientId: string; clientSecret: string; webhookId: string;
 };
-const emptyCredentials: CredentialForm = { secretKey: '', publishableKey: '', webhookSecret: '', clientId: '', clientSecret: '', webhookId: '', sandbox: true };
+const emptyCredentials: CredentialForm = { secretKey: '', publishableKey: '', webhookSecret: '', clientId: '', clientSecret: '', webhookId: '' };
 
 export function PaymentProvidersPage() {
   const [providers, setProviders] = React.useState<Provider[]>([]);
@@ -129,7 +129,7 @@ export function PaymentProvidersPage() {
       <DialogContent>
         <DialogHeader><DialogTitle>Configure {editing?.name}</DialogTitle><DialogDescription>Saving replaces this provider’s credentials. Saved values can’t be shown again. Disabling the provider stops new guest payments; existing payments and refunds still reconcile.</DialogDescription></DialogHeader>
         <form className="space-y-4" onSubmit={save}>
-          {editing?.code === 'pp_stripe_stripe' ? <>{field('secretKey', 'Secret key')}{field('publishableKey', 'Publishable key')}{field('webhookSecret', 'Webhook signing secret')}</> : editing?.code === 'pp_paypal_paypal' ? <>{field('clientId', 'Client ID')}{field('clientSecret', 'Client secret')}{field('webhookId', 'Webhook ID')}<CheckboxField checked={credentials.sandbox} onChange={(checked) => setCredentials((current) => ({ ...current, sandbox: checked }))} label="Use PayPal sandbox" description="Untick only for live PayPal credentials." /></> : null}
+          {editing?.code === 'pp_stripe_stripe' ? <>{field('secretKey', 'Secret key')}{field('publishableKey', 'Publishable key')}{field('webhookSecret', 'Webhook signing secret')}</> : editing?.code === 'pp_paypal_paypal' ? <>{field('clientId', 'Client ID')}{field('clientSecret', 'Client secret')}{field('webhookId', 'Webhook ID')}</> : null}
           {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}</p> : null}
           <DialogFooter className="gap-2 sm:justify-between">
             {editing?.isInstalled ? <Button type="button" variant="ghost" className="text-rose-700 dark:text-rose-400" disabled={saving} onClick={() => editing && void disable(editing)}><ShieldOff aria-hidden="true" />Disable provider</Button> : <span />}
