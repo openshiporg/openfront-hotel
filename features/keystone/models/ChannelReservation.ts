@@ -9,7 +9,7 @@ import {
 
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterBookings, canFilterChannels, canFilterRooms } from '../access'
 
 export const ChannelReservation = list({
@@ -35,7 +35,7 @@ export const ChannelReservation = list({
     // Channel relationship
     channel: relationship({ isFilterable: canFilterChannels,
       ref: 'Channel.channelReservations',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'name',

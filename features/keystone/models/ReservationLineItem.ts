@@ -10,7 +10,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterBookings, canFilterUsers } from '../access'
 
 export const ReservationLineItem = list({
@@ -36,7 +36,7 @@ export const ReservationLineItem = list({
     // Reservation relationship
     reservation: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.lineItems',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'confirmationNumber',

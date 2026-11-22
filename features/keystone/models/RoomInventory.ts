@@ -11,7 +11,7 @@ import {
 import { isSignedIn, permissions } from '../access'
 import { getHotelAvailability } from '../inventory/roomAvailability'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterRooms } from '../access'
 
 async function authoritativeAvailable(item: any, context: any) {
@@ -66,7 +66,7 @@ export const RoomInventory = list({
     // Room type relationship
     roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'name',

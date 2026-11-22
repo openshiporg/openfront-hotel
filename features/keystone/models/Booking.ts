@@ -15,7 +15,7 @@ import { graphql } from '@keystone-6/core'
 import { isSignedIn, permissions } from '../access'
 import { ensureBookingHasGuestAccess } from '../lib/guestBookingAccess'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb, restrictRelation } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks, restrictRelation } from './requiredRelationship'
 import { canFilterBookings, canFilterGuests, canFilterPayments, canFilterRooms, canFilterUsers } from '../access'
 
 // Generate a unique confirmation number
@@ -299,7 +299,7 @@ export const Booking = list({
     // Guest profile relationship
     guestProfile: relationship({ isFilterable: canFilterGuests,
       ref: 'Guest.bookings',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'email',

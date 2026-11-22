@@ -2,7 +2,7 @@ import { list } from '@keystone-6/core';
 import { integer, json, relationship, select, text, timestamp } from '@keystone-6/core/fields';
 
 import { permissions } from '../access';
-import { requiredRelationshipDb } from './requiredRelationship';
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
 import { canFilterPayments, canFilterUsers } from '../access'
 
@@ -26,7 +26,7 @@ export const FolioEntry = list({
   fields: {
     folio: relationship({ isFilterable: canFilterPayments,
       ref: 'Folio.entries',
-      db: { foreignKey: true, ...requiredRelationshipDb },
+      db: { foreignKey: true, ...requiredRelationshipDb }, hooks: requiredRelationshipHooks,
     }),
     postingKey: text({
       isIndexed: 'unique',

@@ -13,7 +13,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { graphql } from '@keystone-6/core'
 import { canFilterBookings, canFilterPaymentProviders, canFilterPayments, canFilterUsers } from '../access'
 
@@ -272,7 +272,7 @@ export const BookingPayment = list({
     // Relationships
     booking: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.payments',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'confirmationNumber',
@@ -281,7 +281,7 @@ export const BookingPayment = list({
     }),
     paymentProvider: relationship({ isFilterable: canFilterPaymentProviders,
       ref: 'PaymentProvider.bookingPayments',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'name',

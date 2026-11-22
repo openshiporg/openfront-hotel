@@ -9,7 +9,7 @@ import {
 
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterBookings, canFilterHousekeeping, canFilterRooms } from '../access'
 
 export const Room = list({
@@ -43,7 +43,7 @@ export const Room = list({
     // Room type relationship
     roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType.rooms',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'name',

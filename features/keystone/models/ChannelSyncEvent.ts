@@ -10,7 +10,7 @@ import {
 
 import { permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterChannels, canFilterUsers } from '../access'
 
 export const ChannelSyncEvent = list({
@@ -36,7 +36,7 @@ export const ChannelSyncEvent = list({
   fields: {
     channel: relationship({ isFilterable: canFilterChannels,
       ref: 'Channel',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'name',

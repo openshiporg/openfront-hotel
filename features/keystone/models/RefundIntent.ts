@@ -3,7 +3,7 @@ import { denyAll } from '@keystone-6/core/access';
 import { integer, json, relationship, select, text, timestamp } from '@keystone-6/core/fields';
 
 import { permissions } from '../access';
-import { requiredRelationshipDb } from './requiredRelationship';
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
 import { canFilterBookings, canFilterPaymentProviders, canFilterPayments } from '../access'
 
@@ -39,9 +39,9 @@ export const RefundIntent = list({
     requestHash: text({ validation: { isRequired: true } }),
     cancellationEventKey: text({ validation: { isRequired: true } }),
     propertyKey: text({ validation: { isRequired: true } }),
-    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.refundIntents', db: requiredRelationshipDb }),
-    sourcePayment: relationship({ isFilterable: canFilterPayments, ref: 'BookingPayment.refundIntents', db: requiredRelationshipDb }),
-    paymentProvider: relationship({ isFilterable: canFilterPaymentProviders, ref: 'PaymentProvider.refundIntents', db: requiredRelationshipDb }),
+    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.refundIntents', db: requiredRelationshipDb, hooks: requiredRelationshipHooks }),
+    sourcePayment: relationship({ isFilterable: canFilterPayments, ref: 'BookingPayment.refundIntents', db: requiredRelationshipDb, hooks: requiredRelationshipHooks }),
+    paymentProvider: relationship({ isFilterable: canFilterPaymentProviders, ref: 'PaymentProvider.refundIntents', db: requiredRelationshipDb, hooks: requiredRelationshipHooks }),
     amountMinor: integer({ validation: { isRequired: true, min: 1 } }),
     currencyCode: text({ validation: { isRequired: true } }),
     reason: text({ validation: { isRequired: true } }),

@@ -3,7 +3,7 @@ import { checkbox, image, integer, json, relationship, text } from '@keystone-6/
 
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
-import { requiredRelationshipDb } from './requiredRelationship';
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship';
 import { canFilterRooms } from '../access'
 
 const storageInfrastructureConfigured = () => Boolean(
@@ -56,7 +56,7 @@ export const RoomImage = list({
     caption: text(),
     order: integer({ defaultValue: 0 }),
     isPrimary: checkbox({ defaultValue: false }),
-    roomType: relationship({ isFilterable: canFilterRooms, ref: 'RoomType.roomImages', db: requiredRelationshipDb }),
+    roomType: relationship({ isFilterable: canFilterRooms, ref: 'RoomType.roomImages', db: requiredRelationshipDb, hooks: requiredRelationshipHooks }),
     metadata: json(),
     ...trackingFields,
   },

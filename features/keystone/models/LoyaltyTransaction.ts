@@ -9,7 +9,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterBookings, canFilterGuests, canFilterUsers } from '../access'
 
 export const LoyaltyTransaction = list({
@@ -35,7 +35,7 @@ export const LoyaltyTransaction = list({
     // Guest relationship
     guest: relationship({ isFilterable: canFilterGuests,
       ref: 'Guest',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'email',

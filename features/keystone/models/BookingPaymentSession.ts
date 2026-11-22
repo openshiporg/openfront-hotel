@@ -2,7 +2,7 @@ import { list, graphql } from '@keystone-6/core';
 import { checkbox, integer, json, relationship, text, timestamp, virtual } from '@keystone-6/core/fields';
 import { permissions } from '../access';
 import { trackingFields } from './trackingFields';
-import { requiredRelationshipDb } from './requiredRelationship';
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship';
 import { canFilterBookings, canFilterPaymentProviders, canFilterPayments } from '../access'
 
 export const BookingPaymentSession = list({
@@ -53,11 +53,11 @@ export const BookingPaymentSession = list({
     }),
     booking: relationship({ isFilterable: canFilterBookings,
       ref: 'Booking.paymentSessions',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
     }),
     paymentProvider: relationship({ isFilterable: canFilterPaymentProviders,
       ref: 'PaymentProvider.bookingPaymentSessions',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
     }),
     payment: relationship({ isFilterable: canFilterPayments,
       ref: 'BookingPayment.paymentSession',

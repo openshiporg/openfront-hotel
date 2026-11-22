@@ -13,7 +13,7 @@ import {
 
 import { isSignedIn, permissions } from '../access'
 import { trackingFields } from './trackingFields'
-import { requiredRelationshipDb } from './requiredRelationship'
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship'
 import { canFilterBookings, canFilterRooms } from '../access'
 
 export const RatePlan = list({
@@ -54,7 +54,7 @@ export const RatePlan = list({
     // Room type relationship
     roomType: relationship({ isFilterable: canFilterRooms,
       ref: 'RoomType.ratePlans',
-      db: requiredRelationshipDb,
+      db: requiredRelationshipDb, hooks: requiredRelationshipHooks,
       ui: {
         displayMode: 'select',
         labelField: 'name',

@@ -2,7 +2,7 @@ import { list } from '@keystone-6/core';
 import { json, relationship, select, text, timestamp } from '@keystone-6/core/fields';
 
 import { permissions } from '../access';
-import { requiredRelationshipDb } from './requiredRelationship';
+import { requiredRelationshipDb, requiredRelationshipHooks } from './requiredRelationship';
 import { trackingFields } from './trackingFields';
 import { canFilterBookings, canFilterUsers } from '../access'
 
@@ -24,7 +24,7 @@ export const BookingModificationRequest = list({
   ui: { isHidden: true, hideCreate: true, hideDelete: true },
   fields: {
     requestKey: text({ isIndexed: 'unique', validation: { isRequired: true } }),
-    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.modificationRequests', db: { foreignKey: true, ...requiredRelationshipDb } }),
+    booking: relationship({ isFilterable: canFilterBookings, ref: 'Booking.modificationRequests', db: { foreignKey: true, ...requiredRelationshipDb }, hooks: requiredRelationshipHooks }),
     requestedCheckInDate: timestamp(),
     requestedCheckOutDate: timestamp(),
     guestMessage: text({ ui: { displayMode: 'textarea' } }),
