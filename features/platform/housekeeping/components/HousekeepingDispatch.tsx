@@ -31,7 +31,7 @@ export function HousekeepingDispatch({ tasks, staff, onRefresh }: { tasks: Task[
 
   React.useEffect(() => {
     try { const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); if (Array.isArray(stored)) setPending(stored); }
-    catch { setFeedback({ tone: 'error', text: 'Saved offline commands could not be read.' }); }
+    catch { setFeedback({ tone: 'error', text: 'Updates saved on this device could not be read.' }); }
   }, []);
   // A checklist confirmation belongs to one task at one revision; selecting another task or
   // receiving a newer revision clears it.
@@ -56,13 +56,13 @@ export function HousekeepingDispatch({ tasks, staff, onRefresh }: { tasks: Task[
     setBusy(true); let remaining = [...pending];
     try {
       for (const item of pending) {
-        if (!item.options.expectedUpdatedAt) throw new Error('This older local command has no task revision. Refresh, discard it locally and requeue against the current task.');
+        if (!item.options.expectedUpdatedAt) throw new Error('This saved update is out of date. Refresh tasks and enter it again.');
         unwrapAction(await updateHousekeepingTaskAction(item.taskId, item.status, item.options));
         remaining = remaining.filter(candidate => candidate.options.idempotencyKey !== item.options.idempotencyKey); savePending(remaining);
       }
-      setFeedback({ tone: 'success', text: 'All queued commands saved to the property.' }); onRefresh();
+      setFeedback({ tone: 'success', text: 'All saved updates were sent.' }); onRefresh();
     } catch (error) {
-      setFeedback({ tone: 'error', text: `${error instanceof Error ? error.message : 'Sync failed.'} The remaining commands stay on this device. Refresh the workspace before resolving a conflict.` });
+      setFeedback({ tone: 'error', text: `${error instanceof Error ? error.message : 'Sending failed.'} The remaining updates stay on this device. Refresh tasks, then try again.` });
     } finally { setBusy(false); }
   }
 
@@ -77,10 +77,10 @@ export function HousekeepingDispatch({ tasks, staff, onRefresh }: { tasks: Task[
       {pending.length ? (
         <Callout
           tone="warning"
-          title={`${pending.length} command${pending.length === 1 ? '' : 's'} saved on this device only`}
-          action={<Button size="sm" disabled={busy} onClick={sync}><CloudUpload aria-hidden="true" />{busy ? 'Syncing…' : 'Sync now'}</Button>}
+          title={`${pending.length} update${pending.length === 1 ? '' : 's'} saved on this device only`}
+          action={<Button size="sm" disabled={busy} onClick={sync}><CloudUpload aria-hidden="true" />{busy ? 'Sending…' : 'Send now'}</Button>}
         >
-          Queued updates are not visible to the property until synced.
+          Other staff cannot see these updates until you send them.
         </Callout>
       ) : null}
 
@@ -103,9 +103,9 @@ export function HousekeepingDispatch({ tasks, staff, onRefresh }: { tasks: Task[
       </FormGrid>
       <CheckboxField checked={inspected} onChange={setInspected} label="Cleanliness, safety and repairs checked" description="Required before completing an inspection task." />
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="outline" disabled={busy || !taskId} onClick={() => queue(false)}><ListPlus aria-hidden="true" />Queue assignment / notes</Button>
-        <Button type="button" size="sm" variant="outline" disabled={busy || !taskId} onClick={() => queue(true)}><ListPlus aria-hidden="true" />Queue completion</Button>
-        <Button type="button" size="sm" disabled={busy || !pending.length} onClick={sync}><CloudUpload aria-hidden="true" />Sync {pending.length} pending</Button>
+        <Button type="button" size="sm" variant="outline" disabled={busy || !taskId} onClick={() => queue(false)}><ListPlus aria-hidden="true" />Save assignment</Button>
+        <Button type="button" size="sm" variant="outline" disabled={busy || !taskId} onClick={() => queue(true)}><ListPlus aria-hidden="true" />Mark complete</Button>
+        <Button type="button" size="sm" disabled={busy || !pending.length} onClick={sync}><CloudUpload aria-hidden="true" />Send {pending.length} saved</Button>
         <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => onRefresh()}><RefreshCw aria-hidden="true" />Refresh tasks</Button>
       </div>
       <ActionMessage feedback={feedback} />
@@ -125,7 +125,7 @@ export function HousekeepingDispatch({ tasks, staff, onRefresh }: { tasks: Task[
           ))}
         </ul>
       ) : null}
-      <FormNote>Offline commands stay in this browser until synced. Server permissions, transitions and current task status are checked again during sync.</FormNote>
+      <FormNote>Updates stay on this device until you send them. Each one is checked against the task's current status when it is sent.</FormNote>
     </div>
   );
 }

@@ -182,3 +182,12 @@ h3.tiptap-heading + h2.tiptap-heading {
 	margin: 1.5rem 0;
 	padding-left: 1rem;
 }
+
+/* Phones: 16px fields stop iPhone Safari zooming the page when staff tap one. */
+@media (max-width: 767px) {
+	input:not([type='checkbox']):not([type='radio']):not([type='range']),
+	select,
+	textarea {
+		font-size: 16px;
+	}
+}

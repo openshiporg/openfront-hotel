@@ -73,15 +73,15 @@ export function GuestsPageClient({ data, error }: { data: GuestListPage | null; 
               onClear={values.search || values.segment !== 'all' ? () => update({ search: '', segment: 'all' }) : undefined}
             />
           ) : (
-            <DataTable minWidth="min-w-[820px]">
+            <DataTable minWidth="sm:min-w-[820px]">
               <THead>
                 <tr>
                   <Th>Guest</Th>
-                  <Th>Phone</Th>
-                  <Th>Segment</Th>
+                  <Th className="hidden sm:table-cell">Phone</Th>
+                  <Th className="hidden sm:table-cell">Segment</Th>
                   <Th align="right">Stays</Th>
-                  <Th>Last stay</Th>
-                  <Th align="right" title="Booked total of completed stays">Stay value</Th>
+                  <Th className="hidden sm:table-cell">Last stay</Th>
+                  <Th align="right" className="hidden sm:table-cell" title="Booked total of completed stays">Stay value</Th>
                   <Th><span className="sr-only">Actions</span></Th>
                 </tr>
               </THead>
@@ -91,7 +91,7 @@ export function GuestsPageClient({ data, error }: { data: GuestListPage | null; 
                   const seg = segmentOf(guest);
                   return (
                     <Tr key={guest.id}>
-                      <Td>
+                      <Td className="w-full max-w-0 sm:w-auto sm:max-w-none">
                         <div className="flex min-w-0 items-center gap-3">
                           <InitialsAvatar name={name} tone={seg === 'vip' ? 'vip' : seg === 'restricted' ? 'restricted' : 'neutral'} />
                           <div className="min-w-0">
@@ -100,8 +100,8 @@ export function GuestsPageClient({ data, error }: { data: GuestListPage | null; 
                           </div>
                         </div>
                       </Td>
-                      <Td className="whitespace-nowrap text-sm text-muted-foreground">{guest.phone || '—'}</Td>
-                      <Td>
+                      <Td className="hidden whitespace-nowrap text-sm text-muted-foreground sm:table-cell">{guest.phone || '—'}</Td>
+                      <Td className="hidden sm:table-cell">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {seg === 'vip' ? <StatusPill tone="warning" label={<span className="inline-flex items-center gap-1"><Star className="size-3" aria-hidden="true" />VIP</span>} /> : null}
                           {seg === 'restricted' ? <StatusPill tone="danger" label="Restricted" /> : null}
@@ -110,12 +110,12 @@ export function GuestsPageClient({ data, error }: { data: GuestListPage | null; 
                         </div>
                       </Td>
                       <Td numeric align="right">{guest.totalStays || 0}</Td>
-                      <Td className="whitespace-nowrap text-sm text-muted-foreground">{guest.lastStayAt ? formatStay(guest.lastStayAt) : 'Never'}</Td>
-                      <Td numeric align="right">{guest.totalSpent !== null && guest.totalSpent !== undefined && guest.totalSpent !== '' ? formatMoney(Number(guest.totalSpent)) : '—'}</Td>
+                      <Td className="hidden whitespace-nowrap text-sm text-muted-foreground sm:table-cell">{guest.lastStayAt ? formatStay(guest.lastStayAt) : 'Never'}</Td>
+                      <Td numeric align="right" className="hidden sm:table-cell">{guest.totalSpent !== null && guest.totalSpent !== undefined && guest.totalSpent !== '' ? formatMoney(Number(guest.totalSpent)) : '—'}</Td>
                       <Td align="right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button size="icon" variant="ghost" className="size-8" aria-label={`Actions for ${name}`}><MoreHorizontal aria-hidden="true" /></Button>
+                            <Button size="icon" variant="ghost" className="size-11 sm:size-8" aria-label={`Actions for ${name}`}><MoreHorizontal aria-hidden="true" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-52 [&_svg]:size-4">
                             <DropdownMenuItem asChild><Link href={`/dashboard/platform/guests/${guest.id}`}><UserRound aria-hidden="true" />Open profile</Link></DropdownMenuItem>

@@ -195,7 +195,7 @@ export function HousekeepingPage() {
       )}
 
       <Panel>
-        <PanelHeader title="Operations tools" description="Dispatch with offline sync, planned outages, guest service cases and staff dispatch rules." />
+        <PanelHeader title="Assign and plan" description="Assign tasks, plan room outages, log guest service requests and set who gets which work." />
         <WorkspaceTabs defaultValue="dispatch">
           <WorkspaceTabsList className="pt-1">
             <WorkspaceTabsTrigger value="dispatch">Dispatch & sync</WorkspaceTabsTrigger>
