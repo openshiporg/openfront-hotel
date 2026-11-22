@@ -32,7 +32,7 @@ const MAX_MESSAGE_LENGTH = 400;
 
 function cleanMessage(message: string): string | null {
   // Keystone lists failures as "  - List.field: message"; keep only the message
-  const text = message.replace(/^\s*-\s*\w+(\.\w+)+:\s*/gm, '').replace(/\s+\n/g, '\n').trim();
+  const text = message.replace(/^You provided invalid data for this operation\.\s*/, '').replace(/^\s*-\s*\w+(\.\w+)+:\s*/gm, '').replace(/\s+\n/g, '\n').trim();
   if (!text || text.length > MAX_MESSAGE_LENGTH || UNSAFE_DETAIL.test(text)) return null;
   return text;
 }
