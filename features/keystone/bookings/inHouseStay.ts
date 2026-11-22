@@ -74,7 +74,6 @@ export async function amendInHouseStay(context: any, input: { bookingId: string;
     const waivedMinor = Math.max(0, Number(booking.totalAmountMinor || 0) - repricedTotal);
     if (waivedMinor > 0 && (!input.earlyDepartureReason?.trim() || input.earlyDepartureReason.trim().length > 1000)) throw new Error('An explicit reason of 1–1000 characters is required for the operator waiver of booked charges.');
     if (waivedMinor > 0 && waivedMinor >= Number(quote.settings?.writeOffApprovalThresholdMinor ?? 0)) {
-      if (!input.earlyDepartureApprovalId) throw new Error(`An independent write-off approval for booking ${booking.id}, ${moneyText(waivedMinor)}, is required to waive booked charges on early departure or a lower-priced amendment.`);
       await requireHotelApproval(p, { approvalId: input.earlyDepartureApprovalId, action: 'write_off', aggregateId: booking.id, amountMinor: waivedMinor, actorId: context.session.itemId, operationKey: eventKey });
     }
     const ensured = await ensureBookingFolio(tx, booking.id);

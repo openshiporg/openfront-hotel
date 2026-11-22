@@ -64,14 +64,12 @@ export function SecurityAuthorizationOperations({ bookingId }: { bookingId: stri
           <Field label="Capture amount" htmlFor={`capture-${bookingId}`} hint={amountInvalid ? 'Enter a dollar amount, like 50 or 50.25.' : 'In dollars. Cannot exceed actual posted folio charges.'}>
             <MoneyInput id={`capture-${bookingId}`} invalid={amountInvalid} value={amount} onChange={event => setAmount(event.target.value)} placeholder="50.00" />
           </Field>
-          <Field label="Capture approval ID" htmlFor={`capture-approval-${bookingId}`} hint={<>Request one in <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Approvals <ExternalLink className="inline size-3" aria-hidden="true" /></Link></>}>
-            <FieldInput id={`capture-approval-${bookingId}`} aria-label="Security capture approval ID" value={approvalId} onChange={event => setApprovalId(event.target.value)} />
-          </Field>
+          <p className="text-xs text-muted-foreground sm:col-span-2">A second staff member approves the capture first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" disabled={busy} onClick={() => void run('sync')}><RefreshCw aria-hidden="true" />Reconcile</Button>
           <Button size="sm" variant="outline" disabled={busy || !data.operator} onClick={() => void run('release')}><Unlock aria-hidden="true" />Release hold</Button>
-          <Button size="sm" disabled={busy || !data.operator || !approvalId || amountMinor === null} onClick={() => void run('capture')}>Capture approved charges</Button>
+          <Button size="sm" disabled={busy || !data.operator || amountMinor === null} onClick={() => void run('capture')}>Capture approved charges</Button>
         </div>
         {!data.operator ? <FormNote>Release and capture require payment operator permission.</FormNote> : null}
         <ActionMessage feedback={feedback} />

@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 
 import React from 'react';
 import { History, KeyRound, LogOut, UserPlus } from 'lucide-react';
@@ -97,9 +98,7 @@ export function InHouseStayControls({ bookingId, checkInDate, checkOutDate, onSa
           <Field label="Waiver reason" htmlFor={`waiver-${bookingId}`} hint="Required when reducing booked charges.">
             <FieldInput id={`waiver-${bookingId}`} aria-label="Reason for reducing booked charges" placeholder="Reason for operator waiver" value={waiverReason} onChange={event => setWaiverReason(event.target.value)} />
           </Field>
-          <Field label="Approval ID" htmlFor={`waiver-approval-${bookingId}`} optional hint="Needed when the reduction meets the property threshold.">
-            <FieldInput id={`waiver-approval-${bookingId}`} aria-label="Early departure write-off approval ID" placeholder="Independent approval ID" value={approvalId} onChange={event => setApprovalId(event.target.value)} />
-          </Field>
+          <p className="text-xs text-muted-foreground sm:col-span-2">Over the property threshold, a second staff member approves it first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
           <div className="flex items-end">
             <Button type="button" size="sm" disabled={busy || departure === savedDeparture} onClick={() => amend()}>Reprice remaining stay</Button>
           </div>

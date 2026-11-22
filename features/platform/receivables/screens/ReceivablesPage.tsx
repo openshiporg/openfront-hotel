@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Building2, FileInput, Landmark, RefreshCw, Route, Split } from 'lucide-react';
@@ -245,7 +246,7 @@ export function ReceivablesPage() {
               {amountField('Amount (USD)', 'ar-amount-collect')}
               <Field label="Collection reference" htmlFor="ar-reference-collect"><FieldInput id="ar-reference-collect" value={fields.reference} onChange={set('reference')} /></Field>
               <Field label="Method" htmlFor="ar-method"><NativeSelect id="ar-method" value={fields.method} onChange={set('method')}><option value="bank_transfer">Bank transfer</option><option value="check">Check</option><option value="cash">Cash</option></NativeSelect></Field>
-              <Field label="Approval ID" htmlFor="ar-approvalId" optional hint="Write-offs and company refunds."><FieldInput id="ar-approvalId" value={fields.approvalId} onChange={set('approvalId')} /></Field>
+              <p className="text-xs text-muted-foreground sm:col-span-2">Write-offs and company refunds over the threshold are approved by a second staff member in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
             </div>
           </PanelBody>
           {data.invoices.length ? (

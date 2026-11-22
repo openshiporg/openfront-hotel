@@ -207,9 +207,25 @@ export function assertHotelApprovalEvidence(request: any, decision: any, input: 
   if (input.parameters !== undefined && hashLifecycleRequest(request.parameters) !== hashLifecycleRequest(input.parameters)) throw new Error('Approval parameters do not match the requested change.');
 }
 const APPROVAL_ACTION_LABELS: Record<HotelApprovalAction, string> = { refund: 'Refund', write_off: 'Write off', rate_publish: 'Rate publish', cash_variance: 'Cash variance', security_capture: 'Security capture', payout_reconcile: 'Payout reconcile' };
+async function findApprovedHotelApproval(prisma: any, input: { action: HotelApprovalAction; aggregateId: string; amountMinor: number; actorId: string; operationKey: string; parameters?: unknown }) {
+  const requests = await prisma.hotelAuditEvent.findMany({ where: { propertyKey: HOTEL_PROPERTY_KEY, aggregateType: 'hotel_approval', action: 'request', AND: [
+    { afterSnapshot: { path: ['action'], equals: input.action } }, { afterSnapshot: { path: ['aggregateId'], equals: input.aggregateId } },
+    { afterSnapshot: { path: ['requestedBy'], equals: input.actorId } }, { afterSnapshot: { path: ['amountMinor'], equals: input.amountMinor } },
+  ] }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 20, select: { aggregateId: true, afterSnapshot: true } });
+  for (const request of requests) {
+    const [decision, consumed] = await Promise.all([
+      prisma.hotelAuditEvent.findUnique({ where: { eventKey: `hotel-approval:${request.aggregateId}:decision` } }),
+      prisma.hotelAuditEvent.findUnique({ where: { eventKey: `hotel-approval:${request.aggregateId}:used` } }),
+    ]);
+    if (consumed && consumed.afterSnapshot?.operationKey !== input.operationKey) continue;
+    try { assertHotelApprovalEvidence(request.afterSnapshot, decision?.afterSnapshot, input); return request.aggregateId as string; } catch { /* not a match */ }
+  }
+  return null;
+}
 export async function requireHotelApproval(prisma: any, input: { approvalId?: string | null; action: HotelApprovalAction; aggregateId: string; amountMinor: number; actorId: string; operationKey: string; parameters?: unknown }) {
-  if (!String(input.approvalId || '').trim()) throw new Error(`This needs approval from a second staff member. On the Approvals page, request a "${APPROVAL_ACTION_LABELS[input.action]}" approval for ${input.aggregateId}${input.amountMinor ? ` for ${moneyText(input.amountMinor)}` : ''}; once another authorized staff member approves it, enter its approval ID here.`);
-  const approvalId = text(input.approvalId, 'Independent approval ID', 100);
+  // Staff never paste IDs: without one, use this actor's approved, unused request for exactly this action, target and amount.
+  const approvalId = String(input.approvalId || '').trim() ? text(input.approvalId, 'Independent approval ID', 100) : await findApprovedHotelApproval(prisma, input);
+  if (!approvalId) throw new Error(`This needs approval from a second staff member. Request a "${APPROVAL_ACTION_LABELS[input.action]}" approval${input.amountMinor ? ` for ${moneyText(input.amountMinor)}` : ''} on the Approvals page; once another authorized staff member approves it, try again.`);
   await lock(prisma, `approval:${approvalId}`);
   const [request, decision, consumed] = await Promise.all([
     prisma.hotelAuditEvent.findUnique({ where: { eventKey: `hotel-approval:${approvalId}:request` } }),

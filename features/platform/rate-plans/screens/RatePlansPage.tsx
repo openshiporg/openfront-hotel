@@ -315,9 +315,7 @@ export function RatePlansPage() {
                 <WorkspaceSelect label="Sort rate plans" value={sort} onChange={setSort}><option value="priority">Sort: priority</option><option value="rate">Sort: highest rate</option><option value="name">Sort: name</option></WorkspaceSelect>
               </WorkspaceControls>
               <div className="flex flex-col gap-2 rounded-md bg-muted/40 px-3 py-2 sm:flex-row sm:items-center">
-                <label htmlFor="rate-approval" className="shrink-0 text-xs font-medium">Publication approval ID</label>
-                <FieldInput id="rate-approval" className="h-8 font-mono text-xs sm:max-w-xs" value={approvalId} onChange={event => setApprovalId(event.target.value)} placeholder="Required when policy demands approval" />
-                <p className="text-xs text-muted-foreground">Must name the rate-plan ID and the exact resulting status/visibility. <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Open approvals</Link></p>
+                <p className="text-xs text-muted-foreground">When publishing needs approval, a second staff member approves the change first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
               </div>
             </PanelToolbar>
             {visibleRatePlans.length === 0 ? (

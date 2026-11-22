@@ -102,7 +102,7 @@ export function PayoutsPage() {
           <PanelBody className="space-y-4">
             <Field label="Bank deposit / debit reference" htmlFor="payout-bank-ref"><FieldInput id="payout-bank-ref" aria-label="Bank deposit or debit reference" value={bankReference} onChange={e => setBankReference(e.target.value)} /></Field>
             <Field label="Bank amount" htmlFor="payout-bank-amount" hint={bankInvalid ? 'Enter a dollar amount, like 1250.40, or -35 for a debit.' : 'In dollars. Use a minus sign for a debit.'}><MoneyInput id="payout-bank-amount" aria-label="Bank amount in dollars" invalid={bankInvalid} value={bankAmount} onChange={e => setBankAmount(e.target.value)} /></Field>
-            <Field label="Approval ID" htmlFor="payout-approval" hint={<>Filled automatically after a request. <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Open approvals <ExternalLink className="inline size-3" aria-hidden="true" /></Link></>}><FieldInput id="payout-approval" aria-label="Payout approval ID" value={approvalId} onChange={e => setApprovalId(e.target.value)} /></Field>
+            <p className="text-xs text-muted-foreground sm:col-span-2">A second staff member approves the match first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
             <FormNote>Matching records evidence only; it does not independently verify a provider or bank account.</FormNote>
           </PanelBody>
         </Panel>
@@ -152,7 +152,7 @@ export function PayoutsPage() {
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" variant="outline" disabled={busy} onClick={() => void run({ action: 'refresh', id: row.id })}><RefreshCw aria-hidden="true" />Recheck evidence</Button>
                       <Button size="sm" variant="outline" disabled={busy || blocked || !bankReady} onClick={() => void requestApproval(row)}><ShieldCheck aria-hidden="true" />Request approval</Button>
-                      <Button size="sm" disabled={busy || blocked || !approvalId || !bankReady} onClick={() => void run({ action: 'confirm', id: row.id, bankReference, bankAmountMinor: bankMinor ?? 0, approvalId })}><CheckCheck aria-hidden="true" />Match approved bank evidence</Button>
+                      <Button size="sm" disabled={busy || blocked || !bankReady} onClick={() => void run({ action: 'confirm', id: row.id, bankReference, bankAmountMinor: bankMinor ?? 0, approvalId })}><CheckCheck aria-hidden="true" />Match approved bank evidence</Button>
                       {!bankReady && !blocked ? <span className="self-center text-xs text-muted-foreground">Enter bank evidence above first.</span> : null}
                     </div>
                   ) : null}

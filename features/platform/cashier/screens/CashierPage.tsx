@@ -78,7 +78,7 @@ export function CashierPage() {
               <div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span><FieldInput id="cash-amount" inputMode="decimal" className="pl-6 tabular-nums" value={amount} onChange={e => setAmount(e.target.value)} /></div>
             </Field>
             <Field label="Reason / variance note" htmlFor="cash-reason" optional><FieldInput id="cash-reason" value={reason} onChange={e => setReason(e.target.value)} /></Field>
-            <Field label="Approval ID" htmlFor="cash-approval" optional hint="When a variance meets the threshold."><FieldInput id="cash-approval" value={approvalId} onChange={e => setApprovalId(e.target.value)} /></Field>
+            <p className="text-xs text-muted-foreground sm:col-span-2">Over the property threshold, a second staff member approves it first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button size="sm" disabled={busy} onClick={() => void run('open')}><LockKeyhole aria-hidden="true" />Open shift for {drawer || 'drawer'}</Button>

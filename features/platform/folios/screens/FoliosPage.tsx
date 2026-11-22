@@ -269,14 +269,7 @@ export function FoliosPage() {
   const approvalTarget = overdueBooking?.id || selected?.booking?.id || selected?.id;
 
   const riskApprovalField = (
-    <Field
-      label="Approval ID"
-      htmlFor={reversalEntry ? 'reversal-approval' : 'overdue-approval'}
-      optional
-      hint={<>Required when property policy sets a threshold. Target {approvalTarget ? <CopyId value={approvalTarget} className="align-middle" /> : null} · <Link href="/dashboard/platform/approvals" target="_blank" className="underline underline-offset-2">Open approvals</Link></>}
-    >
-      <FieldInput id={reversalEntry ? 'reversal-approval' : 'overdue-approval'} value={riskApprovalId} onChange={event => setRiskApprovalId(event.target.value)} disabled={riskBusy} />
-    </Field>
+    <p className="text-xs text-muted-foreground sm:col-span-2">Over the property threshold, a second staff member approves it first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
   );
 
   return (
@@ -483,9 +476,7 @@ export function FoliosPage() {
                         <Field label="Correction direction" htmlFor="folio-direction">
                           <NativeSelect id="folio-direction" aria-label="Folio entry direction" value={action.direction} onChange={e => setAction({ ...action, direction: e.target.value })}><option value="debit">Charge (debit)</option><option value="credit">Credit</option></NativeSelect>
                         </Field>
-                        <Field label="Credit approval ID" htmlFor="folio-approval" optional className="sm:col-span-2" hint={<>For policy-controlled credits. Target <CopyId value={selected.booking?.id || selected.id} className="align-middle" /></>}>
-                          <FieldInput id="folio-approval" aria-label="Credit approval ID" value={action.approvalId} onChange={event => setAction({ ...action, approvalId: event.target.value })} />
-                        </Field>
+                        <p className="text-xs text-muted-foreground sm:col-span-2">Credits over the threshold are approved by a second staff member first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
                       </div>
                       <FormNote>A post-stay refund reopens its folio until an authorized zero-balance reconciliation closes it again.</FormNote>
                     </PanelBody>

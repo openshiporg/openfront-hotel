@@ -119,7 +119,7 @@ export default function DerivedRatePanel() {
               <Link className="text-xs text-muted-foreground underline underline-offset-2" href="/dashboard/platform/approvals">Review approvals</Link>
             </div>
             <div className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-end">
-              <Field label="Approved request ID" htmlFor="derived-approval" className="sm:max-w-xs sm:flex-1"><FieldInput id="derived-approval" className="font-mono" value={approvalId} onChange={event => setApprovalId(event.target.value)} /></Field>
+              <p className="text-xs text-muted-foreground sm:col-span-2">When publishing needs approval, a second staff member approves it first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
               <Button size="sm" className="h-9" disabled={busy || adjustmentInvalid} onClick={() => void run(save)}><Save aria-hidden="true" />Apply configuration</Button>
             </div>
             <FormNote>Parent price changes affect future quotes only; existing reservation snapshots stay unchanged.</FormNote>

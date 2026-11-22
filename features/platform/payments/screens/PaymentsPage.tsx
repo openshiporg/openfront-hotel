@@ -208,9 +208,7 @@ export function PaymentsPage() {
             <MoneyInput ref={refundAmountRef} id="refund-amount" invalid={refundInvalid} value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} disabled={!refundQuote || quoteLoading || refunding} required />
           </Field>
           <Field label="Reason" htmlFor="refund-reason"><FieldInput id="refund-reason" value={refundReason} onChange={(event) => setRefundReason(event.target.value)} maxLength={500} disabled={!refundQuote || quoteLoading || refunding} required /></Field>
-          <Field label="Approval ID" htmlFor="refund-approval" optional hint={<>Needed when the amount meets the property threshold. Approve payment {refundPayment?.id ? <CopyId value={refundPayment.id} className="align-middle" /> : null} for {refundMinor !== null ? formatMoneyMinor(refundMinor, refundQuote?.currencyCode || 'USD') : 'the refund amount'} in <Link className="underline underline-offset-2" href="/dashboard/platform/approvals" target="_blank">Approvals</Link>.</>}>
-            <FieldInput id="refund-approval" value={refundApprovalId} onChange={event => setRefundApprovalId(event.target.value)} disabled={refunding} />
-          </Field>
+          <p className="text-xs text-muted-foreground sm:col-span-2">Over the property threshold, a second staff member approves it first in <Link href="/dashboard/platform/approvals" className="underline underline-offset-2">Approvals</Link>.</p>
           {refundError ? <p className="text-sm text-destructive" role="alert">{refundError}</p> : null}
           <DialogFooter><Button type="button" variant="outline" onClick={closeRefundDialog} disabled={refunding}>Cancel</Button><Button type="submit" disabled={!refundQuote || refundQuote.refundableMinor <= 0 || refundMinor === null || refundInvalid || quoteLoading || refunding}>{refunding ? 'Submitting…' : 'Request refund'}</Button></DialogFooter>
         </form>
