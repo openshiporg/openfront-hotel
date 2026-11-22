@@ -12,16 +12,17 @@ import { FieldLabel } from '@/components/ui/field-label'
 import { FieldDescription } from '@/components/ui/field-description'
 import { Info } from 'lucide-react'
 import { entriesTyped } from '../../lib/entriesTyped'
-import { dollarsToMinor, formatMoneyMinor, minorToDollars } from '@/features/platform/lib/format'
+import { dollarsToMinor, formatMoneyMinor } from '@/features/platform/lib/format'
 
 // Hotel money is stored as whole cents in fields named *Minor. Staff always type and read dollars.
 // Cent fields that predate the *Minor naming.
 const CENT_PATHS = new Set(['amount', 'priceAdjustment', 'totalAmount', 'commission', 'unitPrice', 'totalPrice', 'averageDailyRate', 'revenuePerAvailableRoom', 'totalRevenue'])
+const money2 = (minor: number | null | undefined) => (minor === null || minor === undefined ? "" : (minor / 100).toFixed(2))
 const isMoney = (field: { path: string; label?: string }) => /Minor$/.test(field.path) || CENT_PATHS.has(field.path)
 const moneyLabel = (label: string) => label
 
 function MoneyField({ field, value, onChange, autoFocus, forceValidation, isRequired = false }: IntegerFieldProps) {
-  const [text, setText] = useState(() => minorToDollars(value.value))
+  const [text, setText] = useState(() => money2(value.value))
   const [isDirty, setDirty] = useState(false)
   const min = field.validation?.min
   const signed = min === undefined || min < 0
@@ -41,7 +42,7 @@ function MoneyField({ field, value, onChange, autoFocus, forceValidation, isRequ
           required={isRequired}
           placeholder="0.00"
           value={text}
-          onBlur={() => { setDirty(true); if (parsed !== null) setText(minorToDollars(parsed)) }}
+          onBlur={() => { setDirty(true); if (parsed !== null) setText(money2(parsed)) }}
           onChange={(e) => { setText(e.target.value); const next = e.target.value.trim() === '' ? null : dollarsToMinor(e.target.value, { allowZero: true, signed }); if (onChange && (next !== null || e.target.value.trim() === '')) onChange({ ...value, value: next }) }}
           className={error ? 'border-red-500 pl-7 shadow-xs' : 'pl-7 shadow-xs'}
         />
