@@ -6,7 +6,6 @@ import type { Metadata, Viewport } from 'next';
 import { EB_Garamond, Jost } from 'next/font/google';
 import { SiteHeader } from '@/features/storefront/components/chrome/SiteHeader';
 import { SiteFooter } from '@/features/storefront/components/chrome/SiteFooter';
-import { TabBar } from '@/features/storefront/components/chrome/TabBar';
 import { HotelSettingsProvider } from '@/features/storefront/components/HotelSettingsProvider';
 import { getHotelSettings } from '@/features/storefront/lib/hotel-settings';
 import { STOREFRONT_THEME_PRIMARY } from '@/features/storefront/lib/storefront-theme';
@@ -102,7 +101,6 @@ export default async function StorefrontLayout({
           <SiteHeader />
           <main id="storefront-content" tabIndex={-1} className="sf-main">{children}</main>
           <SiteFooter />
-          <TabBar />
         </div>
       </StayProvider>
       </GuestAccountProvider>

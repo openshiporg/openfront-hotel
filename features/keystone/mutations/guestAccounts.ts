@@ -1,6 +1,7 @@
 import { enforceAbuseLimit } from '../lib/abuseControl';
 import { guestAccessTokenMatches, listGuestBookingAccess } from '../lib/guestBookingAccess';
 import { guessablePassword } from '../lib/guessablePassword';
+import { expireLapsedHoldsFor } from '../lib/expireHotelHolds';
 import { hotelMailInfrastructureConfigured } from '../lib/mail';
 import { STOREFRONT_BOOKING_QUERY } from '../lib/storefrontBooking';
 
@@ -87,6 +88,8 @@ export function createGuestAccountResolvers(mapGuestBooking: (booking: any) => a
         // Pages are bounded and ordered by a unique tie-breaker so every stay appears exactly once.
         const take = Math.min(Math.max(Math.trunc(Number(args.take ?? GUEST_BOOKINGS_PAGE_SIZE)) || GUEST_BOOKINGS_PAGE_SIZE, 1), 100);
         const skip = Math.min(Math.max(Math.trunc(Number(args.skip ?? 0)) || 0, 0), 100_000);
+        const lapsed = await context.prisma.booking.findMany({ where: { guestId: id, status: 'pending', holdExpiresAt: { lte: new Date() } }, select: { id: true }, take: 100 });
+        await expireLapsedHoldsFor(context, lapsed.map((row: { id: string }) => row.id));
         const bookings = await context.sudo().query.Booking.findMany({
           where: { guest: { id: { equals: id } } },
           orderBy: [{ checkInDate: 'desc' }, { id: 'desc' }],

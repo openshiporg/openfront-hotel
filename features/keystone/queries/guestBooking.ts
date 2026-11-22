@@ -1,4 +1,5 @@
 import { assertGuestBookingAccess } from '../lib/guestBookingAccess';
+import { expireLapsedHoldsFor } from '../lib/expireHotelHolds';
 import { findStorefrontBooking } from '../lib/storefrontBooking';
 
 async function guestBooking(
@@ -7,6 +8,7 @@ async function guestBooking(
   context: any
 ) {
   await assertGuestBookingAccess(context, bookingId);
+  await expireLapsedHoldsFor(context, [bookingId]);
   const booking = await findStorefrontBooking(context, bookingId);
   if (!booking) return null;
   const [pending, changeRequest] = await Promise.all([

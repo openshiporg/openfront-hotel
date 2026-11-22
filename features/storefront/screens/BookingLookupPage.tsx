@@ -12,7 +12,6 @@ import {
 } from '@/features/storefront/actions/guest-search';
 import { GuestSearchStatus } from '@/features/storefront/components/GuestSearchStatus';
 import { GuestSearchSubmitButton } from '@/features/storefront/components/GuestSearchSubmitButton';
-import { GuestPortalNav } from '@/features/storefront/components/GuestPortalNav';
 import { paymentStatusLabel } from '@/features/storefront/lib/stay-context';
 
 interface LookupBooking {
@@ -78,7 +77,6 @@ export default function BookingLookupPage() {
           <p className="sf-eyebrow">Manage your stay</p>
           <h1 className="sf-h1">Your stay, <em>in one place.</em></h1>
           <p className="sf-lead">Use your confirmation number and the email on the reservation to view stay details, add the stay to your calendar, or request changes.</p>
-          <GuestPortalNav current="/bookings/lookup" />
           <ul className="sf-stack" style={{ '--stack': '18px', listStyle: 'none', padding: 0, marginTop: 36 } as React.CSSProperties}>
             {BENEFITS.map(item => <li key={item.title} className="sf-row" style={{ alignItems: 'flex-start', flexWrap: 'nowrap', gap: 16 }}>
               <span className="sf-feature__icon" style={{ flex: 'none' }}><item.icon aria-hidden="true" /></span>
@@ -91,7 +89,7 @@ export default function BookingLookupPage() {
           <form action={formAction} className="sf-float sf-pad-lg sf-stack" style={{ '--stack': '20px' } as React.CSSProperties}>
             <div>
               <p className="sf-eyebrow sf-eyebrow--plain" style={{ gap: 8 }}><ShieldCheck aria-hidden="true" style={{ width: 16 }} /> Secure reservation lookup</p>
-              <p className="sf-muted sf-small" style={{ marginTop: 8 }}>Your confirmation number starts with BK- and is shown on your reservation page and in your confirmation email.</p>
+              <p className="sf-muted sf-small" style={{ marginTop: 8 }}>Your confirmation number starts with BK- and is shown on your reservation page.</p>
             </div>
 
             <label className="sf-field" htmlFor="confirmationNumber">
@@ -131,7 +129,8 @@ export default function BookingLookupPage() {
             <GuestSearchStatus state={{ phase: state.status, message: state.message, value: result }} />
 
             <GuestSearchSubmitButton idleLabel="Find reservation" pendingLabel="Searching…" />
-            <p className="sf-fine" style={{ display: 'flex', gap: 8 }}><CalendarDays aria-hidden="true" style={{ width: 15, flex: 'none', marginTop: 2 }} />With a guest account, every stay you book or find is kept in one place. <Link href="/account" className="sf-link" style={{ minHeight: 0, fontSize: 'inherit' }}>Sign in or create an account</Link></p>
+            <p className="sf-fine">With a guest account, every stay you book or find is kept in one place.</p>
+            <Link href="/account" className="sf-link" style={{ width: 'fit-content' }}>Sign in or create an account</Link>
           </form>
 
           {result ? (

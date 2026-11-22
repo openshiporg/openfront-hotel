@@ -1,6 +1,5 @@
 import { AccountAuthPanel } from '../components/account/AccountAuthPanel';
 import { AccountDashboard } from '../components/account/AccountDashboard';
-import { GuestPortalNav } from '../components/GuestPortalNav';
 import { getGuestAccountBookings, getGuestAccountStatus } from '../lib/guest-account';
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -25,7 +24,6 @@ export default async function AccountPage({ searchParams }: { searchParams: Sear
       <p className="sf-eyebrow">{account ? 'Your account' : 'Guest account'}</p>
       <h1 className="sf-h1">{account ? <>Welcome back, <em>{account.name.split(' ')[0] || account.name}.</em></> : <>A place <em>for your stays.</em></>}</h1>
       <p className="sf-lead">{account ? 'Your stays, statements and details, all in one place.' : 'Sign in to see your stays and book faster, or create an account in a minute.'}</p>
-      <GuestPortalNav current="/account" />
     </header>
     {account
       ? <AccountDashboard account={account} stays={stays} />

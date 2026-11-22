@@ -16,7 +16,7 @@ import { DEFAULT_STORE_LOGO_GOLD_ICON, DEFAULT_STORE_LOGO_ICON, normalizeStoreLo
 const GOLD_LOGO_ICON = DEFAULT_STORE_LOGO_GOLD_ICON;
 
 const primary = [
-  { href: '/', label: 'Hotel' },
+  { href: '/', label: 'Home' },
   { href: '/rooms', label: 'Rooms' },
   { href: '/amenities', label: 'Amenities' },
   { href: '/gallery', label: 'Gallery' },
@@ -95,7 +95,7 @@ export function SiteHeader() {
           <CalendarDays aria-hidden="true" /><b>{rangeLabel(arrival, departure)}</b> · {guests} {guests === 1 ? 'guest' : 'guests'}
         </StayLink>}
         <nav className="sf-drawer__primary" aria-label="Explore">
-          {primary.filter(link => link.href !== '/').map(link => <StayLink key={link.href} href={link.href} aria-current={current(link.href)} onClick={() => drawer.current?.close()}>{link.label}<ArrowUpRight aria-hidden="true" /></StayLink>)}
+          {primary.map(link => <StayLink key={link.href} href={link.href} aria-current={current(link.href)} onClick={() => drawer.current?.close()}>{link.label}<ArrowUpRight aria-hidden="true" /></StayLink>)}
         </nav>
         <nav className="sf-drawer__secondary" aria-label="Your stay">
           <Link href="/account" aria-current={current('/account')} onClick={() => drawer.current?.close()}>{account ? 'Your account' : 'Sign in or create an account'}</Link>

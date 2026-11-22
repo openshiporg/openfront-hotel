@@ -20,3 +20,22 @@ export async function expireHotelHoldBatch(context: any, now = new Date(), renew
   }
   return { processed, failures, leaseLost };
 }
+
+/**
+ * Releases lapsed unpaid holds among the given reservations on the request that reads them, so a guest
+ * never sees "awaiting confirmation" on a stay whose hold is gone. Same idempotency key as the batch,
+ * so a staff refresh and a guest page load can never cancel a reservation twice.
+ */
+export async function expireLapsedHoldsFor(context: any, bookingIds: string[], now = new Date()) {
+  const ids = [...new Set(bookingIds.filter(Boolean))].slice(0, 100);
+  if (!ids.length) return 0;
+  const rows = await context.prisma.booking.findMany({ where: { id: { in: ids }, status: 'pending', holdExpiresAt: { lte: now } }, select: { id: true } });
+  let released = 0;
+  for (const row of rows) {
+    try {
+      await requestBookingCancellation({ context, bookingId: row.id, refundReason: 'Unconfirmed reservation hold expired', idempotencyKey: `hold-expired:${row.id}`, actorId: null, source: 'hold_expiry' });
+      released += 1;
+    } catch { /* The staff refresh retries it; the guest still sees the stored status. */ }
+  }
+  return released;
+}

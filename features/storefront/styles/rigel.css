@@ -240,7 +240,6 @@
 .sf:has(.rg-cancelbar) .sf-footer__bottom { padding-bottom: 54px; }
 
 /* Phone tab bar. */
-.sf-tabbar { display: none; }
 
 /* ─── Phones ─────────────────────────────────────────────────────────── */
 @media (max-width: 767px) {
@@ -259,30 +258,20 @@
   .sf-header[data-overlay='true']:not([data-scrolled='true']) { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; color: #fff; }
   .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { color: #fff; }
   /* Mark and name both stay visible over the hero; the name truncates before it reaches the actions. */
-  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { max-width: calc(100vw - 150px); }
+  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { max-width: calc(100vw - 164px); }
   .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-header__row { justify-content: center; }
-  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-header__actions { position: absolute; right: 20px; }
-  .sf-header__manage { display: none; }
-  .sf-menu-btn { width: 40px; height: 40px; }
+  .sf-header__manage { display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0; }
+  .sf-header__actions { gap: 4px; }
+  .sf-menu-btn { width: 44px; height: 44px; }
 
-  .sf-tabbar { position: fixed; z-index: 45; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: rgb(255 255 255 / 0.97); border-top: 1px solid var(--line); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-  .sf-tabbar a { display: grid; justify-items: center; gap: 2px; min-width: 0; padding: 4px 0; font-size: 0.75rem; color: #737b8a; }
-  .sf-tabbar a span { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sf-tabbar svg { width: 20px; height: 20px; stroke-width: 1.4; }
-  .sf-tabbar a[aria-current='page'] { color: var(--navy); font-weight: 500; }
-  .sf-tabbar a[aria-current='page'] svg { fill: var(--navy); stroke: var(--navy); }
-  .sf-footer { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-  /* Solid, so the rate cards scrolling underneath never read through the price. */
-  .sf-mobilebar { bottom: calc(60px + env(safe-area-inset-bottom)); background: #fff; }
-  .sf-tabbar { background: #fff; }
-  .sf-comparebar { bottom: calc(72px + env(safe-area-inset-bottom)); }
+  /* One navigation on phones: the menu. The stay bar on a room page sits on the bottom edge. */
+  .sf-mobilebar { background: #fff; }
   .sf-sheet { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
   /* Phone date and guest popovers: full gutter width under the planner, scroll inside. */
   .sf-pop--stay, .sf-pop--guests { width: calc(100vw - 24px); max-height: calc(var(--radix-popover-content-available-height, 80dvh) - 8px); overflow-y: auto; overscroll-behavior: contain; padding: 14px 14px 16px; }
 
   /* Search card: check-in | guests | check-out, then the button and the night count. */
-  .sf-planner { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-areas: 'in guests out' 'go go go' 'nights nights nights'; padding: 12px 14px 4px; row-gap: 8px; border-radius: 14px; }
+  .sf-planner { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-areas: 'in guests out' 'go go go'; padding: 12px 14px 14px; row-gap: 8px; border-radius: 14px; }
   .sf-planner--bar { grid-template-areas: 'in guests out' 'go go go'; padding-bottom: 12px; }
   .sf-planner__field { min-height: 46px; padding: 4px 4px; gap: 6px; }
   .sf-planner__field[data-area='in'] { grid-area: in; }
@@ -300,8 +289,6 @@
   .sf-planner__long { display: none; }
   .sf-planner__short { display: inline; }
   .sf-planner__submit { grid-area: go; margin: 0; min-height: 44px; text-transform: none; letter-spacing: 0.01em; font-size: 0.8rem; font-weight: 500; }
-  .sf-planner__nights { grid-area: nights; position: relative; display: flex; align-items: center; justify-content: center; min-height: 44px; font-family: var(--display); font-size: 0.8rem; color: var(--ink); }
-  .sf-planner__nights svg { position: absolute; right: 2px; width: 16px; height: 16px; color: var(--ink-2); }
 
   .rg-hero { width: 100%; }
   .rg-hero__media { position: relative; height: 300px; }
@@ -382,5 +369,18 @@
 .sf-check input, .sf-check button[role='checkbox'] { position: relative; }
 @media (max-width: 360px) {
   .sf-wordmark { font-size: 0.9rem; letter-spacing: 0.01em; }
-  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { max-width: calc(100vw - 128px); }
+  .sf-header[data-overlay='true']:not([data-scrolled='true']) .sf-wordmark { max-width: calc(100vw - 156px); }
+}
+
+/* Menu: every link is a full-width 44px row, so long labels never wrap into a second column. */
+.sf-drawer__secondary { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.sf-drawer__secondary a { display: flex; align-items: center; min-height: 44px; padding: 0; }
+
+@media (max-width: 767px) {
+  /* A phone page reads top to bottom: no side-scrolling section tabs that cut off mid-word. */
+  .sf-tabs { display: none; }
+  .sf-policy__nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; overflow: visible; }
+  .sf-policy__nav a { display: flex; align-items: center; min-height: 44px; padding: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+  /* 16px stops iPhone Safari zooming the page when a field is tapped. */
+  .sf :is(input, select, textarea) { font-size: 16px; }
 }

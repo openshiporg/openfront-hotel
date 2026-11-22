@@ -39,7 +39,9 @@ export async function createPaymentFunction({
     {
       amount: normalizeAmount(amount),
       currency: (currency || 'usd').toLowerCase(),
-      automatic_payment_methods: { enabled: true },
+      // The guest already chose "Credit / debit card" on the booking page, so the form opens on the card fields
+      // (cards include Apple Pay and Google Pay) instead of asking again with a Card / Bank chooser.
+      payment_method_types: ['card'],
       metadata: { ...metadata, source: 'openfront-hotel' },
     },
     { idempotencyKey }

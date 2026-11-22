@@ -5,11 +5,13 @@
 
 import React from 'react'
 import Link from 'next/link'
-import { PlusIcon, Database } from 'lucide-react'
+import { PlusIcon, Database, ChevronDown } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { PageContainer } from '../../components/PageContainer'
-import { getAdminMetaAction, getListCounts } from '../../actions'
+import { getAdminMetaAction, getAuthenticatedUser, getListCounts } from '../../actions'
+import { platformNavGroups, platformStandaloneItems, type PlatformNavItem } from '@/features/platform/lib/navigation'
+import { visiblePlatformItems } from '../../lib/sidebarAccess'
 import { cn } from '@/lib/utils'
 
 interface ListCardProps {
@@ -62,21 +64,41 @@ function ListCard({ list, count, hideCreate = false }: ListCardProps) {
   )
 }
 
+/** One staff workspace: what it is called and what you do there. The whole card is the link. */
+function WorkspaceCard({ item }: { item: PlatformNavItem }) {
+  const Icon = item.icon
+  return (
+    <Link
+      href={`/dashboard${item.href}`}
+      className="flex min-h-16 items-start gap-3 rounded-lg border bg-card p-4 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-md bg-muted text-foreground">
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-foreground">{item.title}</span>
+        <span className="mt-0.5 block text-sm text-muted-foreground">{item.description}</span>
+      </span>
+    </Link>
+  )
+}
+
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center p-8 text-center">
       <Database className="h-12 w-12 text-muted-foreground mb-4" />
-      <h3 className="text-lg font-semibold mb-2">No lists configured</h3>
+      <h3 className="text-lg font-semibold mb-2">Nothing to show yet</h3>
       <p className="text-muted-foreground">
-        There are no data models configured in your admin interface.
+        Your account has no pages assigned. Ask the property manager to check your role.
       </p>
     </div>
   )
 }
 
 export async function HomePage() {
-  // Fetch admin meta server-side
-  const adminMetaResponse = await getAdminMetaAction()
+  // Fetch admin meta and the signed-in staff member server-side
+  const [adminMetaResponse, userResponse] = await Promise.all([getAdminMetaAction(), getAuthenticatedUser()])
+  const user = userResponse.success ? userResponse.data?.authenticatedItem : null
   
   if (!adminMetaResponse.success) {
     console.error('Failed to fetch admin meta:', adminMetaResponse.error)
@@ -105,12 +127,17 @@ export async function HomePage() {
     }
   }
 
+  // The pages this role can use, in the same groups as the sidebar.
+  const sections = [
+    { id: 'today', title: 'Today', items: visiblePlatformItems(platformStandaloneItems, lists, user) },
+    ...platformNavGroups.map((group) => ({ id: group.id, title: group.title, items: visiblePlatformItems(group.items, lists, user) })),
+  ].filter((section) => section.items.length > 0)
+  const firstName = typeof user?.name === 'string' ? user.name.trim().split(/\s+/)[0] : ''
+
   const header = (
     <div className="flex flex-col">
-      <h1 className="text-lg font-semibold md:text-2xl">Dashboard</h1>
-      {enhancedLists.length > 0 && (
-        <p className="text-muted-foreground">{enhancedLists.length} Models</p>
-      )}
+      <h1 className="text-lg font-semibold md:text-2xl">{firstName ? `Welcome, ${firstName}` : 'Dashboard'}</h1>
+      <p className="text-muted-foreground">Choose where to work.</p>
     </div>
   )
 
@@ -118,7 +145,7 @@ export async function HomePage() {
     { type: 'page' as const, label: 'Dashboard' }
   ]
 
-  if (enhancedLists.length === 0) {
+  if (enhancedLists.length === 0 && sections.length === 0) {
     return (
       <PageContainer title="Dashboard" header={header} breadcrumbs={breadcrumbs}>
         <EmptyState />
@@ -128,23 +155,36 @@ export async function HomePage() {
 
   return (
     <PageContainer title="Dashboard" header={header} breadcrumbs={breadcrumbs}>
-      <div className="w-full max-w-4xl p-4 md:p-6 flex flex-col gap-4">
-        <div className="mb-4">
-          <h2 className="tracking-wide uppercase font-medium mb-2 text-muted-foreground text-sm">
-            Data Models
-          </h2>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4">
-            {enhancedLists.map((list: any) => (
-              <ListCard
-                key={list.key}
-                list={list}
-                count={countData[list.key] ?? null}
-                hideCreate={list.hideCreate ?? false}
-              />
-            ))}
-          </div>
-        </div>
+      <div className="w-full max-w-5xl p-4 md:p-6 flex flex-col gap-8">
+        {sections.map((section) => (
+          <section key={section.id} aria-labelledby={`home-${section.id}`}>
+            <h2 id={`home-${section.id}`} className="mb-3 text-sm font-medium text-muted-foreground">
+              {section.title}
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-3">
+              {section.items.map((item) => <WorkspaceCard key={item.href} item={item} />)}
+            </div>
+          </section>
+        ))}
+
+        {enhancedLists.length > 0 && (
+          <details className="group border-t pt-4">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+              <span>All records ({enhancedLists.length})</span>
+              <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4">
+              {enhancedLists.map((list: any) => (
+                <ListCard
+                  key={list.key}
+                  list={list}
+                  count={countData[list.key] ?? null}
+                  hideCreate={list.hideCreate ?? false}
+                />
+              ))}
+            </div>
+          </details>
+        )}
       </div>
     </PageContainer>
   )
