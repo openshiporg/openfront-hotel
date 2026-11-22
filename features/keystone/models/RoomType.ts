@@ -25,7 +25,7 @@ export const RoomType = list({
   },
   ui: {
     listView: {
-      initialColumns: ['name', 'baseRate', 'maxOccupancy', 'bedConfiguration'],
+      initialColumns: ['name', 'baseRateMinor', 'maxOccupancy', 'bedConfiguration'],
     },
     itemView: {
       defaultFieldMode: 'edit',
@@ -80,13 +80,13 @@ export const RoomType = list({
     }),
 
     // Pricing
-    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base rate in cents', ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' } } }),
+    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Nightly rate' }),
     currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
     baseRate: float({
       defaultValue: 0,
       validation: { isRequired: true, min: 0 },
-      label: 'Base rate per night (USD)',
-      ui: { description: 'In dollars, for example 189 or 189.50.' },
+      label: 'Nightly rate (USD)',
+      ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' }, listView: { fieldMode: 'hidden' } },
     }),
 
     // Capacity

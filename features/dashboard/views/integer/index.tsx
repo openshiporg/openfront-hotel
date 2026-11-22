@@ -12,6 +12,44 @@ import { FieldLabel } from '@/components/ui/field-label'
 import { FieldDescription } from '@/components/ui/field-description'
 import { Info } from 'lucide-react'
 import { entriesTyped } from '../../lib/entriesTyped'
+import { dollarsToMinor, formatMoneyMinor, minorToDollars } from '@/features/platform/lib/format'
+
+// Hotel money is stored as whole cents in fields named *Minor. Staff always type and read dollars.
+// Cent fields that predate the *Minor naming.
+const CENT_PATHS = new Set(['amount', 'priceAdjustment', 'totalAmount', 'commission', 'unitPrice', 'totalPrice', 'averageDailyRate', 'revenuePerAvailableRoom', 'totalRevenue'])
+const isMoney = (field: { path: string; label?: string }) => /Minor$/.test(field.path) || CENT_PATHS.has(field.path)
+const moneyLabel = (label: string) => label
+
+function MoneyField({ field, value, onChange, autoFocus, forceValidation, isRequired = false }: IntegerFieldProps) {
+  const [text, setText] = useState(() => minorToDollars(value.value))
+  const [isDirty, setDirty] = useState(false)
+  const min = field.validation?.min
+  const signed = min === undefined || min < 0
+  const parsed = text.trim() === '' ? null : dollarsToMinor(text, { allowZero: true, signed })
+  const invalid = text.trim() !== '' && parsed === null
+  const error = (forceValidation || isDirty) && (invalid ? `Enter an amount in dollars, like 125 or 125.50` : isRequired && parsed === null ? `${field.label} is required` : undefined)
+  return (
+    <FieldContainer>
+      <FieldLabel htmlFor={`field-${field.path}`}>{moneyLabel(field.label)}</FieldLabel>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+        <Input
+          id={`field-${field.path}`}
+          inputMode="decimal"
+          autoFocus={autoFocus}
+          readOnly={!onChange}
+          required={isRequired}
+          placeholder="0.00"
+          value={text}
+          onBlur={() => { setDirty(true); if (parsed !== null) setText(minorToDollars(parsed)) }}
+          onChange={(e) => { setText(e.target.value); const next = e.target.value.trim() === '' ? null : dollarsToMinor(e.target.value, { allowZero: true, signed }); if (onChange && (next !== null || e.target.value.trim() === '')) onChange({ ...value, value: next }) }}
+          className={error ? 'border-red-500 pl-7 shadow-xs' : 'pl-7 shadow-xs'}
+        />
+      </div>
+      {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
+    </FieldContainer>
+  )
+}
 import type {
   FieldController,
   FieldControllerConfig,
@@ -70,6 +108,18 @@ function validate_(
 }
 
 export function Field({
+  field,
+  value,
+  onChange,
+  autoFocus,
+  forceValidation,
+  isRequired = false,
+}: IntegerFieldProps) {
+  if (isMoney(field)) return <MoneyField field={field} value={value} onChange={onChange} autoFocus={autoFocus} forceValidation={forceValidation} isRequired={isRequired} />
+  return <IntegerField field={field} value={value} onChange={onChange} autoFocus={autoFocus} forceValidation={forceValidation} isRequired={isRequired} />
+}
+
+function IntegerField({
   field,
   value,
   onChange,
@@ -146,6 +196,7 @@ export function Field({
 
 export function Cell({ item, field }: CellProps) {
   const value = item[field.path]
+  if (isMoney(field)) return <span className="text-sm tabular-nums">{value !== null && value !== undefined ? formatMoneyMinor(value) : <span className="text-muted-foreground">—</span>}</span>
   return (
     <span className="text-sm font-mono">
       {value !== null && value !== undefined ? value.toString() : <span className="text-muted-foreground">—</span>}
@@ -157,9 +208,9 @@ export function CardValue({ item, field }: CellProps) {
   const value = item[field.path]
   return (
     <div>
-      <div className="text-sm font-medium">{field.label}</div>
+      <div className="text-sm font-medium">{isMoney(field) ? moneyLabel(field.label) : field.label}</div>
       <div className="text-sm text-muted-foreground font-mono">
-        {value !== null && value !== undefined ? value.toString() : '—'}
+        {value !== null && value !== undefined ? (isMoney(field) ? formatMoneyMinor(value) : value.toString()) : '—'}
       </div>
     </div>
   )
@@ -187,7 +238,7 @@ export function controller(
   return {
     path: config.path,
     label: config.label,
-    description: config.description,
+    description: isMoney(config) ? null : config.description,
     graphqlSelection: config.path,
     validation: config.fieldMeta?.validation || { min: -Infinity, max: Infinity },
     defaultValue: {

@@ -72,7 +72,7 @@ export const SeasonalRate = list({
 
     // Price adjustment options (use one or the other)
     priceAdjustment: integer({
-      label: 'Price Adjustment (cents)',
+      label: 'Price Adjustment',
       ui: {
         description: 'Fixed amount to add/subtract from base price (can be positive or negative)',
       },

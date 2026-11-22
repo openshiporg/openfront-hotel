@@ -121,7 +121,7 @@ export const ReservationLineItem = list({
     // Unit price (in cents)
     unitPrice: integer({
       validation: { isRequired: true, min: 0 },
-      label: 'Unit Price (cents)',
+      label: 'Unit Price',
       ui: {
         description: 'Price per unit in cents',
       },
@@ -130,7 +130,7 @@ export const ReservationLineItem = list({
     // Total price (in cents)
     totalPrice: integer({
       validation: { isRequired: true, min: 0 },
-      label: 'Total Price (cents)',
+      label: 'Total Price',
       ui: {
         description: 'Total price (quantity × unit price) in cents',
       },

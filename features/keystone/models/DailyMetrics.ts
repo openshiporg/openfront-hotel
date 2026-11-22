@@ -77,7 +77,7 @@ export const DailyMetrics = list({
     averageDailyRate: integer({
       validation: { min: 0 },
       defaultValue: 0,
-      label: 'ADR (cents)',
+      label: 'ADR',
       ui: {
         description: 'Average Daily Rate in cents',
       },
@@ -87,7 +87,7 @@ export const DailyMetrics = list({
     revenuePerAvailableRoom: integer({
       validation: { min: 0 },
       defaultValue: 0,
-      label: 'RevPAR (cents)',
+      label: 'RevPAR',
       ui: {
         description: 'Revenue Per Available Room in cents',
       },
@@ -97,7 +97,7 @@ export const DailyMetrics = list({
     totalRevenue: integer({
       validation: { min: 0 },
       defaultValue: 0,
-      label: 'Total Revenue (cents)',
+      label: 'Total Revenue',
       ui: {
         description: 'Total revenue for the day in cents',
       },

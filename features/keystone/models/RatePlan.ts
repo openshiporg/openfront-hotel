@@ -27,7 +27,7 @@ export const RatePlan = list({
   },
   ui: {
     listView: {
-      initialColumns: ['name', 'roomType', 'baseRate', 'status', 'minimumStay'],
+      initialColumns: ['name', 'roomType', 'baseRateMinor', 'status', 'minimumStay'],
     },
     itemView: {
       defaultFieldMode: 'edit',
@@ -63,13 +63,13 @@ export const RatePlan = list({
     }),
 
     // Staff edit dollars (baseRate); cents (baseRateMinor) stay authoritative and are kept in step by resolveInput.
-    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base rate in cents', ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' } } }),
+    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Nightly rate' }),
     currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
     baseRate: float({
       defaultValue: 0,
       validation: { isRequired: true, min: 0 },
-      label: 'Base rate per night (USD)',
-      ui: { description: 'In dollars, for example 189 or 189.50.' },
+      label: 'Nightly rate (USD)',
+      ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' }, listView: { fieldMode: 'hidden' } },
     }),
 
     bookings: relationship({ isFilterable: canFilterBookings, access: { create: () => false, update: () => false }, ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),

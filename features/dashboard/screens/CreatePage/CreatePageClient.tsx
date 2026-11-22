@@ -131,9 +131,9 @@ export function CreatePageClient({ listKey, list }: CreatePageClientProps) {
             className="min-w-0 max-w-full shrink sm:text-sm text-xs"
             onClick={handleSave}
             disabled={createItem.state === 'loading'}
-            title={`Create ${list.singular}`}
+            title={`Save ${list.singular.toLowerCase()}`}
           >
-            <span className="truncate">Create {list.singular}</span>
+            <span className="truncate">Save</span>
             <Check className="ml-1 shrink-0 stroke-[1.5px]" width="8" height="8" />
           </Button>
         }
@@ -147,13 +147,10 @@ export function CreatePageClient({ listKey, list }: CreatePageClientProps) {
               <div>
                 <h1
                   className="text-lg font-semibold md:text-2xl"
-                  title={`Create ${list.singular}`}
+                  title={`New ${list.singular.toLowerCase()}`}
                 >
-                  Create {list.singular}
+                  New {list.singular.toLowerCase()}
                 </h1>
-                <p className="text-sm text-muted-foreground mt-2">
-                  Add a new {list.singular.toLowerCase()} to {list.label.toLowerCase()}
-                </p>
               </div>
 
               {/* Sidebar Fields (if any) */}

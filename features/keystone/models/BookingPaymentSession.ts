@@ -31,7 +31,7 @@ export const BookingPaymentSession = list({
     }),
     amount: integer({
       validation: { isRequired: true },
-      label: 'Amount (cents)',
+      label: 'Amount',
     }),
     formattedAmount: virtual({
       field: graphql.field({

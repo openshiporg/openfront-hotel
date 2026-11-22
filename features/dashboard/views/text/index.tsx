@@ -186,7 +186,7 @@ export function Field(props: FieldProps) {
         <FieldComponent
           id={`field-${field.path}`}
           autoFocus={autoFocus}
-          placeholder={field.description}
+          placeholder={field.description && /^e\.g\.,? /i.test(field.description) ? field.description.replace(/^e\.g\.,? /i, "") : undefined}
           disabled={isNull}
           readOnly={isReadOnly}
           required={isRequired}

@@ -92,7 +92,7 @@ export const BookingPayment = list({
       }),
       label: 'Amount',
     }),
-    amountMinor: integer({ validation: { isRequired: true }, defaultValue: 0, label: 'Amount in cents (12500 = $125.00)' }),
+    amountMinor: integer({ validation: { isRequired: true }, defaultValue: 0, label: 'Amount' }),
     amount: float({
       validation: { isRequired: true },
       label: 'Amount (USD)',
@@ -344,6 +344,9 @@ export const BookingPayment = list({
         ['completed', 'refunded'].includes(String(item?.status || ''))
       ) {
         throw new Error('Settled payment records are immutable. Post an append-only adjustment instead.')
+      }
+      if (resolvedData && Number.isSafeInteger((resolvedData as any).amountMinor) && (resolvedData as any).amount === undefined) {
+        (resolvedData as any).amount = (resolvedData as any).amountMinor / 100
       }
 
       if (operation === 'update' && resolvedData.status) {

@@ -118,7 +118,7 @@ export const ChannelReservation = list({
     // Financial details
     totalAmount: integer({
       validation: { min: 0 },
-      label: 'Total Amount (cents)',
+      label: 'Total Amount',
       ui: {
         description: 'Total booking amount in cents',
       },
@@ -126,7 +126,7 @@ export const ChannelReservation = list({
 
     commission: integer({
       validation: { min: 0 },
-      label: 'Commission (cents)',
+      label: 'Commission',
       ui: {
         description: 'Commission amount paid to channel in cents',
       },

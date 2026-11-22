@@ -103,7 +103,6 @@ export function PaymentsPage() {
 
   return <PlatformPage
     title="Payments"
-    description="Booking payments and refunds. Captures, refunds, provider settlement and folio balance are tracked separately."
     actions={(
       <>
         <Button size="sm" variant="outline" onClick={fetchPayments} disabled={loading}><RefreshCw className={loading ? 'animate-spin' : undefined} aria-hidden="true" />Refresh</Button>
@@ -114,10 +113,10 @@ export function PaymentsPage() {
     <StatStrip
       loading={loading && !payments.length}
       items={[
-        { label: 'Captured', value: money(summary.capturedAmount), tone: 'success', hint: `${summary.completedCount} completed records` },
-        { label: 'Refunded', value: money(summary.refundedAmount), tone: 'neutral', hint: `${summary.refundedCount} refund records` },
-        { label: 'Failed', value: summary.failedCount, tone: summary.failedCount ? 'danger' : 'neutral', hint: 'Declined or errored attempts', onSelect: () => setStatus(status === 'failed' ? 'all' : 'failed'), active: status === 'failed' },
-        { label: 'Pending', value: statusCount('pending'), tone: statusCount('pending') ? 'warning' : 'neutral', hint: 'Awaiting provider outcome', onSelect: () => setStatus(status === 'pending' ? 'all' : 'pending'), active: status === 'pending' },
+        { label: 'Captured', value: money(summary.capturedAmount), tone: 'success' },
+        { label: 'Refunded', value: money(summary.refundedAmount), tone: 'neutral' },
+        { label: 'Failed', value: summary.failedCount, tone: summary.failedCount ? 'danger' : 'neutral', onSelect: () => setStatus(status === 'failed' ? 'all' : 'failed'), active: status === 'failed' },
+        { label: 'Pending', value: statusCount('pending'), tone: statusCount('pending') ? 'warning' : 'neutral', onSelect: () => setStatus(status === 'pending' ? 'all' : 'pending'), active: status === 'pending' },
       ]}
     />
     {error && !payments.length ? <WorkspaceError message={error} onRetry={fetchPayments} title="Payment workspace unavailable" /> : loading && payments.length === 0 ? <WorkspaceLoading label="Loading payments" /> : (

@@ -25,7 +25,7 @@ export const RoomAssignment = list({
     hideCreate: true,
     hideDelete: true,
     listView: {
-      initialColumns: ['booking', 'room', 'roomType', 'guestName', 'ratePerNight'],
+      initialColumns: ['booking', 'room', 'roomType', 'guestName', 'ratePerNightMinor'],
     },
     itemView: {
       defaultFieldMode: 'read',
@@ -65,13 +65,11 @@ export const RoomAssignment = list({
     }),
 
     // Rate
-    ratePerNightMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Rate per night in cents (12500 = $125.00)' }),
+    ratePerNightMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Rate per night' }),
     ratePerNight: float({
       validation: { min: 0 },
-      label: 'Rate Per Night',
-      ui: {
-        description: 'Nightly rate for this room assignment',
-      },
+      label: 'Rate per night (USD)',
+      ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' }, listView: { fieldMode: 'hidden' } },
     }),
 
     // Guest information
@@ -91,5 +89,13 @@ export const RoomAssignment = list({
       label: 'Special Requests',
     }),
     ...trackingFields,
+  },
+  hooks: {
+    // Staff edit the cents field (shown in dollars); keep the legacy dollar copy the storefront reads in step.
+    resolveInput: async ({ resolvedData, inputData }) => ({
+      ...resolvedData,
+      ...(Number.isSafeInteger((inputData as any).ratePerNightMinor) ? { ratePerNight: resolvedData.ratePerNightMinor / 100 }
+        : typeof (inputData as any).ratePerNight === 'number' && typeof resolvedData.ratePerNight === 'number' ? { ratePerNightMinor: Math.round(resolvedData.ratePerNight * 100) } : {}),
+    }),
   },
 })

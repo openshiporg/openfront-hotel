@@ -168,12 +168,12 @@ export const Booking = list({
     }),
 
     // Cents are authoritative. The float copies are kept in step for old readers and hidden from staff.
-    roomRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Room rate in cents (12500 = $125.00)' }),
-    taxAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Tax in cents (12500 = $125.00)' }),
-    feesAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Fees in cents (12500 = $125.00)' }),
-    totalAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Total in cents (12500 = $125.00)' }),
-    depositAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Deposit in cents (12500 = $125.00)' }),
-    balanceDueMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Balance due in cents (12500 = $125.00)' }),
+    roomRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Room rate' }),
+    taxAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Tax' }),
+    feesAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Fees' }),
+    totalAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Total' }),
+    depositAmountMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Deposit' }),
+    balanceDueMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Balance due' }),
     currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
     roomRate: float({ validation: { min: 0 }, label: 'Legacy Room Rate', ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' }, listView: { fieldMode: 'hidden' } } }),
     taxAmount: float({ validation: { min: 0 }, defaultValue: 0, label: 'Legacy Tax Amount', ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' }, listView: { fieldMode: 'hidden' } } }),
@@ -289,9 +289,9 @@ export const Booking = list({
       many: true,
       ui: {
         displayMode: 'cards',
-        cardFields: ['room', 'roomType', 'guestName', 'ratePerNight'],
-        inlineCreate: { fields: ['room', 'roomType', 'guestName', 'ratePerNight', 'specialRequests'] },
-        inlineEdit: { fields: ['room', 'roomType', 'guestName', 'ratePerNight', 'specialRequests'] },
+        cardFields: ['room', 'roomType', 'guestName', 'ratePerNightMinor'],
+        inlineCreate: { fields: ['room', 'roomType', 'guestName', 'ratePerNightMinor', 'specialRequests'] },
+        inlineEdit: { fields: ['room', 'roomType', 'guestName', 'ratePerNightMinor', 'specialRequests'] },
       },
       label: 'Room Assignments',
     }),
@@ -424,6 +424,12 @@ export const Booking = list({
   },
   hooks: {
     beforeOperation: async ({ operation, resolvedData, item }) => {
+      // Staff edit the cents fields (shown in dollars); keep the hidden dollar copies in step.
+      if (resolvedData && (operation === 'create' || operation === 'update')) {
+        for (const [minor, dollars] of [['roomRateMinor', 'roomRate'], ['taxAmountMinor', 'taxAmount'], ['feesAmountMinor', 'feesAmount'], ['totalAmountMinor', 'totalAmount'], ['depositAmountMinor', 'depositAmount'], ['balanceDueMinor', 'balanceDue']] as const) {
+          if (Number.isSafeInteger((resolvedData as any)[minor]) && (resolvedData as any)[dollars] === undefined) (resolvedData as any)[dollars] = (resolvedData as any)[minor] / 100
+        }
+      }
       if (operation === 'update' && resolvedData.status) {
         const now = new Date().toISOString()
         // Auto-set timestamps based on status changes
