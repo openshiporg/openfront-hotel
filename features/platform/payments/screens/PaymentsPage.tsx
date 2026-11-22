@@ -138,31 +138,32 @@ export function PaymentsPage() {
         {visible.length === 0 ? (
           <WorkspaceEmpty icon={CreditCard} title={search || status !== 'all' ? 'No payments match this view' : 'No payments yet'} description={search || status !== 'all' ? 'Clear the search or status filter.' : 'Payments appear here when guests pay for bookings or staff record a payment.'} onClear={search || status !== 'all' ? () => { setSearchText(''); setStatus('all'); } : undefined} />
         ) : (
-          <DataTable minWidth="min-w-[860px]">
+          <DataTable minWidth="sm:min-w-[860px]">
             <THead>
-              <tr><Th>Payment</Th><Th>Guest & booking</Th><Th>Method</Th><Th>Status</Th><Th>Recorded</Th><Th align="right">Amount</Th><Th><span className="sr-only">Actions</span></Th></tr>
+              <tr><Th className="hidden sm:table-cell">Payment</Th><Th>Guest & booking</Th><Th className="hidden md:table-cell">Method</Th><Th className="hidden sm:table-cell">Status</Th><Th className="hidden md:table-cell">Recorded</Th><Th align="right">Amount</Th><Th><span className="sr-only">Actions</span></Th></tr>
             </THead>
             <TBody>
               {visible.map((payment) => {
                 const isRefund = payment.paymentType === 'refund';
                 return (
                   <Tr key={payment.id}>
-                    <Td>
+                    <Td className="hidden sm:table-cell">
                       <p className="font-mono text-xs font-medium">{payment.paymentReference}</p>
                       <p className="text-xs text-muted-foreground">{humanize(payment.paymentType)}</p>
                     </Td>
                     <Td>
                       <p className="truncate font-medium">{payment.booking?.guestName || 'Unknown guest'}</p>
                       <p className="font-mono text-xs text-muted-foreground">{payment.booking?.confirmationNumber || 'No booking'}</p>
+                      <p className="text-xs text-muted-foreground sm:hidden">{humanize(payment.paymentType)} · {humanize(payment.status)} · {formatDateTime(payment.createdAt)}</p>
                     </Td>
-                    <Td>
+                    <Td className="hidden md:table-cell">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Tag>{payment.paymentProvider?.name || humanize(payment.paymentMethod)}</Tag>
                         {payment.paymentProvider?.name ? <span className="text-xs text-muted-foreground">{humanize(payment.paymentMethod)}</span> : null}
                       </div>
                     </Td>
-                    <Td><StatusPill kind="payment" value={payment.status} /></Td>
-                    <Td className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(payment.createdAt)}</Td>
+                    <Td className="hidden sm:table-cell"><StatusPill kind="payment" value={payment.status} /></Td>
+                    <Td className="hidden whitespace-nowrap text-xs text-muted-foreground md:table-cell">{formatDateTime(payment.createdAt)}</Td>
                     <Td numeric align="right" className={isRefund ? 'text-muted-foreground' : 'font-medium'}>{isRefund ? `−${money(Math.abs(Number(payment.amount) || 0), payment.currency || 'USD')}` : money(payment.amount, payment.currency || 'USD')}</Td>
                     <Td align="right">
                       <DropdownMenu>

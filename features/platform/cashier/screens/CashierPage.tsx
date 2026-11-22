@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { humanize } from '@/features/platform/lib/format';
 import { Banknote, ExternalLink, HandCoins, Landmark, LockKeyhole, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -91,23 +92,23 @@ export function CashierPage() {
       <Panel>
         <PanelHeader title="Shifts" description="Expected cash is float plus posted cash payments, less drops. Variance is counted minus expected." />
         {shifts.length ? (
-          <DataTable minWidth="min-w-[820px]">
+          <DataTable minWidth="sm:min-w-[820px]">
             <THead>
-              <tr><Th>Drawer</Th><Th>Status</Th><Th align="right">Float</Th><Th align="right">Drops</Th><Th align="right">Expected</Th><Th align="right">Variance</Th><Th align="right">Actions</Th></tr>
+              <tr><Th>Drawer</Th><Th className="hidden sm:table-cell">Status</Th><Th align="right" className="hidden sm:table-cell">Float</Th><Th align="right" className="hidden sm:table-cell">Drops</Th><Th align="right" className="hidden sm:table-cell">Expected</Th><Th align="right">Variance</Th><Th align="right">Actions</Th></tr>
             </THead>
             <TBody>
               {shifts.map(shift => {
                 const variance = Number(shift.varianceMinor || 0);
                 return (
                   <Tr key={shift.id}>
-                    <Td className="font-medium">{shift.drawerId}</Td>
-                    <Td><StatusPill kind="shift" value={shift.status} /></Td>
-                    <Td numeric align="right">{money(shift.floatMinor)}</Td>
-                    <Td numeric align="right">{money(shift.dropsMinor)}</Td>
-                    <Td numeric align="right">{money(shift.expectedMinor || 0)}</Td>
+                    <Td className="font-medium">{shift.drawerId}<p className="text-xs font-normal text-muted-foreground sm:hidden">{humanize(shift.status)} · expected {money(shift.expectedMinor || 0)}</p></Td>
+                    <Td className="hidden sm:table-cell"><StatusPill kind="shift" value={shift.status} /></Td>
+                    <Td numeric align="right" className="hidden sm:table-cell">{money(shift.floatMinor)}</Td>
+                    <Td numeric align="right" className="hidden sm:table-cell">{money(shift.dropsMinor)}</Td>
+                    <Td numeric align="right" className="hidden sm:table-cell">{money(shift.expectedMinor || 0)}</Td>
                     <Td numeric align="right" className={cn(variance < 0 && 'text-rose-700 dark:text-rose-400', variance > 0 && 'text-amber-700 dark:text-amber-400')}>{variance > 0 ? '+' : ''}{money(variance)}</Td>
                     <Td align="right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-col justify-end gap-2 sm:flex-row">
                         {shift.status === 'open' ? (
                           <>
                             <Button size="sm" variant="outline" disabled={busy} onClick={() => void run('drop', shift.id)}>Drop cash</Button>

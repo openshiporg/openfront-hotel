@@ -92,13 +92,11 @@ export const BookingPayment = list({
       }),
       label: 'Amount',
     }),
-    amountMinor: integer({ validation: { isRequired: true }, defaultValue: 0, label: 'Amount (minor units)' }),
+    amountMinor: integer({ validation: { isRequired: true }, defaultValue: 0, label: 'Amount in cents (12500 = $125.00)' }),
     amount: float({
       validation: { isRequired: true },
-      label: 'Amount (superseded)',
-      ui: {
-        description: 'Payment amount (negative for refunds)',
-      },
+      label: 'Amount (USD)',
+      ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' }, listView: { fieldMode: 'hidden' } },
     }),
 
     // Currency

@@ -65,7 +65,7 @@ export const RoomAssignment = list({
     }),
 
     // Rate
-    ratePerNightMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Rate Per Night (minor units)' }),
+    ratePerNightMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Rate per night in cents (12500 = $125.00)' }),
     ratePerNight: float({
       validation: { min: 0 },
       label: 'Rate Per Night',

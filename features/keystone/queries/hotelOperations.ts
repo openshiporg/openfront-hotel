@@ -20,6 +20,10 @@ function requireHotelPermission(context: any, permission: string, propertyKey: s
 const MAX_RATE_BOARD_DAYS = 31;
 const RATE_PLAN_PAGE_SIZE = 100;
 const GUEST_PAGE_SIZE = 50;
+// Records left by automated checks (reserved test domains and +hotelqa aliases) stay in the database
+// but are kept out of staff lists unless someone searches for them.
+const CHECK_RECORD_EMAIL = [{ email: { endsWith: '@example.test' } }, { email: { contains: '+hotelqa' } }, { email: { startsWith: 'qa.' } }, { email: { startsWith: 'qa-' } }];
+const HIDE_CHECK_RECORDS = { NOT: { OR: CHECK_RECORD_EMAIL } };
 const ROOM_PAGE_SIZE = 100;
 const PAYMENT_PAGE_SIZE = 50;
 const MAINTENANCE_PAGE_SIZE = 50;
@@ -715,7 +719,7 @@ export const hotelOperationsResolvers = {
         // Same eligibility as task assignment: active staff whose role grants housekeeping or
         // room maintenance, whatever the role is called.
         context.prisma.user.findMany({
-          where: { isActive: true, role: { OR: [{ canManageHousekeeping: true }, { canManageRooms: true }] } },
+          where: { isActive: true, role: { OR: [{ canManageHousekeeping: true }, { canManageRooms: true }] }, ...HIDE_CHECK_RECORDS },
           orderBy: { name: 'asc' },
           take: 500,
           select: { id: true, name: true },
@@ -996,7 +1000,8 @@ export const hotelOperationsResolvers = {
         restricted: { isBlacklisted: true },
       };
       const segment = segmentWhere[String(args.segment)] ? String(args.segment) : 'all';
-      const where = { AND: [searchWhere, segment === 'all' ? {} : segmentWhere[segment]] };
+      const baseWhere = search ? searchWhere : { AND: [searchWhere, HIDE_CHECK_RECORDS] };
+      const where = { AND: [baseWhere, segment === 'all' ? {} : segmentWhere[segment]] };
       const orderBy = args.sort === 'name'
         ? [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }]
         : args.sort === 'reservations'
@@ -1004,10 +1009,10 @@ export const hotelOperationsResolvers = {
           : [{ updatedAt: 'desc' }, { id: 'desc' }];
       const [total, all, vip, standard, restricted] = await Promise.all([
         context.prisma.guest.count({ where }),
-        context.prisma.guest.count({ where: searchWhere }),
-        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.vip] } }),
-        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.standard] } }),
-        context.prisma.guest.count({ where: { AND: [searchWhere, segmentWhere.restricted] } }),
+        context.prisma.guest.count({ where: baseWhere }),
+        context.prisma.guest.count({ where: { AND: [baseWhere, segmentWhere.vip] } }),
+        context.prisma.guest.count({ where: { AND: [baseWhere, segmentWhere.standard] } }),
+        context.prisma.guest.count({ where: { AND: [baseWhere, segmentWhere.restricted] } }),
       ]);
       const guests = await context.prisma.guest.findMany({
         where,

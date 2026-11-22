@@ -498,9 +498,9 @@ export function ReservationCalendar({
           />
         ) : (
           <div data-qa-layout="reservation-calendar-scroll" className="max-w-full overflow-x-auto">
-            <div className={cn('min-w-[980px] select-none', draggingId && 'cursor-grabbing')}>
-              <div className="sticky top-0 z-20 grid grid-cols-[11rem_minmax(0,1fr)] border-b bg-card">
-                <div className="sticky left-0 z-10 flex items-end border-r bg-card px-4 pb-2 pt-3 text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Room</div>
+            <div className={cn('min-w-[760px] select-none sm:min-w-[980px]', draggingId && 'cursor-grabbing')}>
+              <div className="sticky top-0 z-20 grid grid-cols-[7rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)] border-b bg-card">
+                <div className="sticky left-0 z-10 flex items-end border-r bg-card px-3 pb-2 pt-3 text-xs sm:px-4 font-medium uppercase tracking-[0.06em] text-muted-foreground">Room</div>
                 <div ref={gridRef} className="grid grid-cols-14">
                   {days.map((day) => {
                     const isToday = isSameUtcDay(day, today);
@@ -522,8 +522,8 @@ export function ReservationCalendar({
                 const positions = metrics?.positions || new Map<string, number>();
                 const rowHeight = metrics?.height || LANE_HEIGHT + 8;
                 return (
-                  <div key={row.id} className="grid grid-cols-[11rem_minmax(0,1fr)] border-b last:border-b-0">
-                    <div className={cn('sticky left-0 z-10 flex min-w-0 items-center gap-2 border-r bg-card px-4', row.unassigned && 'bg-amber-500/[0.04]')} style={{ minHeight: rowHeight }}>
+                  <div key={row.id} className="grid grid-cols-[7rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)] border-b last:border-b-0">
+                    <div className={cn('sticky left-0 z-10 flex min-w-0 items-center gap-2 border-r bg-card px-3 sm:px-4', row.unassigned && 'bg-amber-500/[0.04]')} style={{ minHeight: rowHeight }}>
                       <div className="min-w-0">
                         <p className={cn('truncate text-sm font-medium', row.unassigned && 'text-amber-800 dark:text-amber-300')}>{row.unassigned ? 'Unassigned' : `Room ${row.label}`}</p>
                         {row.roomTypeName ? <p className="truncate text-xs text-muted-foreground">{row.roomTypeName}</p> : null}
