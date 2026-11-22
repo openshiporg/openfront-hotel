@@ -1,6 +1,7 @@
 import { createTransport, getTestMessageUrl } from "nodemailer";
 import { configuredSiteOrigin } from './productionConfig';
-import { emailButton, emailLayout, emailMuted, emailParagraph } from "./email-layout";
+import { emailButton, emailLayout, emailMuted, emailParagraph, emailTotals, escapeHtml } from "./email-layout";
+import { formatStayDate } from '../../../lib/hotelCalendarDate';
 
 // SMTP values are infrastructure wiring. Durable property state decides whether
 // Hotel communications are eligible for delivery.
@@ -46,6 +47,49 @@ function passwordResetEmail({ url }: { url: string }): string {
 ${emailButton("Reset password", url)}
 ${emailMuted("If you did not request this, you can safely ignore this email. Your password will not change.")}`,
   });
+}
+
+/** The guest's booking confirmation, sent once when a payment confirms the reservation. */
+export async function sendBookingConfirmationEmail(context: any, bookingId: string): Promise<string | null> {
+  if (!hotelMailInfrastructureConfigured()) return null;
+  const booking = await context.prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: { confirmationNumber: true, guestName: true, guestEmail: true, checkInDate: true, checkOutDate: true,
+      numberOfGuests: true, totalAmountMinor: true, balanceDueMinor: true, currencyCode: true,
+      roomAssignments: { select: { roomType: { select: { name: true } } } } },
+  });
+  if (!booking?.guestEmail) return null;
+  const settings = await context.prisma.hotelSettings.findFirst({ select: { propertyName: true, checkInTime: true, checkOutTime: true } });
+  const hotel = settings?.propertyName || 'the hotel';
+  const money = (minor: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: booking.currencyCode || 'USD' }).format(Number(minor || 0) / 100);
+  const date = (value: Date) => formatStayDate(value.toISOString(), { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const rooms = [...new Set(booking.roomAssignments.map((a: any) => a.roomType?.name).filter(Boolean))].join(', ');
+  const url = `${getBaseUrlForEmails()}/bookings/lookup`;
+  const html = emailLayout({
+    storeName: settings?.propertyName || undefined,
+    preheader: `Reservation ${booking.confirmationNumber} is confirmed.`,
+    title: 'Your reservation is confirmed',
+    body: `${emailParagraph(`Thank you, ${escapeHtml(booking.guestName || 'guest')}. Your stay at ${escapeHtml(hotel)} is confirmed.`)}
+${emailTotals([
+      { label: 'Confirmation number', value: booking.confirmationNumber },
+      ...(rooms ? [{ label: 'Room', value: rooms }] : []),
+      { label: 'Arrival', value: `${date(booking.checkInDate)}${settings?.checkInTime ? ` from ${settings.checkInTime}` : ''}` },
+      { label: 'Departure', value: `${date(booking.checkOutDate)}${settings?.checkOutTime ? ` by ${settings.checkOutTime}` : ''}` },
+      { label: 'Guests', value: String(booking.numberOfGuests || 1) },
+      { label: 'Balance due', value: money(booking.balanceDueMinor ?? 0) },
+      { label: 'Total', value: money(booking.totalAmountMinor) },
+    ])}
+${emailButton('View your reservation', url)}
+${emailMuted('Look it up any time with your confirmation number and this email address.')}`,
+  });
+  const info = await getTransport().sendMail({
+    to: booking.guestEmail,
+    from: mailFrom(),
+    subject: `Reservation confirmed: ${booking.confirmationNumber}`,
+    html,
+  });
+  console.log('Booking confirmation email sent', { bookingId, messageId: info.messageId });
+  return info.messageId || null;
 }
 
 export async function sendPasswordResetEmail(resetToken: string, to: string, baseUrl?: string, audience: 'staff' | 'guest' = 'staff'): Promise<void> {

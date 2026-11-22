@@ -7,6 +7,7 @@ import { captureRecoveryAmount, bookingPaymentDueNow } from '../lib/paymentSecur
 import { queueCaptureRecoveryRefund } from '../refunds/bookingRefund';
 import { requestBookingCancellation } from '../bookings/cancellation';
 import { cancelPayment } from '../utils/paymentProviderAdapter';
+import { sendBookingConfirmationEmail } from '../lib/mail';
 
 export type PaymentReplayEvidence = {
   providerCode: string;
@@ -111,7 +112,7 @@ export async function finalizeBookingPayment({
   providerData?: unknown;
   replay?: PaymentReplayEvidence;
 }) {
-  return serializableTransaction(context, async (transactionContext) => {
+  const result: any = await serializableTransaction(context, async (transactionContext) => {
     const prisma = transactionContext.prisma as any;
     await lockBookingPayment(prisma, bookingId);
 
@@ -309,8 +310,17 @@ export async function finalizeBookingPayment({
       });
     }
 
-    return { paymentId: payment.id, replayed: false, recoveryMinor, confirmationAvailable };
+    const newlyConfirmed = confirmationAvailable && depositSatisfied && !inHouse && session.booking.status === 'pending';
+    return { paymentId: payment.id, replayed: false, recoveryMinor, confirmationAvailable, newlyConfirmed };
   });
+  // The guest's confirmation goes out once, after the payment that confirmed the reservation has committed.
+  // Delivery failure never undoes the payment; staff still see the confirmed booking.
+  if (result?.newlyConfirmed) {
+    await sendBookingConfirmationEmail(context, bookingId).catch((error) => {
+      console.warn('Booking confirmation email not sent', { bookingId, reason: error instanceof Error ? error.message : 'unknown' });
+    });
+  }
+  return result;
 }
 
 export async function recordPaymentEvent({
