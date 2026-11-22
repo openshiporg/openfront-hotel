@@ -62,15 +62,14 @@ export const RatePlan = list({
       label: 'Room Type',
     }),
 
-    // Integer minor units are authoritative; baseRate is legacy display compatibility.
-    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base Rate (minor units)' }),
+    // Staff edit dollars (baseRate); cents (baseRateMinor) stay authoritative and are kept in step by resolveInput.
+    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base rate in cents', ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' } } }),
     currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
     baseRate: float({
       defaultValue: 0,
       validation: { isRequired: true, min: 0 },
-      access: { create: () => false, update: () => false },
-      label: 'Legacy Base Rate',
-      ui: { itemView: { fieldMode: 'read' }, description: 'Derived compatibility value; minor units are authoritative.' },
+      label: 'Base rate per night (USD)',
+      ui: { description: 'In dollars, for example 189 or 189.50.' },
     }),
 
     bookings: relationship({ isFilterable: canFilterBookings, access: { create: () => false, update: () => false }, ref: 'Booking.ratePlan', many: true, ui: { displayMode: 'count' } }),
@@ -250,9 +249,11 @@ export const RatePlan = list({
       const bookings = await context.prisma.booking.count({ where: { ratePlanId: String(item.id) } })
       if (bookings) addValidationError(`${bookings} ${bookings === 1 ? 'reservation was' : 'reservations were'} booked on this rate. Set it to Inactive instead of deleting it.`)
     },
-    resolveInput: ({ resolvedData }) => ({
+    resolveInput: ({ resolvedData, inputData }) => ({
       ...resolvedData,
-      ...(Number.isSafeInteger(resolvedData.baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 } : {}),
+      // Staff type dollars; code paths write cents. Cents win when both are given; dollars convert exactly.
+      ...(Number.isSafeInteger((inputData as any).baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 }
+        : typeof (inputData as any).baseRate === 'number' && typeof resolvedData.baseRate === 'number' ? { baseRateMinor: Math.round(resolvedData.baseRate * 100), baseRate: Math.round(resolvedData.baseRate * 100) / 100 } : {}),
     }),
     validateInput: ({ resolvedData, item, addValidationError }) => {
       if (!item && resolvedData.status === 'active') addValidationError('Create a draft, then publish it through the approved rate lifecycle.');

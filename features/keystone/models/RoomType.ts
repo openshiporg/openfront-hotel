@@ -80,14 +80,13 @@ export const RoomType = list({
     }),
 
     // Pricing
-    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base Rate (minor units)' }),
+    baseRateMinor: integer({ validation: { isRequired: true, min: 0 }, defaultValue: 0, label: 'Base rate in cents', ui: { createView: { fieldMode: 'hidden' }, itemView: { fieldMode: 'hidden' } } }),
     currencyCode: text({ validation: { isRequired: true }, defaultValue: 'USD' }),
     baseRate: float({
       defaultValue: 0,
       validation: { isRequired: true, min: 0 },
-      access: { create: () => false, update: () => false },
-      label: 'Legacy Base Rate',
-      ui: { itemView: { fieldMode: 'read' }, description: 'Derived compatibility value; minor units are authoritative.' },
+      label: 'Base rate per night (USD)',
+      ui: { description: 'In dollars, for example 189 or 189.50.' },
     }),
 
     // Capacity
@@ -211,10 +210,12 @@ export const RoomType = list({
     ...trackingFields,
   },
   hooks: {
-    resolveInput: async ({ resolvedData }) => ({
+    resolveInput: async ({ resolvedData, inputData }) => ({
       ...resolvedData,
       ...(typeof resolvedData.name === 'string' ? { name: resolvedData.name.trim() } : {}),
-      ...(Number.isSafeInteger(resolvedData.baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 } : {}),
+      // Staff type dollars; code paths write cents. Cents win when both are given; dollars convert exactly.
+      ...(Number.isSafeInteger((inputData as any).baseRateMinor) ? { baseRate: resolvedData.baseRateMinor / 100 }
+        : typeof (inputData as any).baseRate === 'number' && typeof resolvedData.baseRate === 'number' ? { baseRateMinor: Math.round(resolvedData.baseRate * 100), baseRate: Math.round(resolvedData.baseRate * 100) / 100 } : {}),
     }),
     beforeOperation: async ({ operation, item, context }) => {
       if (operation !== 'delete' || !item?.id) return;

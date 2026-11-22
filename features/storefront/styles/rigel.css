@@ -384,3 +384,26 @@
   /* 16px stops iPhone Safari zooming the page when a field is tapped. */
   .sf :is(input, select, textarea) { font-size: 16px; }
 }
+
+/* Desktop: a real hero. Full-bleed photo with the name on it, the search bar anchored at its foot, and a wider page. */
+@media (min-width: 1024px) {
+  .sf:has(.rg-hero) { --sf-header-h: 64px; }
+  .sf:has(.rg-hero) .sf-header .sf-header__row, .rg-wrap { width: min(1120px, 100% - var(--sf-gutter) * 2); }
+  .sf:has(.rg-hero) .sf-wordmark { font-size: 1.4rem; }
+  .rg-hero { width: 100%; }
+  .rg-hero__media { position: relative; height: clamp(460px, 62vh, 600px); }
+  .rg-hero__media img { object-position: 50% 45%; }
+  .rg-hero__media::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgb(12 16 26 / 0.18) 0%, rgb(12 16 26 / 0.42) 100%); }
+  .rg-hero__title { position: absolute; inset: 0 24px auto; top: clamp(130px, 20vh, 190px); display: grid; justify-items: center; gap: 12px; color: #fff; text-align: center; text-shadow: 0 2px 24px rgb(10 15 25 / 0.35); }
+  .rg-hero__title h1 { margin: 0; font-family: var(--display); font-size: clamp(3rem, 4.6vw, 4.25rem); font-weight: 400; line-height: 1; letter-spacing: -0.015em; }
+  .rg-hero__title p { margin: 0; font-size: 0.8rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase; }
+  .rg-hero__search { width: min(860px, 100% - var(--sf-gutter) * 2); margin-top: -96px; border-radius: 14px; }
+  .rg-hero__search .sf-planner { padding: 10px 12px 10px 8px; }
+  .rg-hero__search .sf-planner__submit { min-height: 48px; padding-inline: 28px; }
+  .rg-section { padding-block: 56px 48px; }
+  .rg-head { margin-bottom: 28px; }
+  .rg-room__body { padding: 14px 16px 14px; }
+  .rg-room__name { font-size: 1.3rem; }
+  .rg-room__copy { font-size: 0.9rem; line-height: 1.45; }
+  .rg-room__bed { font-size: 0.85rem; }
+}
